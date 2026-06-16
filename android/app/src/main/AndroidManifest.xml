@@ -1,0 +1,181 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Foreground service -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+
+    <!-- Location -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+
+    <!-- Wake lock & boot -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
+    <!-- Notifications (Android 13+) -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- Full screen intent για notifications σαν κλήση (Android 14+) -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+
+    <!-- Exact alarms (Android 12+) — υπενθυμίσεις ραντεβού στην ακριβή ώρα, ακόμη & σε Doze -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+
+    <!-- Battery optimization -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
+    <!-- Internet -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- Microphone για ηχογράφηση -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
+    <!-- Δόνηση -->
+    <uses-permission android:name="android.permission.VIBRATE" />
+
+    <!-- Τηλεφωνία -->
+    <uses-feature android:name="android.hardware.telephony" android:required="false" />
+    <uses-permission android:name="android.permission.CALL_PHONE" />
+
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.DIAL" />
+            <data android:scheme="tel" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="https" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.PROCESS_TEXT" />
+            <data android:mimeType="text/plain" />
+        </intent>
+    </queries>
+
+    <application
+        android:label="Taxi Athens Driver"
+        android:name="${applicationName}"
+        android:icon="@mipmap/launcher_icon">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:taskAffinity=""
+            android:theme="@style/LaunchTheme"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
+            android:hardwareAccelerated="true"
+            android:windowSoftInputMode="adjustResize">
+            <meta-data
+                android:name="io.flutter.embedding.android.NormalTheme"
+                android:resource="@style/NormalTheme" />
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <!-- ════════════════════════════════════════════════════════════ -->
+            <!-- Άνοιγμα αρχείων .ics (κρατήσεις ταξί)                          -->
+            <!-- Κάνει το Athens Taxi να εμφανίζεται στο «Άνοιγμα με…»          -->
+            <!-- ════════════════════════════════════════════════════════════ -->
+
+            <!-- 1) Όταν το αρχείο έρχεται με τύπο text/calendar (email, ημερολόγιο) -->
+            <intent-filter android:label="Νέα δουλειά (ICS)">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:mimeType="text/calendar" />
+            </intent-filter>
+
+            <!-- 2) Όταν έρχεται από file/content manager με κατάληξη .ics (χωρίς τύπο) -->
+            <intent-filter android:label="Νέα δουλειά (ICS)">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="file" />
+                <data android:scheme="content" />
+                <data android:host="*" />
+                <data android:pathPattern=".*\\.ics" />
+                <data android:pathPattern=".*\\..*\\.ics" />
+                <data android:pathPattern=".*\\..*\\..*\\.ics" />
+            </intent-filter>
+
+            <!-- 3) Κοινοποίηση (Share) ενός .ics προς την εφαρμογή -->
+            <intent-filter android:label="Νέα δουλειά (ICS)">
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/calendar" />
+            </intent-filter>
+
+        </activity>
+
+        <meta-data
+            android:name="flutterEmbedding"
+            android:value="2" />
+
+        <meta-data
+            android:name="com.google.android.geo.API_KEY"
+            android:value="AIzaSyBkey_LttIk4F512hI66q5YcYzzOoTmBO4" />
+
+        <!-- Receiver για κουμπιά Action (Προβολή / Απόρριψη) στα local notifications -->
+        <receiver
+            android:exported="false"
+            android:name="com.dexterous.flutterlocalnotifications.ActionBroadcastReceiver" />
+
+        <!-- Receiver που εμφανίζει τα προγραμματισμένα (zonedSchedule) alarms -->
+        <receiver
+            android:exported="false"
+            android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationReceiver" />
+
+        <!-- Επαναπρογραμματισμός των alarms μετά από reboot / update -->
+        <receiver
+            android:exported="false"
+            android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationBootReceiver">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+                <action android:name="com.htc.intent.action.QUICKBOOT_POWERON" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Foreground Service για background location -->
+        <service
+            android:name="com.pravera.flutter_foreground_task.service.ForegroundTaskService"
+            android:foregroundServiceType="location|microphone|mediaPlayback"
+            android:stopWithTask="false"
+            android:exported="false" />
+
+        <!-- ΣΗΜΕΙΩΣΗ: Οι receivers του flutter_foreground_task (RebootReceiver/
+             RestartReceiver) δηλώνονται ΑΥΤΟΜΑΤΑ από το ίδιο το package μέσω
+             manifest merge. ΔΕΝ τους δηλώνουμε εδώ χειροκίνητα — η λάθος κλάση
+             "receiver.BootReceiver" δεν υπάρχει στην έκδοση 9.x και προκαλούσε
+             ClassNotFoundException / crash στο ξεκίνημα. -->
+
+        <!-- just_audio_background: audio playback service -->
+        <service
+            android:name="com.ryanheise.audioservice.AudioServiceTask"
+            android:foregroundServiceType="mediaPlayback"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.media.browse.MediaBrowserService" />
+            </intent-filter>
+        </service>
+
+        <!-- just_audio_background: media button receiver -->
+        <receiver
+            android:name="com.ryanheise.audioservice.MediaButtonReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MEDIA_BUTTON" />
+            </intent-filter>
+        </receiver>
+
+    </application>
+
+</manifest>

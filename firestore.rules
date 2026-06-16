@@ -1,0 +1,236 @@
+rules_version = '2';
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  AthensTaxi — Firestore Security Rules
+//
+//  Μοντέλο ρόλων:
+//    • MASTER : πλήρης πρόσβαση παντού. Ο μόνιμος master ορίζεται από το
+//               EMAIL της σύνδεσής του (tamper-proof — δεν εξαρτάται από
+//               κανένα Firestore πεδίο). Επιπλέον masters: presence.master.
+//    • ADMIN  : (εργολάβος) διαχειρίζεται δουλειές, ομάδες, πελάτες, πηγές,
+//               billing. ΔΕΝ μπορεί να αλλάξει ρόλους/εγκρίσεις.
+//    • DRIVER : (εγκεκριμένος) βλέπει/παίρνει δουλειές, ενημερώνει το δικό
+//               του presence. ΔΕΝ μπορεί να αλλάξει master/admin/isApproved/
+//               calendarEnabled σε ΚΑΝΕΝΑ doc, ούτε στο δικό του.
+//
+//  ⚠️ ΕΛΕΓΞΕ ΤΟ EMAIL ΠΑΡΑΚΑΤΩ (γραμμή masterEmail) πριν το deploy!
+//
+//  Deploy:  firebase deploy --only firestore:rules
+// ═══════════════════════════════════════════════════════════════════════════
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ── Βοηθητικές συναρτήσεις ──────────────────────────────────────────────
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    // ⚠️ Ο ΜΟΝΙΜΟΣ MASTER — έλεγξε την ορθογραφία του email!
+    function masterEmail() {
+      return signedIn() && request.auth.token.email == 'techtacy@gmail.com';
+    }
+
+    // Το presence doc του τρέχοντος χρήστη (1 read ανά έλεγχο, cached στο ίδιο request)
+    function myPresence() {
+      return get(/databases/$(database)/documents/presence/$(request.auth.uid)).data;
+    }
+
+    function presenceExists() {
+      return exists(/databases/$(database)/documents/presence/$(request.auth.uid));
+    }
+
+    function isMaster() {
+      return masterEmail()
+        || (signedIn() && presenceExists() && myPresence().get('master', false) == true);
+    }
+
+    function isAdmin() {
+      return isMaster()
+        || (signedIn() && presenceExists() && myPresence().get('admin', false) == true);
+    }
+
+    function isApproved() {
+      return isMaster()
+        || (signedIn() && presenceExists() && myPresence().get('isApproved', false) == true);
+    }
+
+    // Πεδία ρόλων/εξουσιοδότησης που ΜΟΝΟ ο master αλλάζει
+    function roleFieldsUnchanged() {
+      return !request.resource.data.diff(resource.data).affectedKeys()
+        .hasAny(['master', 'admin', 'isApproved', 'calendarEnabled']);
+    }
+
+    // Σε νέο doc: δεν επιτρέπεται να αυτο-οριστείς master/admin/approved
+    function noPrivilegedOnCreate() {
+      return request.resource.data.get('master', false) != true
+          && request.resource.data.get('admin',  false) != true
+          && request.resource.data.get('isApproved', false) != true;
+    }
+
+    // Οικονομικά πεδία: τα γράφει ΜΟΝΟ ο server (Admin SDK, που παρακάμπτει τα
+    // rules) ή ο master/admin σε settlement. Ο απλός οδηγός ΔΕΝ τα αγγίζει —
+    // έτσι κλείνει οριστικά η δυνατότητα να πειράξει το χρέος του.
+    function billingFieldsUnchanged() {
+      return !request.resource.data.diff(resource.data).affectedKeys()
+        .hasAny(['appDebt', 'turnover', 'billedAt',
+                 'lastSubscriptionMonth', 'lastCalendarSubMonth']);
+    }
+
+    // ── presence/{uid} ──────────────────────────────────────────────────────
+    // Οδηγοί/admins: θέση, διαθεσιμότητα, fcmToken, στοιχεία προφίλ.
+    // ΤΑ ΟΙΚΟΝΟΜΙΚΑ (appDebt/turnover/billedAt/συνδρομές) τα γράφει ΜΟΝΟ ο
+    // server (Cloud Functions) ή ο master/admin — ΟΧΙ ο οδηγός.
+    match /presence/{uid} {
+      // Όλοι οι συνδεδεμένοι διαβάζουν (χάρτης συναδέλφων, ονόματα κ.λπ.)
+      allow read: if signedIn();
+
+      // Δημιουργία: μόνο το ΔΙΚΟ σου doc, χωρίς προνομιακά πεδία.
+      allow create: if isMaster()
+        || (signedIn() && request.auth.uid == uid && noPrivilegedOnCreate());
+
+      // Ενημέρωση:
+      //  • master: τα πάντα (εγκρίσεις, ρόλοι, flags, billing reset/settlement)
+      //  • admin:  οποιοδήποτε doc ΕΚΤΟΣ από πεδία ρόλων — ΜΠΟΡΕΙ να αγγίξει
+      //            οικονομικά (settlement: μηδενισμός appDebt μετά πληρωμή)
+      //  • χρήστης: το ΔΙΚΟ του doc, ΕΚΤΟΣ από πεδία ρόλων ΚΑΙ οικονομικά
+      //            (θέση/διαθεσιμότητα/token/προφίλ — ΟΧΙ χρέος/τζίρο)
+      allow update: if isMaster()
+        || (isAdmin() && roleFieldsUnchanged())
+        || (signedIn() && request.auth.uid == uid
+            && roleFieldsUnchanged() && billingFieldsUnchanged());
+
+      allow delete: if isMaster();
+    }
+
+    // ── jobs/{jobId} ────────────────────────────────────────────────────────
+    // Δημιουργία/διαγραφή: admin & master. Ενημέρωση: και οι εγκεκριμένοι
+    // οδηγοί (take/boarded/done — transactions από τον client), αλλά ΔΕΝ
+    // αλλάζουν τον δημιουργό ΟΥΤΕ το billedAt (idempotency marker που τον
+    // γράφει ΜΟΝΟ ο server-trigger onJobBilling).
+    match /jobs/{jobId} {
+      allow read:   if isApproved();
+      allow create: if isAdmin();
+      // master: τα πάντα. admin: τα πάντα ΕΚΤΟΣ από αλλαγή ιδιοκτησίας/billedAt
+      // (έτσι ο Β που επεξεργάζεται ξένη δουλειά μέσω κοινής πρόσβασης ΔΕΝ
+      // μπορεί να αλλάξει τον δημιουργό — η ιδιοκτησία & το billing μένουν στον Α).
+      // οδηγός: μόνο take/boarded/done, χωρίς createdBy/billedAt.
+      allow update: if isMaster()
+        || (isAdmin()
+            && !request.resource.data.diff(resource.data).affectedKeys()
+                 .hasAny(['createdBy', 'createdByName', 'billedAt']))
+        || (isApproved()
+            && !request.resource.data.diff(resource.data).affectedKeys()
+                 .hasAny(['createdBy', 'createdByName', 'billedAt']));
+      allow delete: if isAdmin();
+    }
+
+    // ── job_batches/{batchId} ───────────────────────────────────────────────
+    // Ο admin δημιουργεί ομαδική αποστολή· ο οδηγός-παραλήπτης μπορεί να
+    // ενημερώσει (αποδοχή batch).
+    match /job_batches/{batchId} {
+      allow read:   if isApproved();
+      allow create: if isAdmin();
+      allow update: if isAdmin()
+        || (isApproved() && resource.data.get('driverUid', '') == request.auth.uid);
+      allow delete: if isAdmin();
+    }
+
+    // ── billing_tx/{txId} ───────────────────────────────────────────────────
+    // Χρεώσεις/πληρωμές. Δημιουργούνται από client στην ολοκλήρωση (οδηγός)
+    // και στα settlements (admin). Ανάγνωση: admin/master βλέπουν όλα·
+    // ο οδηγός μόνο όσα τον αφορούν (ως χρεωμένος ή ως εισπράκτορας).
+    match /billing_tx/{txId} {
+      allow read: if isAdmin()
+        || (isApproved()
+            && (resource.data.get('uid', '') == request.auth.uid
+                || resource.data.get('collectorUid', '') == request.auth.uid));
+      // Δημιουργία: ο server (Admin SDK) παρακάμπτει τα rules. Από clients,
+      // μόνο admin/master (cancelJob/διορθώσεις). Ο οδηγός ΔΕΝ δημιουργεί
+      // πια billing_tx — τα φτιάχνει ο trigger onJobBilling.
+      allow create: if isAdmin();
+      allow update: if isAdmin();   // voiding / διορθώσεις ποσών
+      allow delete: if isMaster();
+    }
+
+    // ── settlements/{id} ────────────────────────────────────────────────────
+    match /settlements/{id} {
+      allow read:  if isApproved();
+      allow write: if isAdmin();
+    }
+
+    // ── groups/{groupId} ────────────────────────────────────────────────────
+    match /groups/{groupId} {
+      allow read:  if signedIn();
+      allow write: if isAdmin();
+    }
+
+    // ── clients/{id} — πελατολόγιο admins ───────────────────────────────────
+    match /clients/{id} {
+      allow read:  if isAdmin();
+      allow write: if isAdmin();
+    }
+
+    // ── sources/{id} — πηγές δουλειών (Χίλτον κ.λπ.) ───────────────────────
+    match /sources/{id} {
+      allow read:  if isApproved();
+      allow write: if isAdmin();
+    }
+
+    // ── saved_jobs/{id} — αποθηκευμένες δουλειές ───────────────────────────
+    // Όλοι οι admins διαβάζουν/δημιουργούν. Στο UI ο διαχωρισμός «ποιος βλέπει
+    // ποιανού» γίνεται μέσω groups.savedJobShares. ΑΣΦΑΛΕΙΑ: σε update ΔΕΝ
+    // επιτρέπεται αλλαγή ιδιοκτησίας (ownerUid/ownerName) — έτσι κανένας admin
+    // δεν «κλέβει» δουλειά/billing άλλου μέσω κοινής πρόσβασης.
+    match /saved_jobs/{id} {
+      allow read:   if isAdmin();
+      allow create: if isAdmin();
+      allow update: if isAdmin()
+        && (isMaster()
+            || !request.resource.data.diff(resource.data).affectedKeys()
+                 .hasAny(['ownerUid', 'ownerName']));
+      allow delete: if isAdmin();
+    }
+
+    // ── app_settings/{id} — ρυθμίσεις εφαρμογής ────────────────────────────
+    match /app_settings/{id} {
+      allow read:  if signedIn();
+      allow write: if isAdmin();
+    }
+
+    // ── app_broadcasts/{id} — ανακοινώσεις (owner alerts) ──────────────────
+    // Διαβάζονται και πριν την έγκριση (alert gate) → signedIn.
+    match /app_broadcasts/{id} {
+      allow read:  if signedIn();
+      allow write: if isMaster();
+    }
+
+    // ── messages/{id} — φωνητικά μηνύματα ──────────────────────────────────
+    match /messages/{id} {
+      allow read:   if isApproved();
+      allow create: if isApproved();
+      allow update: if isApproved();
+      allow delete: if isApproved();
+    }
+
+    // ── calendar_tokens/{uid} — OAuth refresh tokens ───────────────────────
+    // ΚΑΝΕΝΑΣ client δεν τα αγγίζει. Τα Cloud Functions χρησιμοποιούν το
+    // Admin SDK που παρακάμπτει τα rules — άρα συνεχίζουν να δουλεύουν.
+    match /calendar_tokens/{uid} {
+      allow read, write: if false;
+    }
+
+    // ── reports / λοιπά server-side docs ───────────────────────────────────
+    // Ό,τι γράφουν μόνο τα Cloud Functions: read για master, write κανείς.
+    match /reports/{id} {
+      allow read:  if isMaster();
+      allow write: if false;
+    }
+
+    // ── Default: ΟΛΑ τα υπόλοιπα ΚΛΕΙΣΤΑ ───────────────────────────────────
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

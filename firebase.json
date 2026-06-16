@@ -1,0 +1,42 @@
+{
+  "flutter": {
+    "platforms": {
+      "android": {
+        "default": {
+          "projectId": "my-taxi-app-bbc7c",
+          "appId": "1:566987559821:android:f4b0a17b88a2a95f0ce3c4",
+          "fileOutput": "android/app/google-services.json"
+        }
+      },
+      "dart": {
+        "lib/firebase_options.dart": {
+          "projectId": "my-taxi-app-bbc7c",
+          "configurations": {
+            "android": "1:566987559821:android:f4b0a17b88a2a95f0ce3c4",
+            "ios": "1:566987559821:ios:df774b154477afd40ce3c4",
+            "macos": "1:566987559821:ios:df774b154477afd40ce3c4",
+            "web": "1:566987559821:web:cf42ff2541a08c880ce3c4",
+            "windows": "1:566987559821:web:23f92dcadb56c31b0ce3c4"
+          }
+        }
+      }
+    }
+  },
+  "firestore": {
+    "rules": "firestore.rules"
+  },
+  "functions": [
+    {
+      "source": "functions",
+      "codebase": "default",
+      "disallowLegacyRuntimeConfig": true,
+      "ignore": [
+        "node_modules",
+        ".git",
+        "firebase-debug.log",
+        "firebase-debug.*.log",
+        "*.local"
+      ]
+    }
+  ]
+}

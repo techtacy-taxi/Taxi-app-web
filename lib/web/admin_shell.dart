@@ -1,0 +1,416 @@
+// ============================================================================
+// FILE: ./lib/web/admin_shell.dart
+// ============================================================================
+//
+// Κέλυφος (shell) του πίνακα διαχείρισης ΓΙΑ WEB.
+//
+// Responsive:
+//   • PC / tablet (≥ 900px)  → μόνιμο sidebar αριστερά + περιεχόμενο δεξιά
+//   • Κινητό / iPhone (< 900) → AppBar με drawer + bottom navigation
+//
+// Ενότητες (ανάλογα με ρόλο):
+//   Δουλειές   → JobAdminPage  (μέσα: Ανοιχτές/Αποθηκευμένες/Ιστορικό/
+//                               Πηγές/Πελάτες + κουμπί «Νέα Δουλειά»)
+//   Χρεώσεις   → BillingPage
+//   Ομάδες     → GroupsAdminPage
+//   Ημερολόγιο → CalendarPage   (αν calendarEnabled ή master)
+//   Εισαγωγή   → ICS upload
+//   Διαχείριση → MastersAdminPage (μόνο master)
+
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/material.dart';
+
+import '../jobs/job_admin_page.dart';
+import '../jobs/billing_page.dart';
+import '../calendar/calendar_page.dart';
+import '../voice/groups_admin.dart';
+import '../masters/masters_admin_page.dart';
+import 'auth_gateway_web.dart';
+import 'ics_upload_web.dart';
+import 'map_web_page.dart';
+
+const double _kDesktopBreakpoint = 900;
+const Color  _kAmber = Color(0xFFFFB300);
+
+class _Section {
+  final String   label;
+  final IconData icon;
+  final Widget   page;
+  const _Section({required this.label, required this.icon, required this.page});
+}
+
+class AdminShell extends StatefulWidget {
+  final AdminSession session;
+  const AdminShell({super.key, required this.session});
+
+  @override
+  State<AdminShell> createState() => _AdminShellState();
+}
+
+class _AdminShellState extends State<AdminShell> {
+  int _index = 0;
+  late final List<_Section> _sections = _buildSections();
+
+  List<_Section> _buildSections() {
+    final s = widget.session;
+    final sections = <_Section>[
+      _Section(
+        label: 'Δουλειές',
+        icon: Icons.work_rounded,
+        page: JobAdminPage(
+          adminUid:       s.uid,
+          adminName:      s.fullName,
+          isAdmin:        s.isAdmin,
+          isMaster:       s.isMaster,
+          managedGroupIds: s.managedGroupIds,
+        ),
+      ),
+      _Section(
+        label: 'Χάρτης',
+        icon: Icons.map_rounded,
+        page: MapWebPage(uid: s.uid),
+      ),
+      _Section(
+        label: 'Χρεώσεις',
+        icon: Icons.receipt_long_rounded,
+        page: BillingPage(
+          uid:             s.uid,
+          userName:        s.fullName,
+          isMaster:        s.isMaster,
+          isAdmin:         s.isAdmin,
+          managedGroupIds: s.managedGroupIds,
+        ),
+      ),
+      _Section(
+        label: 'Ομάδες',
+        icon: Icons.groups_rounded,
+        page: GroupsAdminPage(uid: s.uid),
+      ),
+    ];
+
+    // Ημερολόγιο: master πάντα· admin μόνο αν calendarEnabled.
+    if (s.isMaster || s.calendarEnabled) {
+      sections.add(_Section(
+        label: 'Ημερολόγιο',
+        icon: Icons.calendar_month_rounded,
+        page: CalendarPage(
+          adminUid:  s.uid,
+          adminName: s.fullName,
+          isMaster:  s.isMaster,
+        ),
+      ));
+    }
+
+    // Εισαγωγή ICS (διαθέσιμη σε όλους τους διαχειριστές).
+    sections.add(_Section(
+      label: 'Εισαγωγή ICS',
+      icon: Icons.upload_file_rounded,
+      page: IcsUploadPage(
+        adminUid:  s.uid,
+        adminName: s.fullName,
+        isMaster:  s.isMaster,
+      ),
+    ));
+
+    // Διαχείριση χρηστών/ρόλων — μόνο master.
+    if (s.isMaster) {
+      sections.add(_Section(
+        label: 'Διαχείριση',
+        icon: Icons.admin_panel_settings_rounded,
+        page: MastersAdminPage(masterUid: s.uid),
+      ));
+    }
+
+    return sections;
+  }
+
+  Future<void> _signOut() async {
+    await FirebaseAuth.instance.signOut();
+    if (!mounted) return;
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const WebAuthGateway()),
+      (_) => false,
+    );
+  }
+
+  void _select(int i) {
+    setState(() => _index = i);
+    // Στο κινητό, αν είναι ανοιχτό το drawer, κλείσ' το.
+    final nav = Navigator.of(context);
+    if (nav.canPop() && MediaQuery.of(context).size.width < _kDesktopBreakpoint) {
+      nav.pop();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isDesktop =
+        MediaQuery.of(context).size.width >= _kDesktopBreakpoint;
+    return isDesktop ? _buildDesktop() : _buildMobile();
+  }
+
+  // ─── DESKTOP: μόνιμο sidebar ──────────────────────────────────────────────
+
+  Widget _buildDesktop() {
+    return Scaffold(
+      body: Row(
+        children: [
+          _Sidebar(
+            sections: _sections,
+            index: _index,
+            onSelect: (i) => setState(() => _index = i),
+            session: widget.session,
+            onSignOut: _signOut,
+          ),
+          const VerticalDivider(width: 1),
+          Expanded(
+            child: ClipRect(
+              child: _sections[_index].page,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ─── MOBILE: AppBar + drawer + bottom navigation ─────────────────────────
+
+  Widget _buildMobile() {
+    // Στο bottom bar χωράνε έως ~5· τα υπόλοιπα πάνε στο drawer.
+    final bottomCount = _sections.length <= 5 ? _sections.length : 4;
+    final inBottom = _sections.take(bottomCount).toList();
+    final bottomActive = _index < bottomCount;
+
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(_sections[_index].label),
+        backgroundColor: _kAmber,
+        foregroundColor: Colors.black87,
+      ),
+      drawer: Drawer(
+        child: _DrawerContent(
+          sections: _sections,
+          index: _index,
+          onSelect: _select,
+          session: widget.session,
+          onSignOut: _signOut,
+        ),
+      ),
+      body: _sections[_index].page,
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: bottomActive ? _index : 0,
+        onDestinationSelected: (i) => setState(() => _index = i),
+        backgroundColor: Colors.white,
+        indicatorColor: _kAmber.withValues(alpha: 0.25),
+        destinations: [
+          for (final s in inBottom)
+            NavigationDestination(
+              icon: Icon(s.icon),
+              label: s.label,
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+// ─── Sidebar (desktop) ──────────────────────────────────────────────────────
+
+class _Sidebar extends StatelessWidget {
+  final List<_Section>   sections;
+  final int              index;
+  final ValueChanged<int> onSelect;
+  final AdminSession     session;
+  final VoidCallback     onSignOut;
+  const _Sidebar({
+    required this.sections,
+    required this.index,
+    required this.onSelect,
+    required this.session,
+    required this.onSignOut,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 250,
+      color: Colors.white,
+      child: Column(
+        children: [
+          const SizedBox(height: 22),
+          _Header(session: session),
+          const SizedBox(height: 14),
+          const Divider(height: 1),
+          Expanded(
+            child: ListView(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              children: [
+                for (var i = 0; i < sections.length; i++)
+                  _NavTile(
+                    section: sections[i],
+                    selected: i == index,
+                    onTap: () => onSelect(i),
+                  ),
+              ],
+            ),
+          ),
+          const Divider(height: 1),
+          _SignOutTile(onSignOut: onSignOut),
+          const SizedBox(height: 8),
+        ],
+      ),
+    );
+  }
+}
+
+// ─── Drawer content (mobile) ────────────────────────────────────────────────
+
+class _DrawerContent extends StatelessWidget {
+  final List<_Section>   sections;
+  final int              index;
+  final ValueChanged<int> onSelect;
+  final AdminSession     session;
+  final VoidCallback     onSignOut;
+  const _DrawerContent({
+    required this.sections,
+    required this.index,
+    required this.onSelect,
+    required this.session,
+    required this.onSignOut,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Column(
+        children: [
+          const SizedBox(height: 18),
+          _Header(session: session),
+          const SizedBox(height: 14),
+          const Divider(height: 1),
+          Expanded(
+            child: ListView(
+              children: [
+                for (var i = 0; i < sections.length; i++)
+                  _NavTile(
+                    section: sections[i],
+                    selected: i == index,
+                    onTap: () => onSelect(i),
+                  ),
+              ],
+            ),
+          ),
+          const Divider(height: 1),
+          _SignOutTile(onSignOut: onSignOut),
+          const SizedBox(height: 8),
+        ],
+      ),
+    );
+  }
+}
+
+class _Header extends StatelessWidget {
+  final AdminSession session;
+  const _Header({required this.session});
+
+  @override
+  Widget build(BuildContext context) {
+    final roleLabel = session.isMaster ? 'Master' : 'Εργολάβος';
+    return Column(
+      children: [
+        Container(
+          width: 54, height: 54,
+          decoration: BoxDecoration(
+            color: _kAmber,
+            borderRadius: BorderRadius.circular(15),
+          ),
+          child: const Icon(Icons.local_taxi_rounded,
+              size: 30, color: Colors.black87),
+        ),
+        const SizedBox(height: 12),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          child: Text(
+            session.fullName.isEmpty ? 'Διαχειριστής' : session.fullName,
+            textAlign: TextAlign.center,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+          ),
+        ),
+        const SizedBox(height: 3),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+          decoration: BoxDecoration(
+            color: _kAmber.withValues(alpha: 0.18),
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Text(roleLabel,
+              style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.amber.shade900)),
+        ),
+      ],
+    );
+  }
+}
+
+class _NavTile extends StatelessWidget {
+  final _Section    section;
+  final bool        selected;
+  final VoidCallback onTap;
+  const _NavTile({
+    required this.section,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+      child: Material(
+        color: selected ? _kAmber.withValues(alpha: 0.18) : Colors.transparent,
+        borderRadius: BorderRadius.circular(12),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: onTap,
+          child: Padding(
+            padding:
+                const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+            child: Row(
+              children: [
+                Icon(section.icon,
+                    size: 22,
+                    color: selected ? Colors.amber.shade900 : Colors.grey[700]),
+                const SizedBox(width: 14),
+                Text(section.label,
+                    style: TextStyle(
+                      fontSize: 14.5,
+                      fontWeight:
+                          selected ? FontWeight.w700 : FontWeight.w500,
+                      color: selected ? Colors.black87 : Colors.grey[800],
+                    )),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SignOutTile extends StatelessWidget {
+  final VoidCallback onSignOut;
+  const _SignOutTile({required this.onSignOut});
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      leading: Icon(Icons.logout_rounded, color: Colors.grey[700]),
+      title: const Text('Αποσύνδεση'),
+      onTap: onSignOut,
+    );
+  }
+}
