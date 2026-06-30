@@ -11,7 +11,8 @@ rules_version = '2';
 //               billing. ΔΕΝ μπορεί να αλλάξει ρόλους/εγκρίσεις.
 //    • DRIVER : (εγκεκριμένος) βλέπει/παίρνει δουλειές, ενημερώνει το δικό
 //               του presence. ΔΕΝ μπορεί να αλλάξει master/admin/isApproved/
-//               calendarEnabled σε ΚΑΝΕΝΑ doc, ούτε στο δικό του.
+//               calendarEnabled/webEnabled/icsExportEnabled ή τις τιμές
+//               (calendarPrice/webPrice/icsPrice) σε ΚΑΝΕΝΑ doc.
 //
 //  ⚠️ ΕΛΕΓΞΕ ΤΟ EMAIL ΠΑΡΑΚΑΤΩ (γραμμή masterEmail) πριν το deploy!
 //
@@ -59,7 +60,9 @@ service cloud.firestore {
     // Πεδία ρόλων/εξουσιοδότησης που ΜΟΝΟ ο master αλλάζει
     function roleFieldsUnchanged() {
       return !request.resource.data.diff(resource.data).affectedKeys()
-        .hasAny(['master', 'admin', 'isApproved', 'calendarEnabled']);
+        .hasAny(['master', 'admin', 'isApproved', 'calendarEnabled',
+                 'webEnabled', 'icsExportEnabled',
+                 'calendarPrice', 'webPrice', 'icsPrice']);
     }
 
     // Σε νέο doc: δεν επιτρέπεται να αυτο-οριστείς master/admin/approved

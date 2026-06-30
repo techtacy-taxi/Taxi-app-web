@@ -14,16 +14,36 @@ import 'job_shared_widgets.dart';
 import 'job_model.dart';
 import 'job_service.dart';
 import 'ics_export_service.dart';
+import 'ics_access.dart';
 
 // ─── Κουμπί «Στο ημερολόγιο» (κάτω-κάτω στο συρτάρι) ──────────────────────────
 // Μπλε, λευκά γράμματα. Ανοίγει picker για να διαλέξεις ΠΟΙΕΣ δουλειές θα
 // μπουν στο ημερολόγιο· μετά παράγει .ics & το ανοίγει (Android) / κατεβάζει (Web).
-class _AllToCalendarButton extends StatelessWidget {
+class _AllToCalendarButton extends StatefulWidget {
   final List<Job> jobs;
   const _AllToCalendarButton({required this.jobs});
 
   @override
+  State<_AllToCalendarButton> createState() => _AllToCalendarButtonState();
+}
+
+class _AllToCalendarButtonState extends State<_AllToCalendarButton> {
+  bool _allowed = IcsAccess.cached ?? false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (IcsAccess.cached == null) {
+      IcsAccess.canExport().then((v) {
+        if (mounted) setState(() => _allowed = v);
+      });
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
+    if (!_allowed) return const SizedBox.shrink();
+    final jobs = widget.jobs;
     return SizedBox(
       width: double.infinity,
       child: FilledButton.icon(

@@ -305,6 +305,11 @@ class _AdminDriverCard extends StatelessWidget {
     final isAdmin  = data['admin']  == true;
     final isApproved = data['isApproved'] == true;
     final calendarEnabled = data['calendarEnabled'] == true;
+    final webEnabled      = data['webEnabled'] == true;
+    final icsExportEnabled = data['icsExportEnabled'] == true;
+    final calendarPrice = (data['calendarPrice'] as num?)?.toDouble() ?? 0.0;
+    final webPrice      = (data['webPrice'] as num?)?.toDouble() ?? 0.0;
+    final icsPrice      = (data['icsPrice'] as num?)?.toDouble() ?? 0.0;
     final managedGroupIds = List<String>.from(data['managedGroupIds'] ?? []);
 
     Color roleColor;
@@ -385,6 +390,11 @@ class _AdminDriverCard extends StatelessWidget {
                       isAdmin: isAdmin,
                       isMaster: isMaster,
                       calendarEnabled: calendarEnabled,
+                      webEnabled: webEnabled,
+                      icsExportEnabled: icsExportEnabled,
+                      calendarPrice: calendarPrice,
+                      webPrice: webPrice,
+                      icsPrice: icsPrice,
                       managedGroupIds: managedGroupIds),
                 ),
             ]),
@@ -405,6 +415,35 @@ class _AdminDriverCard extends StatelessWidget {
                       fontSize: 11,
                       color: Colors.grey[500],
                       fontStyle: FontStyle.italic)),
+            ],
+
+            // ── Ενεργές άδειες (chips) ──────────────────────────────────
+            if ((isAdmin || isMaster) &&
+                (calendarEnabled || webEnabled || icsExportEnabled)) ...[
+              const SizedBox(height: 8),
+              Wrap(spacing: 6, runSpacing: 6, children: [
+                if (calendarEnabled)
+                  _permChip(
+                    icon: Icons.calendar_month_rounded,
+                    label: 'Ημερολόγιο',
+                    price: calendarPrice,
+                    color: Colors.deepPurple,
+                  ),
+                if (webEnabled)
+                  _permChip(
+                    icon: Icons.language_rounded,
+                    label: 'Web',
+                    price: webPrice,
+                    color: const Color(0xFF185FA5),
+                  ),
+                if (icsExportEnabled)
+                  _permChip(
+                    icon: Icons.event_available_rounded,
+                    label: 'Ημ/γιο δουλειάς',
+                    price: icsPrice,
+                    color: const Color(0xFF1A73E8),
+                  ),
+              ]),
             ],
 
             // ── Άδεια πρόσβασης (approval) ──────────────────────────────
@@ -532,14 +571,43 @@ class _AdminDriverCard extends StatelessWidget {
         .update({'isApproved': approve});
   }
 
+  /// Μικρό chip ένδειξης ενεργής άδειας, με τιμή αν > 0.
+  Widget _permChip({
+    required IconData icon,
+    required String   label,
+    required double   price,
+    required Color    color,
+  }) {
+    final priceLabel = price > 0 ? ' · ${price.toStringAsFixed(2)}€' : '';
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: color.withValues(alpha: 0.35)),
+      ),
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
+        Icon(icon, size: 13, color: color),
+        const SizedBox(width: 4),
+        Text('$label$priceLabel',
+            style: TextStyle(
+                fontSize: 11, fontWeight: FontWeight.w600, color: color)),
+      ]),
+    );
+  }
+
   Future<void> _showEditDialog(
     BuildContext context, {
     required bool         isAdmin,
     required bool         isMaster,
     required bool         calendarEnabled,
+    required bool         webEnabled,
+    required bool         icsExportEnabled,
+    required double       calendarPrice,
+    required double       webPrice,
+    required double       icsPrice,
     required List<String> managedGroupIds,
   }) async {
-    // Φόρτωσε ομάδες
     final groupsSnap = await FirebaseFirestore.instance
         .collection('groups')
         .orderBy('name')
@@ -554,7 +622,17 @@ class _AdminDriverCard extends StatelessWidget {
     bool   selAdmin  = isAdmin;
     bool   selMaster = isMaster;
     bool   selCalendar = calendarEnabled;
+    bool   selWeb      = webEnabled;
+    bool   selIcs      = icsExportEnabled;
     final  selGroupIds = <String>{...managedGroupIds};
+
+    // Κουτάκια τιμής (€/μήνα) — ένα ανά διακόπτη.
+    final calPriceCtrl = TextEditingController(
+        text: calendarPrice.toStringAsFixed(2));
+    final webPriceCtrl = TextEditingController(
+        text: webPrice.toStringAsFixed(2));
+    final icsPriceCtrl = TextEditingController(
+        text: icsPrice.toStringAsFixed(2));
 
     await showDialog<void>(
       context: context,
@@ -658,41 +736,57 @@ class _AdminDriverCard extends StatelessWidget {
                   )),
                 ],
 
-                // ── Πρόσβαση στο Ημερολόγιο (admin ή master) ─────
+                // ── Πρόσβαση (admin ή master) ────────────────────
                 if (selAdmin || selMaster) ...[
                   const SizedBox(height: 16),
                   const Divider(height: 1),
-                  const SizedBox(height: 8),
-                  Container(
-                    decoration: BoxDecoration(
-                      color: selCalendar
-                          ? Colors.deepPurple.withValues(alpha: 0.08)
-                          : Colors.grey.shade50,
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(
-                        color: selCalendar
-                            ? Colors.deepPurple.withValues(alpha: 0.4)
-                            : Colors.grey.shade200,
-                      ),
-                    ),
-                    child: SwitchListTile(
-                      dense: true,
-                      activeThumbColor: Colors.deepPurple,
-                      secondary: Icon(Icons.calendar_month_rounded,
-                          color: selCalendar
-                              ? Colors.deepPurple
-                              : Colors.grey),
-                      title: const Text('Πρόσβαση στο Ημερολόγιο',
-                          style: TextStyle(
-                              fontSize: 13, fontWeight: FontWeight.bold)),
-                      subtitle: Text(
-                        'Σύνδεση Google Calendar & μετατροπή ραντεβού',
+                  const SizedBox(height: 10),
+                  Row(children: [
+                    Icon(Icons.vpn_key_rounded,
+                        size: 16, color: Colors.grey[700]),
+                    const SizedBox(width: 6),
+                    const Text('Πρόσβαση',
                         style: TextStyle(
-                            fontSize: 11, color: Colors.grey[600]),
-                      ),
-                      value: selCalendar,
-                      onChanged: (v) => setS(() => selCalendar = v),
-                    ),
+                            fontWeight: FontWeight.bold, fontSize: 13)),
+                  ]),
+                  const SizedBox(height: 8),
+
+                  // Ημερολόγιο
+                  _accessRow(
+                    setS: setS,
+                    icon: Icons.calendar_month_rounded,
+                    color: Colors.deepPurple,
+                    title: 'Ημερολόγιο',
+                    subtitle: 'Σύνδεση Google Calendar',
+                    value: selCalendar,
+                    onChanged: (v) => setS(() => selCalendar = v),
+                    priceCtrl: calPriceCtrl,
+                  ),
+                  const SizedBox(height: 8),
+
+                  // Web πίνακας
+                  _accessRow(
+                    setS: setS,
+                    icon: Icons.language_rounded,
+                    color: const Color(0xFF185FA5),
+                    title: 'Web πίνακας',
+                    subtitle: 'Είσοδος στη σελίδα διαχείρισης',
+                    value: selWeb,
+                    onChanged: (v) => setS(() => selWeb = v),
+                    priceCtrl: webPriceCtrl,
+                  ),
+                  const SizedBox(height: 8),
+
+                  // Κουμπί ICS «στο ημερολόγιό μου»
+                  _accessRow(
+                    setS: setS,
+                    icon: Icons.event_available_rounded,
+                    color: const Color(0xFF1A73E8),
+                    title: 'Κουμπί «στο ημερολόγιό μου»',
+                    subtitle: 'Προσθήκη δουλειάς στο ημερολόγιό του',
+                    value: selIcs,
+                    onChanged: (v) => setS(() => selIcs = v),
+                    priceCtrl: icsPriceCtrl,
                   ),
                 ],
               ],
@@ -705,11 +799,21 @@ class _AdminDriverCard extends StatelessWidget {
               color: Colors.deepPurple,
               onPressed: () async {
                 Navigator.pop(ctx);
+                double parsePrice(TextEditingController c) {
+                  final v = double.tryParse(
+                      c.text.trim().replaceAll(',', '.')) ?? 0.0;
+                  return v < 0 ? 0.0 : v;
+                }
                 await _saveRole(
-                  isAdmin:         selAdmin,
-                  isMaster:        selMaster,
-                  calendarEnabled: selCalendar,
-                  managedGroupIds: selGroupIds.toList(),
+                  isAdmin:          selAdmin,
+                  isMaster:         selMaster,
+                  calendarEnabled:  selCalendar,
+                  webEnabled:       selWeb,
+                  icsExportEnabled: selIcs,
+                  calendarPrice:    parsePrice(calPriceCtrl),
+                  webPrice:         parsePrice(webPriceCtrl),
+                  icsPrice:         parsePrice(icsPriceCtrl),
+                  managedGroupIds:  selGroupIds.toList(),
                 );
               },
             ),
@@ -767,20 +871,96 @@ class _AdminDriverCard extends StatelessWidget {
         ),
       );
 
+  /// Γραμμή πρόσβασης: διακόπτης on/off + κουτάκι τιμής (€/μήνα) που
+  /// εμφανίζεται μόνο όταν είναι ενεργό. 0 = χωρίς χρέωση.
+  Widget _accessRow({
+    required StateSetter        setS,
+    required IconData           icon,
+    required Color              color,
+    required String             title,
+    required String             subtitle,
+    required bool               value,
+    required ValueChanged<bool> onChanged,
+    required TextEditingController priceCtrl,
+  }) {
+    return Container(
+      decoration: BoxDecoration(
+        color: value
+            ? color.withValues(alpha: 0.08)
+            : Colors.grey.shade50,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color: value
+              ? color.withValues(alpha: 0.4)
+              : Colors.grey.shade200,
+        ),
+      ),
+      child: Column(
+        children: [
+          SwitchListTile(
+            dense: true,
+            activeThumbColor: color,
+            secondary: Icon(icon, color: value ? color : Colors.grey),
+            title: Text(title,
+                style: const TextStyle(
+                    fontSize: 13, fontWeight: FontWeight.bold)),
+            subtitle: Text(subtitle,
+                style: TextStyle(fontSize: 11, color: Colors.grey[600])),
+            value: value,
+            onChanged: onChanged,
+          ),
+          // Κουτάκι τιμής — μόνο όταν είναι ενεργό
+          if (value)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+              child: TextField(
+                controller: priceCtrl,
+                keyboardType:
+                    const TextInputType.numberWithOptions(decimal: true),
+                style: const TextStyle(fontSize: 13),
+                decoration: InputDecoration(
+                  isDense: true,
+                  labelText: 'Χρέωση / μήνα (€)',
+                  labelStyle: const TextStyle(fontSize: 12),
+                  helperText: '0 = χωρίς χρέωση',
+                  helperStyle: const TextStyle(fontSize: 10),
+                  prefixIcon: Icon(Icons.euro_rounded,
+                      size: 18, color: color),
+                  border: const OutlineInputBorder(),
+                  contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 12, vertical: 10),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _saveRole({
     required bool         isAdmin,
     required bool         isMaster,
     required bool         calendarEnabled,
+    required bool         webEnabled,
+    required bool         icsExportEnabled,
+    required double       calendarPrice,
+    required double       webPrice,
+    required double       icsPrice,
     required List<String> managedGroupIds,
   }) async {
     final fs = FirebaseFirestore.instance;
 
     // 1. Ενημέρωσε presence
     await fs.collection('presence').doc(docId).update({
-      'admin':           isAdmin,
-      'master':          isMaster,
-      'calendarEnabled': calendarEnabled,
-      'managedGroupIds': managedGroupIds,
+      'admin':            isAdmin,
+      'master':           isMaster,
+      'calendarEnabled':  calendarEnabled,
+      'webEnabled':       webEnabled,
+      'icsExportEnabled': icsExportEnabled,
+      'calendarPrice':    calendarPrice,
+      'webPrice':         webPrice,
+      'icsPrice':         icsPrice,
+      'managedGroupIds':  managedGroupIds,
     });
 
     // 2. Συγχρόνισε adminUids σε όλες τις ομάδες

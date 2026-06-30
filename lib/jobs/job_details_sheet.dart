@@ -11,6 +11,7 @@ import 'job_model.dart';
 import 'job_service.dart';
 import 'saved_job_service.dart';
 import 'ics_export_service.dart';
+import 'ics_access.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ΚΟΙΝΗ ΡΟΗ «ΤΕΛΟΣ ΔΙΑΔΡΟΜΗΣ» (+ προαιρετική ΕΠΙΣΤΡΟΦΗ)
@@ -833,6 +834,17 @@ class _JobToCalendarButton extends StatefulWidget {
 
 class _JobToCalendarButtonState extends State<_JobToCalendarButton> {
   bool _busy = false;
+  bool _allowed = IcsAccess.cached ?? false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (IcsAccess.cached == null) {
+      IcsAccess.canExport().then((v) {
+        if (mounted) setState(() => _allowed = v);
+      });
+    }
+  }
 
   Future<void> _run() async {
     if (_busy) return;
@@ -853,6 +865,7 @@ class _JobToCalendarButtonState extends State<_JobToCalendarButton> {
 
   @override
   Widget build(BuildContext context) {
+    if (!_allowed) return const SizedBox.shrink();
     return SizedBox(
       width: double.infinity,
       child: FilledButton.icon(
