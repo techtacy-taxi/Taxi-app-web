@@ -384,11 +384,13 @@ Future<void> _showPublicBookingBg(
     category:         AndroidNotificationCategory.message,
     visibility:       NotificationVisibility.public,
     autoCancel:       true,
+    ongoing:          true,    // μένει μέχρι να ανοίξει η εφαρμογή ο master
     playSound:        true,
     audioAttributesUsage: AudioAttributesUsage.alarm,
     enableVibration:  true,
     vibrationPattern: kStrongVibration,
     enableLights:     true,
+    fullScreenIntent: true,    // εμφανίζεται ακόμα & με κλειστή οθόνη
     styleInformation: BigTextStyleInformation(body),
   );
 

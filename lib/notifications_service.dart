@@ -657,6 +657,59 @@ Future<void> showAppointmentNotification({
   }
 }
 
+// ─── Ειδοποίηση νέας κράτησης από φόρμα (ήχος + δόνηση, owner channel) ───────
+// Χτυπά ακόμα και με κλειστή οθόνη / εφαρμογή σε background. Καλείται από
+// PublicBookingAlerts μαζί με το popup, ώστε να υπάρχει ηχητική ειδοποίηση.
+Future<void> showPublicBookingNotification({
+  required String savedJobId,
+  String from = '',
+  String to = '',
+}) async {
+  final muted = await isMutedNow();
+  final androidDetails = AndroidNotificationDetails(
+    kOwnerChannelId,
+    kOwnerChannelName,
+    channelDescription: kOwnerChannelDesc,
+    importance:         Importance.max,
+    priority:           Priority.max,
+    category:           AndroidNotificationCategory.message,
+    visibility:         NotificationVisibility.public,
+    autoCancel:         true,
+    playSound:          !muted,
+    audioAttributesUsage: AudioAttributesUsage.alarm,
+    enableVibration:    !muted,
+    vibrationPattern:   muted ? null : kStrongVibration,
+    enableLights:       true,
+    styleInformation:   BigTextStyleInformation(
+        (from.isNotEmpty || to.isNotEmpty) ? '$from → $to' : 'Βρες την στις Αποθηκευμένες'),
+  );
+  try {
+    await _localNotifs.show(
+      (savedJobId.hashCode.abs() & 0x7FFFFFFF) ^ 0x70B11C,
+      '🌐 Νέα κράτηση από φόρμα',
+      (from.isNotEmpty || to.isNotEmpty) ? '$from → $to' : 'Νέα αποθηκευμένη δουλειά',
+      NotificationDetails(android: androidDetails),
+      payload: jsonEncode({'savedJobId': savedJobId, 'type': 'public_booking'}),
+    );
+    // Συνεχόμενος ήχος μέχρι ο master να πατήσει «ΟΚ» (ή cap ασφαλείας 2′).
+    if (!muted) {
+      await startRingtoneLoop(
+        maxDuration:   const Duration(minutes: 2),
+        keepIfPlaying: true,
+      );
+    }
+  } catch (e) {
+    debugPrint('showPublicBookingNotification error: $e');
+  }
+}
+
+// Σβήνει όλες τις ενεργές ειδοποιήσεις «κράτηση από φόρμα» (στο «ΟΚ»).
+Future<void> cancelPublicBookingNotifications() async {
+  try {
+    await _localNotifs.cancelAll();
+  } catch (_) {}
+}
+
 // ─── Public API ─────────────────────────────────────────────────────────────
 class NotificationsService {
   /// Global navigator key — επιτρέπει να εμφανίζονται dialogs/popups ΠΑΝΩ

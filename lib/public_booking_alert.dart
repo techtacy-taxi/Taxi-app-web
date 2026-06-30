@@ -82,6 +82,11 @@ class PublicBookingAlerts {
         final id = change.doc.id;
         if (_seenIds.contains(id)) continue;
         _seenIds.add(id);
+        final data = change.doc.data() ?? {};
+        final from = (data['from'] ?? '').toString();
+        final to   = (data['to'] ?? '').toString();
+        // Ήχος + δόνηση (χτυπά ακόμα & με κλειστή οθόνη).
+        showPublicBookingNotification(savedJobId: id, from: from, to: to);
         _bump();
       }
     }
@@ -111,77 +116,93 @@ class PublicBookingAlerts {
           final n = _pendingCount;
           final word = n == 1 ? 'καινούργια δουλειά' : 'καινούργιες δουλειές';
           return Dialog(
+            clipBehavior: Clip.antiAlias,
             shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(22)),
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(22, 24, 22, 18),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Center(
-                    child: Container(
-                      width: 64, height: 64,
-                      decoration: const BoxDecoration(
-                        color: Color(0xFFFFF3CD),
-                        shape: BoxShape.circle,
-                      ),
-                      child: const Icon(Icons.public_rounded,
-                          color: Color(0xFFB8860B), size: 36),
-                    ),
-                  ),
-                  const SizedBox(height: 14),
-                  Center(
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 14, vertical: 5),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFFFB300),
-                        borderRadius: BorderRadius.circular(20),
-                      ),
-                      child: Text('$n',
-                          style: const TextStyle(
-                              color: Color(0xFF5A3D00),
-                              fontSize: 20,
-                              fontWeight: FontWeight.w900)),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Center(
-                    child: Text(
-                      '$n $word από τη φόρμα',
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(
-                          fontSize: 18, fontWeight: FontWeight.bold),
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  const Center(
-                    child: Text(
-                      'Βρες τες στις «Αποθηκευμένες».',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                          fontSize: 13.5, color: Colors.black54),
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-                  SizedBox(
-                    height: 48,
-                    child: FilledButton(
-                      style: FilledButton.styleFrom(
-                        backgroundColor: const Color(0xFFFFB300),
-                        foregroundColor: const Color(0xFF5A3D00),
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12)),
-                      ),
-                      onPressed: () => Navigator.of(dctx).pop(),
-                      child: const Text('OK',
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // ── ΚΙΤΡΙΝΟ HEADER (υδρόγειος + τίτλος), όπως οι άλλες ειδοποιήσεις
+                Container(
+                  width: double.infinity,
+                  color: const Color(0xFFFFB300),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 18, vertical: 14),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Icon(Icons.public_rounded,
+                          color: Color(0xFF5A3D00), size: 26),
+                      const SizedBox(width: 10),
+                      const Text('Νέα κράτηση από φόρμα',
                           style: TextStyle(
-                              fontSize: 16, fontWeight: FontWeight.w900)),
-                    ),
+                              color: Color(0xFF5A3D00),
+                              fontSize: 17,
+                              fontWeight: FontWeight.w900)),
+                    ],
                   ),
-                ],
-              ),
+                ),
+                // ── ΠΕΡΙΕΧΟΜΕΝΟ
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(22, 20, 22, 18),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Center(
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 16, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFFFF3CD),
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: Text('$n',
+                              style: const TextStyle(
+                                  color: Color(0xFF5A3D00),
+                                  fontSize: 22,
+                                  fontWeight: FontWeight.w900)),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Center(
+                        child: Text(
+                          '$n $word από τη φόρμα',
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                              fontSize: 18, fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      const Center(
+                        child: Text(
+                          'Βρες τες στις «Αποθηκευμένες».',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                              fontSize: 13.5, color: Colors.black54),
+                        ),
+                      ),
+                      const SizedBox(height: 20),
+                      SizedBox(
+                        height: 48,
+                        child: FilledButton(
+                          style: FilledButton.styleFrom(
+                            backgroundColor: const Color(0xFFFFB300),
+                            foregroundColor: const Color(0xFF5A3D00),
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12)),
+                          ),
+                          onPressed: () => Navigator.of(dctx).pop(),
+                          child: const Text('OK',
+                              style: TextStyle(
+                                  fontSize: 16, fontWeight: FontWeight.w900)),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ),
           );
         },
@@ -191,5 +212,8 @@ class PublicBookingAlerts {
     _dialogOpen = false;
     _pendingCount = 0;
     _setStateInDialog = null;
+    // Σταμάτα τον συνεχόμενο ήχο + σβήσε τις σχετικές ειδοποιήσεις.
+    try { await stopRingtoneLoop(); } catch (_) {}
+    try { await cancelPublicBookingNotifications(); } catch (_) {}
   }
 }

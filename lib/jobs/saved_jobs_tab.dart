@@ -21,7 +21,6 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../voice/recipient_picker.dart';
 import '../voice/voice_models.dart';
@@ -611,28 +610,6 @@ class _SavedJobCard extends StatelessWidget {
     this.onCopy,
   });
 
-  // Ανοίγει WhatsApp chat με τον πελάτη. Καθαρίζει το τηλέφωνο σε διεθνή μορφή.
-  Future<void> _openWhatsApp(BuildContext context, String rawPhone) async {
-    var p = rawPhone.trim();
-    final hasPlus = p.startsWith('+');
-    p = p.replaceAll(RegExp(r'[^0-9]'), ''); // μόνο ψηφία
-    if (p.isEmpty) return;
-    // Αν δεν είχε διεθνή κωδικό και μοιάζει ελληνικό κινητό, βάλε 30 μπροστά.
-    if (!hasPlus && !p.startsWith('30') && p.length == 10 && p.startsWith('6')) {
-      p = '30$p';
-    }
-    final uri = Uri.parse('https://wa.me/$p');
-    try {
-      if (await canLaunchUrl(uri)) {
-        await launchUrl(uri, mode: LaunchMode.externalApplication);
-      } else if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Δεν βρέθηκε WhatsApp σε αυτή τη συσκευή.')),
-        );
-      }
-    } catch (_) {}
-  }
-
   @override
   Widget build(BuildContext context) {
     final job = saved.job;
@@ -737,13 +714,6 @@ class _SavedJobCard extends StatelessWidget {
                         fontSize: 18, fontWeight: FontWeight.bold,
                         color: Color(0xFF1E8E3E))),
                 const Spacer(),
-                if ((job.clientPhone ?? '').trim().isNotEmpty)
-                  IconButton(
-                    icon: const Icon(Icons.chat,
-                        size: 20, color: Color(0xFF25D366)),
-                    tooltip: 'WhatsApp στον πελάτη',
-                    onPressed: () => _openWhatsApp(context, job.clientPhone!),
-                  ),
                 if (onCopy != null)
                   IconButton(
                     icon: const Icon(Icons.copy_rounded,
