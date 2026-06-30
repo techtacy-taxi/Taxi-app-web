@@ -29,6 +29,7 @@ class SavedJob {
   final DateTime savedAt;
   final String?  calendarEventId; // αν προήλθε από συμβάν ημερολογίου
   final String?  lastEditedByName; // ποιος την άγγιξε τελευταίος (αν ξένος)
+  final String?  origin;           // π.χ. 'public_form' = ήρθε από τη φόρμα site
 
   const SavedJob({
     required this.id,
@@ -38,7 +39,11 @@ class SavedJob {
     required this.savedAt,
     this.calendarEventId,
     this.lastEditedByName,
+    this.origin,
   });
+
+  /// True αν η δουλειά δημιουργήθηκε από τη δημόσια φόρμα της ιστοσελίδας.
+  bool get isFromPublicForm => origin == 'public_form';
 
   factory SavedJob.fromDoc(DocumentSnapshot<Map<String, dynamic>> doc) {
     final d = doc.data()!;
@@ -52,6 +57,7 @@ class SavedJob {
                  DateTime.now(),
       calendarEventId: d['calendarEventId'] as String?,
       lastEditedByName: d['lastEditedByName'] as String?,
+      origin:   d['origin'] as String?,
     );
   }
 

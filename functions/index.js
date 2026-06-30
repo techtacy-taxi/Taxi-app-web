@@ -1971,3 +1971,231 @@ exports.runMonthlyChargesNow = onCall(async (request) => {
   }
   return await runMonthlyCharges();
 });
+
+// ════════════════════════════════════════════════════════════════════════════
+// ΔΗΜΟΣΙΑ ΦΟΡΜΑ ΚΡΑΤΗΣΗΣ  (booking.html στο taxiathenstransfers.com)
+// ────────────────────────────────────────────────────────────────────────────
+// Ο πελάτης ΔΕΝ έχει Firebase login. Η φόρμα κάνει POST εδώ. Η function:
+//   1) γράφει τη δουλειά ΩΣ ΑΠΟΘΗΚΕΥΜΕΝΗ στο saved_jobs (origin:'public_form')
+//      με owner = ο master — ΔΕΝ μπαίνει στο jobs, ΔΕΝ ειδοποιεί οδηγούς.
+//      Ο master αποφασίζει μετά αν θα την κάνει / στείλει / επεξεργαστεί.
+//   2) στέλνει email με .ics στον master (Gmail API, ίδιο refresh token).
+//   3) στέλνει FCM (type:'public_booking') στον master — ξεχωριστό εικονίδιο.
+//
+// ΦΑΣΗ 1: price = 0 (την βάζει ο master). Καμία χρέωση, καμία billing λογική.
+//
+// ⚠️ ΑΠΑΙΤΕΙΤΑΙ scope gmail.send στο OAuth του master (μία επανασύνδεση).
+//    Αν λείπει, το email αποτυγχάνει σιωπηλά αλλά η δουλειά + το FCM περνούν.
+// ════════════════════════════════════════════════════════════════════════════
+const { onRequest } = require("firebase-functions/v2/https");
+
+// Domain(s) που επιτρέπονται να καλέσουν τη function (CORS).
+const BOOKING_ALLOWED_ORIGINS = [
+  "https://taxiathenstransfers.com",
+  "https://www.taxiathenstransfers.com",
+];
+
+// ── helper: ασφαλές κείμενο (όχι undefined/null) ────────────────────────────
+function s(v) { return (v == null ? "" : String(v)).trim(); }
+
+// ── helper: φτιάχνει .ics για τη δουλειά (ώρα Ελλάδας) ───────────────────────
+function buildIcs({ from, to, startDate, durationMin, summary, description }) {
+  // startDate: JS Date (UTC). Μορφή ICS σε UTC (Z).
+  const pad = (n) => String(n).padStart(2, "0");
+  const fmt = (d) =>
+    d.getUTCFullYear() + pad(d.getUTCMonth() + 1) + pad(d.getUTCDate()) +
+    "T" + pad(d.getUTCHours()) + pad(d.getUTCMinutes()) + pad(d.getUTCSeconds()) + "Z";
+  const end = new Date(startDate.getTime() + (durationMin || 60) * 60000);
+  const uid = "booking-" + Date.now() + "@athenstaxi";
+  const esc = (t) => s(t).replace(/\\/g, "\\\\").replace(/;/g, "\\;").replace(/,/g, "\\,").replace(/\n/g, "\\n");
+  return [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "PRODID:-//AthensTaxi//Booking//EL",
+    "CALSCALE:GREGORIAN",
+    "METHOD:PUBLISH",
+    "BEGIN:VEVENT",
+    "UID:" + uid,
+    "DTSTAMP:" + fmt(new Date()),
+    "DTSTART:" + fmt(startDate),
+    "DTEND:" + fmt(end),
+    "SUMMARY:" + esc(summary),
+    "LOCATION:" + esc(from + " → " + to),
+    "DESCRIPTION:" + esc(description),
+    "END:VEVENT",
+    "END:VCALENDAR",
+  ].join("\r\n");
+}
+
+// ── helper: στέλνει email με .ics μέσω Gmail API (refresh token του master) ──
+async function sendBookingEmail(masterUid, toEmail, subject, bodyText, icsContent) {
+  const accessToken = await freshAccessTokenFor(masterUid);
+  if (!accessToken) { console.warn("sendBookingEmail: δεν βρέθηκε access token master"); return false; }
+
+  const boundary = "athenstaxi_" + Date.now();
+  const icsB64 = Buffer.from(icsContent, "utf8").toString("base64");
+
+  const mime = [
+    'Content-Type: multipart/mixed; boundary="' + boundary + '"',
+    "MIME-Version: 1.0",
+    "to: " + toEmail,
+    "subject: =?UTF-8?B?" + Buffer.from(subject, "utf8").toString("base64") + "?=",
+    "",
+    "--" + boundary,
+    'Content-Type: text/plain; charset="UTF-8"',
+    "Content-Transfer-Encoding: base64",
+    "",
+    Buffer.from(bodyText, "utf8").toString("base64"),
+    "",
+    "--" + boundary,
+    'Content-Type: text/calendar; charset="UTF-8"; method=PUBLISH; name="booking.ics"',
+    "Content-Transfer-Encoding: base64",
+    'Content-Disposition: attachment; filename="booking.ics"',
+    "",
+    icsB64,
+    "",
+    "--" + boundary + "--",
+  ].join("\r\n");
+
+  const raw = Buffer.from(mime, "utf8")
+    .toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+
+  const res = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/messages/send", {
+    method: "POST",
+    headers: { Authorization: "Bearer " + accessToken, "Content-Type": "application/json" },
+    body: JSON.stringify({ raw }),
+  });
+  if (!res.ok) { console.error("Gmail send error:", await res.text()); return false; }
+  return true;
+}
+
+exports.submitPublicBooking = onRequest(
+  { region: "us-central1", cors: BOOKING_ALLOWED_ORIGINS, memory: "256MiB" },
+  async (req, res) => {
+    // CORS preflight το χειρίζεται το cors:[...] παραπάνω.
+    if (req.method !== "POST") {
+      return res.status(405).json({ ok: false, error: "method_not_allowed" });
+    }
+
+    try {
+      const b = req.body || {};
+      const from = s(b.from), to = s(b.to);
+      const name = s(b.name), phone = s(b.phone);
+      const date = s(b.date), time = s(b.time);   // YYYY-MM-DD , HH:MM
+
+      // Ελάχιστη επικύρωση
+      if (!from || !to || !name || !phone || !date || !time) {
+        return res.status(400).json({ ok: false, error: "missing_fields" });
+      }
+
+      const persons = Math.max(1, parseInt(b.persons, 10) || 1);
+      const luggage = Math.max(0, parseInt(b.luggage, 10) || 0);
+      const childSeatCount = Math.max(0, parseInt(b.childSeatCount, 10) || 0);
+      const vehicleType = (s(b.vehicleType) === "van") ? "van" : "taxi";
+      const email = s(b.email), flight = s(b.flight), note = s(b.note);
+      const lang = s(b.lang) || "el";
+
+      const masterUid = await findMasterUid();
+      if (!masterUid) {
+        console.error("submitPublicBooking: δεν βρέθηκε master");
+        return res.status(500).json({ ok: false, error: "no_master" });
+      }
+      const me = await getFirestore().collection("presence").doc(masterUid).get();
+      const masterName = (me.exists && me.data().name) ? me.data().name : "Master";
+
+      // Ραντεβού σε ώρα Ελλάδας → JS Date.
+      // Το date/time έρχονται ως τοπική ώρα Ελλάδας. Φτιάχνουμε ISO με offset.
+      // (Απλό & ασφαλές: θεωρούμε Europe/Athens. Για ακρίβεια DST, ο master
+      //  βλέπει ούτως ή άλλως το ραντεβού στην εφαρμογή πριν στείλει.)
+      const scheduledIso = date + "T" + time + ":00";
+      const scheduledAtMs = Date.parse(scheduledIso); // local-naive → ms (UTC approx)
+      const startDate = isNaN(scheduledAtMs) ? new Date() : new Date(scheduledAtMs);
+
+      // Σύνθεση σημειώσεων για τη δουλειά
+      const noteLines = [];
+      noteLines.push("📝 Από φόρμα ιστοσελίδας");
+      noteLines.push("Πελάτης: " + name + " · " + phone);
+      if (email)  noteLines.push("Email: " + email);
+      if (flight) noteLines.push("Πτήση/Πλοίο: " + flight);
+      noteLines.push("Άτομα: " + persons + " · Βαλίτσες: " + luggage +
+                     (childSeatCount ? " · Παιδικά καθ.: " + childSeatCount : ""));
+      noteLines.push("Όχημα: " + (vehicleType === "van" ? "Βαν" : "Ταξί"));
+      if (note) noteLines.push("Σχόλια: " + note);
+      const fullNote = noteLines.join("\n");
+
+      // ── 1) Γράψιμο στο saved_jobs (draft, owner = master) ──────────────────
+      // ΣΗΜΑΝΤΙΚΟ: τα keys πρέπει να ταιριάζουν ΑΚΡΙΒΩΣ με το Job.fromDoc
+      // (from/to/persons/flightOrShip/scheduledAt:Timestamp), αλλιώς η δουλειά
+      // εμφανίζεται κενή στην εφαρμογή.
+      const { Timestamp } = require("firebase-admin/firestore");
+      const savedRef = await getFirestore().collection("saved_jobs").add({
+        origin:         "public_form",   // ← ΣΗΜΑΔΙ «ΑΠΟ ΦΟΡΜΑ»
+        from:           from,
+        to:             to,
+        clientName:     name,
+        clientPhone:    phone,
+        clientEmail:    email,
+        flightOrShip:   flight,
+        persons:        persons,
+        luggage:        luggage,
+        childSeatCount: childSeatCount,
+        vehicleType:    vehicleType,     // 'taxi' | 'van'
+        note:           fullNote,
+        price:          0,               // ΦΑΣΗ 1: ο master βάζει τιμή
+        scheduledAt:    Timestamp.fromDate(startDate),  // ραντεβού (Job.fromDoc)
+        lang:           lang,
+        ownerUid:       masterUid,
+        ownerName:      masterName,
+        savedAt:        FieldValue.serverTimestamp(),
+        createdAt:      FieldValue.serverTimestamp(),
+      });
+
+      // ── 2) Email + .ics στον master ────────────────────────────────────────
+      const summary = "🚕 Νέα κράτηση: " + from + " → " + to;
+      const whenStr = date + " " + time;
+      const emailBody =
+        "Νέα κράτηση από τη φόρμα της ιστοσελίδας.\n\n" +
+        "Διαδρομή: " + from + " → " + to + "\n" +
+        "Ραντεβού: " + whenStr + "\n" +
+        "Πελάτης: " + name + " (" + phone + ")\n" +
+        (email ? "Email: " + email + "\n" : "") +
+        (flight ? "Πτήση/Πλοίο: " + flight + "\n" : "") +
+        "Άτομα: " + persons + " · Βαλίτσες: " + luggage +
+        (childSeatCount ? " · Παιδικά καθίσματα: " + childSeatCount : "") + "\n" +
+        "Όχημα: " + (vehicleType === "van" ? "Βαν" : "Ταξί") + "\n" +
+        (note ? "Σχόλια: " + note + "\n" : "") +
+        "\nΗ δουλειά αποθηκεύτηκε στις «Αποθηκευμένες» της εφαρμογής.";
+
+      const ics = buildIcs({
+        from, to, startDate, durationMin: 60,
+        summary, description: emailBody,
+      });
+
+      // Email στον master. (toEmail: το email του master)
+      const masterEmail = (me.exists && me.data().email) ? me.data().email : "techtacy@gmail.com";
+      sendBookingEmail(masterUid, masterEmail, summary, emailBody, ics)
+        .catch((e) => console.error("booking email failed:", e));
+
+      // ── 3) FCM στον master (ξεχωριστό type/εικονίδιο) ──────────────────────
+      try {
+        const tokens = await getMasterTokens();
+        await sendDataOnly(tokens, {
+          type:       "public_booking",          // ← το owner_alerts το ξεχωρίζει
+          savedJobId: savedRef.id,
+          from, to,
+          clientName: name,
+          when:       whenStr,
+          title:      "Νέα κράτηση από φόρμα",
+          body:       from + " → " + to + " · " + name,
+        });
+      } catch (e) {
+        console.error("booking FCM failed:", e);
+      }
+
+      return res.status(200).json({ ok: true, id: savedRef.id });
+    } catch (e) {
+      console.error("submitPublicBooking error:", e);
+      return res.status(500).json({ ok: false, error: "server_error" });
+    }
+  }
+);

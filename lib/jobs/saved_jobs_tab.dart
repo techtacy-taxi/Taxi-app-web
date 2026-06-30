@@ -615,6 +615,7 @@ class _SavedJobCard extends StatelessWidget {
     final job = saved.job;
     final expires = saved.expiresAt;
     final isReturn = job.isReturn;
+    final isForm = saved.isFromPublicForm;
 
     return Card(
       margin: const EdgeInsets.only(bottom: 10),
@@ -622,14 +623,18 @@ class _SavedJobCard extends StatelessWidget {
       shadowColor: Colors.black26,
       color: selected
           ? Colors.amber.shade50
-          : (isReturn ? const Color(0xFFF3E5F5) : Colors.white),
+          : (isForm
+              ? const Color(0xFFFFF8E1)
+              : (isReturn ? const Color(0xFFF3E5F5) : Colors.white)),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(14),
         side: BorderSide(
             color: selected
                 ? Colors.amber
-                : (isReturn ? const Color(0xFF7B1FA2) : Colors.grey.shade400),
-            width: selected ? 2 : (isReturn ? 1.5 : 1.2)),
+                : (isForm
+                    ? const Color(0xFFFFB300)
+                    : (isReturn ? const Color(0xFF7B1FA2) : Colors.grey.shade400)),
+            width: selected ? 2 : ((isForm || isReturn) ? 1.5 : 1.2)),
       ),
       child: InkWell(
         onTap: onTap,
@@ -639,6 +644,28 @@ class _SavedJobCard extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              // Badge ΑΠΟ ΦΟΡΜΑ (πάνω-πάνω) — ήρθε από τη δημόσια φόρμα του site
+              if (isForm) ...[
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 12, vertical: 6),
+                  margin: const EdgeInsets.only(bottom: 8),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFFB300),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Row(mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                    Icon(Icons.public_rounded,
+                        color: Color(0xFF5A3D00), size: 16),
+                    SizedBox(width: 6),
+                    Text('ΑΠΟ ΦΟΡΜΑ', style: TextStyle(
+                        color: Color(0xFF5A3D00), fontSize: 13,
+                        fontWeight: FontWeight.w900, letterSpacing: 2)),
+                  ]),
+                ),
+              ],
               // Badge ΕΠΙΣΤΡΟΦΗ (πάνω-πάνω)
               if (isReturn) ...[
                 Container(

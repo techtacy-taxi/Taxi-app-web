@@ -92,6 +92,9 @@ Future<void> _displayFromMessage(
     case 'owner_expired':
       await _showOwnerBg(fln, data);
       break;
+    case 'public_booking':
+      await _showPublicBookingBg(fln, data);
+      break;
     default:
       // Άγνωστος τύπος — εμφάνισε γενικό ώστε να μη χαθεί.
       await _showGenericBg(fln, data, muted);
@@ -353,6 +356,50 @@ Future<void> _showOwnerBg(
     body,
     NotificationDetails(android: android),
     payload: jsonEncode({'jobId': jobId, 'type': type}),
+  );
+}
+
+/// Ειδοποίηση ΝΕΑΣ ΚΡΑΤΗΣΗΣ ΑΠΟ ΤΗ ΦΟΡΜΑ της ιστοσελίδας (μόνο στον master).
+/// Η δουλειά έχει ήδη μπει στις «Αποθηκευμένες». Έντονη ειδοποίηση (owner
+/// channel) με 🌐 στην αρχή του τίτλου ώστε να ξεχωρίζει αμέσως.
+Future<void> _showPublicBookingBg(
+    FlutterLocalNotificationsPlugin fln, Map<String, dynamic> d) async {
+  final from = (d['from'] ?? '').toString();
+  final to   = (d['to'] ?? '').toString();
+  final name = (d['clientName'] ?? '').toString();
+  final when = (d['when'] ?? '').toString();
+  final savedJobId = (d['savedJobId'] ?? '').toString();
+
+  final title = '🌐 ${(d['title'] ?? 'Νέα κράτηση από φόρμα')}';
+  final route = (from.isNotEmpty || to.isNotEmpty) ? '$from → $to' : '';
+  final extra = [name, when].where((s) => s.isNotEmpty).join(' · ');
+  final body  = [route, extra].where((s) => s.isNotEmpty).join('\n');
+
+  final android = AndroidNotificationDetails(
+    kOwnerChannelId,
+    kOwnerChannelName,
+    channelDescription: kOwnerChannelDesc,
+    importance:       Importance.max,
+    priority:         Priority.max,
+    category:         AndroidNotificationCategory.message,
+    visibility:       NotificationVisibility.public,
+    autoCancel:       true,
+    playSound:        true,
+    audioAttributesUsage: AudioAttributesUsage.alarm,
+    enableVibration:  true,
+    vibrationPattern: kStrongVibration,
+    enableLights:     true,
+    styleInformation: BigTextStyleInformation(body),
+  );
+
+  final notifId =
+      (('booking'.hashCode ^ savedJobId.hashCode).abs()) & 0x7FFFFFFF;
+  await fln.show(
+    notifId,
+    title,
+    body,
+    NotificationDetails(android: android),
+    payload: jsonEncode({'savedJobId': savedJobId, 'type': 'public_booking'}),
   );
 }
 
