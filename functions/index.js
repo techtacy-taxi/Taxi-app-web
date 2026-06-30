@@ -588,14 +588,21 @@ exports.onBroadcastUpdated = onDocumentUpdated(
 
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 
-// Web client ID + SECRET (server-side μόνο — ΔΕΝ φεύγει ποτέ στον client).
+// Web client ID (ΔΕΝ είναι μυστικό — client IDs είναι δημόσια).
 const GCAL_CLIENT_ID =
   "566987559821-tlphsu640nfhfdhtevutr7kj58tpu2vq.apps.googleusercontent.com";
-// ⚠️ ΑΝΤΙΚΑΤΕΣΤΗΣΕ με το ΝΕΟ client secret του Web client (Cloud Console).
-const GCAL_CLIENT_SECRET = "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";
+
+// ⚠️ ΤΟ SECRET ΔΕΝ ΕΙΝΑΙ ΠΛΕΟΝ ΣΤΟΝ ΚΩΔΙΚΑ.
+// Αποθηκεύεται ως Firebase Secret (GCAL_CLIENT_SECRET) και διαβάζεται runtime
+// μέσω GCAL_CLIENT_SECRET.value(). Κάθε function που το χρησιμοποιεί το δηλώνει
+// στο { secrets: [GCAL_CLIENT_SECRET] }.
+// Όρισέ το μία φορά με:
+//   firebase functions:secrets:set GCAL_CLIENT_SECRET
+const { defineSecret } = require("firebase-functions/params");
+const GCAL_CLIENT_SECRET = defineSecret("GCAL_CLIENT_SECRET");
 
 // Ανταλλαγή serverAuthCode → refresh_token. Αποθήκευση στο Firestore.
-exports.exchangeCalendarCode = onCall(async (request) => {
+exports.exchangeCalendarCode = onCall({ secrets: [GCAL_CLIENT_SECRET] }, async (request) => {
   const uid = request.auth && request.auth.uid;
   if (!uid) throw new HttpsError("unauthenticated", "Απαιτείται σύνδεση.");
 
@@ -609,7 +616,7 @@ exports.exchangeCalendarCode = onCall(async (request) => {
   const body = new URLSearchParams({
     code:          code,
     client_id:     GCAL_CLIENT_ID,
-    client_secret: GCAL_CLIENT_SECRET,
+    client_secret: GCAL_CLIENT_SECRET.value(),
     redirect_uri:  redirectUri,
     grant_type:    "authorization_code",
   });
@@ -642,7 +649,7 @@ exports.exchangeCalendarCode = onCall(async (request) => {
 });
 
 // Επιστρέφει events [timeMin, timeMax) χρησιμοποιώντας το αποθηκευμένο token.
-exports.getCalendarEvents = onCall(async (request) => {
+exports.getCalendarEvents = onCall({ secrets: [GCAL_CLIENT_SECRET] }, async (request) => {
   const uid = request.auth && request.auth.uid;
   if (!uid) throw new HttpsError("unauthenticated", "Απαιτείται σύνδεση.");
 
@@ -667,7 +674,7 @@ exports.getCalendarEvents = onCall(async (request) => {
     }
     const body = new URLSearchParams({
       client_id:     GCAL_CLIENT_ID,
-      client_secret: GCAL_CLIENT_SECRET,
+      client_secret: GCAL_CLIENT_SECRET.value(),
       refresh_token: data.refreshToken,
       grant_type:    "refresh_token",
     });
@@ -771,7 +778,7 @@ async function freshAccessTokenFor(uid) {
 
   const body = new URLSearchParams({
     client_id:     GCAL_CLIENT_ID,
-    client_secret: GCAL_CLIENT_SECRET,
+    client_secret: GCAL_CLIENT_SECRET.value(),
     refresh_token: data.refreshToken,
     grant_type:    "refresh_token",
   });
@@ -1437,7 +1444,7 @@ async function runMonthlyReport(monthKey) {
 // ─── Scheduled: κάθε 1η του μήνα, 06:00 ώρα Ελλάδας ─────────────────────────
 exports.monthlyReport = onSchedule(
   { schedule: "0 6 1 * *", timeZone: "Europe/Athens",
-    memory: "512MiB", timeoutSeconds: 300 },
+    memory: "512MiB", timeoutSeconds: 300, secrets: [GCAL_CLIENT_SECRET] },
   async () => {
     const key = prevMonthKey(new Date());
     console.log("monthlyReport: generating for", key);
@@ -1469,7 +1476,7 @@ exports.monthlyReport = onSchedule(
 
 // ─── Χειροκίνητη παραγωγή (μόνο master) ─────────────────────────────────────
 exports.generateMonthlyReport = onCall(
-  { memory: "512MiB", timeoutSeconds: 300 },
+  { memory: "512MiB", timeoutSeconds: 300, secrets: [GCAL_CLIENT_SECRET] },
   async (request) => {
     const uid = request.auth && request.auth.uid;
     if (!uid) throw new HttpsError("unauthenticated", "Απαιτείται σύνδεση.");
@@ -2069,56 +2076,9 @@ async function sendBookingEmail(masterUid, toEmail, subject, bodyText, icsConten
   return true;
 }
 
-// ── Push για κράτηση από φόρμα: DATA-ONLY (ο handler αναλαμβάνει εμφάνιση) ────
-// Foreground → PublicBookingAlerts popup. Background/killed → _showPublicBookingBg.
-// Data-only ώστε να ΜΗΝ εμφανίζεται διπλή ειδοποίηση από το σύστημα.
-async function sendBookingPush(tokens, info) {
-  if (!tokens.length) return;
-  const data = {
-    type:       "public_booking",
-    savedJobId: String(info.savedJobId || ""),
-    from:       String(info.from || ""),
-    to:         String(info.to || ""),
-    clientName: String(info.clientName || ""),
-    when:       String(info.when || ""),
-    title:      "Νέα κράτηση από φόρμα",
-    body:       info.from + " → " + info.to + " · " + info.clientName,
-  };
-
-  const deadTokens = [];
-  for (let i = 0; i < tokens.length; i += 500) {
-    const chunk = tokens.slice(i, i + 500);
-    const res = await getMessaging().sendEachForMulticast({
-      tokens: chunk,
-      data,
-      android: { priority: "high", ttl: 5 * 60 * 1000 },
-    });
-    res.responses.forEach((r, idx) => {
-      if (!r.success) {
-        const code = r.error && r.error.code;
-        if (code === "messaging/invalid-registration-token" ||
-            code === "messaging/registration-token-not-registered") {
-          deadTokens.push(chunk[idx]);
-        } else if (r.error) {
-          console.warn("booking push error:", code, r.error.message);
-        }
-      }
-    });
-  }
-  if (deadTokens.length) {
-    try {
-      const db = getFirestore();
-      const snap = await db.collection("presence")
-        .where("fcmToken", "in", deadTokens.slice(0, 30)).get();
-      const batch = db.batch();
-      snap.docs.forEach((d) => batch.update(d.ref, { fcmToken: null }));
-      await batch.commit();
-    } catch (_) {}
-  }
-}
-
 exports.submitPublicBooking = onRequest(
-  { region: "us-central1", cors: BOOKING_ALLOWED_ORIGINS, memory: "256MiB" },
+  { region: "us-central1", cors: BOOKING_ALLOWED_ORIGINS, memory: "256MiB",
+    secrets: [GCAL_CLIENT_SECRET] },
   async (req, res) => {
     // CORS preflight το χειρίζεται το cors:[...] παραπάνω.
     if (req.method !== "POST") {
@@ -2233,14 +2193,17 @@ exports.submitPublicBooking = onRequest(
       sendBookingEmail(masterUid, masterEmail, summary, emailBody, ics)
         .catch((e) => console.error("booking email failed:", e));
 
-      // ── 3) FCM στον master (notification + data → χτυπά ακόμα & killed) ─────
+      // ── 3) FCM στον master (ξεχωριστό type/εικονίδιο) ──────────────────────
       try {
         const tokens = await getMasterTokens();
-        await sendBookingPush(tokens, {
+        await sendDataOnly(tokens, {
+          type:       "public_booking",          // ← το owner_alerts το ξεχωρίζει
           savedJobId: savedRef.id,
           from, to,
           clientName: name,
           when:       whenStr,
+          title:      "Νέα κράτηση από φόρμα",
+          body:       from + " → " + to + " · " + name,
         });
       } catch (e) {
         console.error("booking FCM failed:", e);

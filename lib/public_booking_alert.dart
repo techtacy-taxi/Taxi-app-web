@@ -4,21 +4,22 @@
 //
 // ΕΙΔΟΠΟΙΗΣΗ «ΝΕΑ ΚΡΑΤΗΣΗ ΑΠΟ ΦΟΡΜΑ» — foreground popup (στη μέση).
 //
-// Πότε εμφανίζεται:
-//   • Όταν η εφαρμογή είναι ΑΝΟΙΧΤΗ (foreground) και φτάσει FCM type
-//     'public_booking' → δείχνουμε ένα κεντρικό dialog που πρέπει ο master
-//     να πατήσει «ΟΚ» για να κλείσει.
-//   • Αν έρθουν ΚΙ ΑΛΛΕΣ κρατήσεις πριν πατηθεί το «ΟΚ», ΔΕΝ ανοίγουν νέα
-//     dialogs — ο μετρητής μέσα στο ίδιο dialog αυξάνεται (1 → 2 → 3 …).
+// Δουλεύει με ΔΥΟ πηγές (για σιγουριά):
+//   1) Firestore listener στο 'saved_jobs' (origin == 'public_form') —
+//      ο ΑΞΙΟΠΙΣΤΟΣ τρόπος, ίδια τεχνική με το owner_alerts. Όταν η εφαρμογή
+//      είναι ΑΝΟΙΧΤΗ και μπει νέα δουλειά από φόρμα → σκάει το popup.
+//   2) FCM onMessage (αν φτάσει) — εφεδρικό, ίδιο popup.
 //
-// Όταν η εφαρμογή είναι killed/background, αναλαμβάνει ο background handler
-// (fcm_service.dart → _showPublicBookingBg) που δείχνει native ειδοποίηση.
+// Μετρητής: αν έρθουν κι άλλες πριν πατηθεί «ΟΚ», ο αριθμός αυξάνεται (1→2→3)
+// μέσα στο ίδιο dialog — ΔΕΝ ανοίγουν πολλά dialogs.
 //
-// Σύνδεση: στο main.dart, μέσα στο αρχικοποιημένο App, κάλεσε
-//   PublicBookingAlerts.instance.start();
-// μία φορά (αφού υπάρχει ο navigatorKey).
+// Όταν η εφαρμογή είναι killed/background → αναλαμβάνει ο background handler
+// (fcm_service.dart -> _showPublicBookingBg) με native ειδοποίηση.
+//
+// Εκκίνηση: PublicBookingAlerts.instance.start();  (μόνο για master)
 
 import 'dart:async';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'notifications_service.dart';
@@ -27,31 +28,69 @@ class PublicBookingAlerts {
   PublicBookingAlerts._();
   static final PublicBookingAlerts instance = PublicBookingAlerts._();
 
-  StreamSubscription<RemoteMessage>? _sub;
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _fsSub;
+  StreamSubscription<RemoteMessage>? _fcmSub;
+  bool _primed = false;                 // αγνόησε τις υπάρχουσες στο 1ο snapshot
+  final Set<String> _seenIds = {};      // για να μη μετράμε δύο φορές την ίδια
   bool _dialogOpen = false;
-  int _pendingCount = 0;            // πόσες έχουν έρθει & δεν έχουν «διαβαστεί»
+  int _pendingCount = 0;
   void Function(void Function())? _setStateInDialog;
 
-  /// Ξεκινά τον foreground listener. Ασφαλές να κληθεί πολλές φορές.
+  /// Ξεκινά listeners. Ασφαλές να κληθεί πολλές φορές.
   void start() {
-    _sub ??= FirebaseMessaging.onMessage.listen((msg) {
+    // 1) Firestore listener — ο αξιόπιστος τρόπος για foreground.
+    if (_fsSub == null) {
+      _primed = false;
+      _seenIds.clear();
+      _fsSub = FirebaseFirestore.instance
+          .collection('saved_jobs')
+          .where('origin', isEqualTo: 'public_form')
+          .snapshots()
+          .listen(_onSnapshot, onError: (_) {});
+    }
+    // 2) FCM — εφεδρικό.
+    _fcmSub ??= FirebaseMessaging.onMessage.listen((msg) {
       final type = (msg.data['type'] ?? '').toString();
       if (type == 'public_booking') {
-        _onBooking();
+        final id = (msg.data['savedJobId'] ?? '').toString();
+        if (id.isNotEmpty && _seenIds.contains(id)) return; // ήδη το είδαμε
+        if (id.isNotEmpty) _seenIds.add(id);
+        _bump();
       }
     });
   }
 
   void dispose() {
-    _sub?.cancel();
-    _sub = null;
+    _fsSub?.cancel(); _fsSub = null;
+    _fcmSub?.cancel(); _fcmSub = null;
+    _primed = false;
+    _seenIds.clear();
   }
 
-  void _onBooking() {
+  void _onSnapshot(QuerySnapshot<Map<String, dynamic>> snap) {
+    // Πρώτο snapshot: «γέμισε» τις υπάρχουσες χωρίς popup.
+    if (!_primed) {
+      for (final d in snap.docs) {
+        _seenIds.add(d.id);
+      }
+      _primed = true;
+      return;
+    }
+    // Επόμενα: πιάσε ΜΟΝΟ νέες προσθήκες.
+    for (final change in snap.docChanges) {
+      if (change.type == DocumentChangeType.added) {
+        final id = change.doc.id;
+        if (_seenIds.contains(id)) continue;
+        _seenIds.add(id);
+        _bump();
+      }
+    }
+  }
+
+  void _bump() {
     _pendingCount++;
     if (_dialogOpen) {
-      // Ήδη ανοιχτό → απλώς ανανέωσε τον μετρητή μέσα στο dialog.
-      _setStateInDialog?.call(() {});
+      _setStateInDialog?.call(() {});   // ανανέωσε τον μετρητή
       return;
     }
     _showDialog();
@@ -60,7 +99,7 @@ class PublicBookingAlerts {
   Future<void> _showDialog() async {
     final nav = NotificationsService.navigatorKey.currentState;
     final ctx = nav?.overlay?.context;
-    if (ctx == null) return;   // η εφαρμογή δεν έχει UI έτοιμο ακόμα
+    if (ctx == null) return;
 
     _dialogOpen = true;
     await showDialog<void>(
@@ -80,7 +119,6 @@ class PublicBookingAlerts {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  // Εικονίδιο υδρόγειος μέσα σε κίτρινο κύκλο
                   Center(
                     child: Container(
                       width: 64, height: 64,
@@ -93,7 +131,6 @@ class PublicBookingAlerts {
                     ),
                   ),
                   const SizedBox(height: 14),
-                  // Μετρητής + κείμενο
                   Center(
                     child: Container(
                       padding: const EdgeInsets.symmetric(
@@ -112,9 +149,7 @@ class PublicBookingAlerts {
                   const SizedBox(height: 12),
                   Center(
                     child: Text(
-                      n == 1
-                          ? '1 $word από τη φόρμα'
-                          : '$n $word από τη φόρμα',
+                      '$n $word από τη φόρμα',
                       textAlign: TextAlign.center,
                       style: const TextStyle(
                           fontSize: 18, fontWeight: FontWeight.bold),
@@ -130,7 +165,6 @@ class PublicBookingAlerts {
                     ),
                   ),
                   const SizedBox(height: 20),
-                  // Κουμπί ΟΚ — κλείνει & μηδενίζει
                   SizedBox(
                     height: 48,
                     child: FilledButton(
@@ -154,7 +188,6 @@ class PublicBookingAlerts {
       ),
     );
 
-    // Έκλεισε το dialog → reset
     _dialogOpen = false;
     _pendingCount = 0;
     _setStateInDialog = null;
