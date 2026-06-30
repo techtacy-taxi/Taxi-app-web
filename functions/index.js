@@ -2095,6 +2095,11 @@ exports.submitPublicBooking = onRequest(
       const email = s(b.email), flight = s(b.flight), note = s(b.note);
       const lang = s(b.lang) || "el";
 
+      // Συντεταγμένες (αν επιλέχθηκαν από autocomplete/χάρτη)
+      const num = (v) => (v == null || v === "" || isNaN(Number(v))) ? null : Number(v);
+      const fromLat = num(b.fromLat), fromLng = num(b.fromLng);
+      const toLat = num(b.toLat), toLng = num(b.toLng);
+
       const masterUid = await findMasterUid();
       if (!masterUid) {
         console.error("submitPublicBooking: δεν βρέθηκε master");
@@ -2132,6 +2137,10 @@ exports.submitPublicBooking = onRequest(
         origin:         "public_form",   // ← ΣΗΜΑΔΙ «ΑΠΟ ΦΟΡΜΑ»
         from:           from,
         to:             to,
+        fromLat:        fromLat,
+        fromLng:        fromLng,
+        toLat:          toLat,
+        toLng:          toLng,
         clientName:     name,
         clientPhone:    phone,
         clientEmail:    email,
