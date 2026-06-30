@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- getTemporaryDirectory() στο Android = context.cacheDir -->
+    <cache-path name="ics_cache" path="." />
+    <files-path name="ics_files" path="." />
+</paths>

@@ -378,31 +378,37 @@ class _GroupListView extends StatefulWidget {
 }
 
 class _GroupListViewState extends State<_GroupListView> {
-  late Future<Map<String, Map<String, dynamic>>> _future;
+  late Stream<Map<String, Map<String, dynamic>>> _stream;
+  // Κρατάμε το τελευταίο αποτέλεσμα ώστε το pull-to-refresh να μην «αδειάζει»
+  // την οθόνη και ώστε να μη δείχνουμε spinner σε κάθε live ανανέωση.
+  Map<String, Map<String, dynamic>>? _last;
 
   @override
   void initState() {
     super.initState();
-    _future = JobService.groupBillingTotals();
+    _stream = JobService.groupBillingTotalsStream();
   }
 
+  // Το stream ανανεώνεται μόνο του· το pull-to-refresh απλώς δίνει στον χρήστη
+  // την αίσθηση χειροκίνητης ανανέωσης (επανασύνδεση στο stream).
   Future<void> _refresh() async {
     setState(() {
-      _future = JobService.groupBillingTotals();
+      _stream = JobService.groupBillingTotalsStream();
     });
-    await _future;
+    await Future<void>.delayed(const Duration(milliseconds: 400));
   }
 
   @override
   Widget build(BuildContext context) {
-    return FutureBuilder<Map<String, Map<String, dynamic>>>(
-      future: _future,
+    return StreamBuilder<Map<String, Map<String, dynamic>>>(
+      stream: _stream,
       builder: (context, snap) {
-        if (!snap.hasData) {
+        if (snap.hasData) _last = snap.data;
+        final all = _last;
+        if (all == null) {
           return const Center(
               child: CircularProgressIndicator(color: _purple));
         }
-        final all = snap.data!;
         final entries = all.entries
             .where((e) => widget.onlyGroupIds == null ||
                 widget.onlyGroupIds!.contains(e.key))
@@ -1519,12 +1525,10 @@ class _ChargeGroupTileState extends State<_ChargeGroupTile> {
         ),
         if (_open)
           Padding(
-            padding: const EdgeInsets.fromLTRB(10, 2, 10, 8),
+            padding: const EdgeInsets.fromLTRB(10, 6, 10, 4),
             child: Column(children: [
-              for (int i = 0; i < widget.charges.length; i++) ...[
-                if (i > 0) Divider(height: 1, color: Colors.grey.shade100),
+              for (int i = 0; i < widget.charges.length; i++)
                 _jobRow(context, widget.charges[i]),
-              ],
             ]),
           ),
       ]),
@@ -1553,39 +1557,141 @@ class _ChargeGroupTileState extends State<_ChargeGroupTile> {
     final date = '${dt.day.toString().padLeft(2, "0")}/'
         '${dt.month.toString().padLeft(2, "0")}';
 
-    return InkWell(
-      onTap: d.jobId.isEmpty ? null : () => _openJob(context, d.jobId),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 7),
-        child: Row(children: [
-          Expanded(
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-              Text(d.note.isNotEmpty ? d.note : 'Δουλειά',
-                  maxLines: 1, overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                      fontSize: 12.5, fontWeight: FontWeight.w600)),
-              const SizedBox(height: 1),
-              Text('$date · ${d.amount.toStringAsFixed(2)}€',
-                  style: TextStyle(fontSize: 11, color: Colors.grey[500])),
-            ]),
-          ),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
-            decoration: BoxDecoration(
-              color: cBg,
-              borderRadius: BorderRadius.circular(9),
+    // Το note έρχεται ως «Από → Προς» (server). Σπάμε στα δύο για να δείξουμε
+    // route timeline· αν δεν υπάρχει διαχωριστής, δείχνουμε όλη τη γραμμή ως «από».
+    final raw = d.note.trim();
+    String fromTxt = raw.isNotEmpty ? raw : 'Δουλειά';
+    String? toTxt;
+    final arrow = raw.indexOf('→');
+    if (arrow >= 0) {
+      fromTxt = raw.substring(0, arrow).trim();
+      final rest = raw.substring(arrow + 1).trim();
+      if (rest.isNotEmpty) toTxt = rest;
+      if (fromTxt.isEmpty) fromTxt = 'Δουλειά';
+    }
+
+    final tappable = d.jobId.isNotEmpty;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 7),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border.all(color: Colors.grey.shade200),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: tappable ? () => _openJob(context, d.jobId) : null,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(11, 9, 11, 9),
+          child: Column(children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // ── Route timeline: από (πορτοκαλί) → προς (κόκκινο) ──
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.only(left: 2),
+                    child: _routeTimeline(fromTxt, toTxt),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 9, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: cBg,
+                    borderRadius: BorderRadius.circular(9),
+                  ),
+                  child: Text(chip,
+                      style: TextStyle(fontSize: 11,
+                          fontWeight: FontWeight.bold, color: cFg)),
+                ),
+              ],
             ),
-            child: Text(chip,
-                style: TextStyle(fontSize: 11,
-                    fontWeight: FontWeight.bold, color: cFg)),
-          ),
-          if (d.jobId.isNotEmpty)
-            Icon(Icons.chevron_right_rounded,
-                size: 16, color: Colors.grey[400]),
-        ]),
+            const SizedBox(height: 7),
+            Container(height: 0.5, color: Colors.grey.shade200),
+            const SizedBox(height: 6),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Row(children: [
+                  Icon(Icons.calendar_today_rounded,
+                      size: 12, color: Colors.grey.shade500),
+                  const SizedBox(width: 4),
+                  Text(date,
+                      style: TextStyle(
+                          fontSize: 11.5, color: Colors.grey.shade600)),
+                ]),
+                Row(children: [
+                  Text('${d.amount.toStringAsFixed(2)}€',
+                      style: const TextStyle(
+                          fontSize: 13.5,
+                          fontWeight: FontWeight.w700,
+                          color: Color(0xFF263238))),
+                  if (tappable) ...[
+                    const SizedBox(width: 2),
+                    Icon(Icons.chevron_right_rounded,
+                        size: 16, color: Colors.grey.shade400),
+                  ],
+                ]),
+              ],
+            ),
+          ]),
+        ),
       ),
     );
+  }
+
+  // Route timeline: «από» πάνω (πορτοκαλί κουκκίδα) ενωμένο με «προς» κάτω
+  // (κόκκινη κουκκίδα) μέσω κάθετης γραμμής. Αν δεν υπάρχει «προς», δείχνει
+  // μόνο τη μία γραμμή χωρίς γραμμή σύνδεσης.
+  Widget _routeTimeline(String from, String? to) {
+    const orange = Color(0xFFEF9F27);
+    const red    = Color(0xFFE24B4A);
+    if (to == null) {
+      return Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
+        Container(width: 7, height: 7,
+            decoration: const BoxDecoration(
+                color: orange, shape: BoxShape.circle)),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(from, maxLines: 2, overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                  fontSize: 12.5, fontWeight: FontWeight.w600, height: 1.3)),
+        ),
+      ]);
+    }
+    return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      // Στήλη κουκκίδων + γραμμή
+      Padding(
+        padding: const EdgeInsets.only(top: 3),
+        child: SizedBox(
+          width: 7,
+          child: Column(children: [
+            Container(width: 7, height: 7,
+                decoration: const BoxDecoration(
+                    color: orange, shape: BoxShape.circle)),
+            Container(width: 1.5, height: 16, color: Colors.grey.shade300),
+            Container(width: 7, height: 7,
+                decoration: const BoxDecoration(
+                    color: red, shape: BoxShape.circle)),
+          ]),
+        ),
+      ),
+      const SizedBox(width: 8),
+      Expanded(
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(from, maxLines: 1, overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                  fontSize: 12.5, fontWeight: FontWeight.w600, height: 1.3)),
+          const SizedBox(height: 6),
+          Text(to, maxLines: 1, overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                  fontSize: 12.5, color: Colors.grey.shade700, height: 1.3)),
+        ]),
+      ),
+    ]);
   }
 
   // Tap σε δουλειά → άνοιγμα της λεπτομερούς καρτέλας της.

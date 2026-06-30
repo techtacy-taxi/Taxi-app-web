@@ -457,6 +457,50 @@ class _JobPopupContentState extends State<_JobPopupContent>
           ]),
         ),
 
+        // 1b. ΜΠΑΡΑ ΚΑΤΑΣΤΑΣΗΣ — από άκρη σε άκρη, κάτω από το header.
+        //     Μπλε «Προγραμματισμένη» αν είναι ραντεβού, αλλιώς πράσινη «ΑΜΕΣΑ».
+        if (job.scheduledAt != null)
+          Container(
+            width: double.infinity,
+            color: const Color(0xFF185FA5),
+            padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 16),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Icon(Icons.schedule_rounded, size: 16, color: Colors.white),
+                const SizedBox(width: 8),
+                Text(
+                  'Προγραμματισμένη: ${job.scheduledAt!.day}/${job.scheduledAt!.month} ${job.scheduledAt!.hour.toString().padLeft(2, "0")}:${job.scheduledAt!.minute.toString().padLeft(2, "0")}',
+                  style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600),
+                ),
+              ],
+            ),
+          )
+        else
+          Container(
+            width: double.infinity,
+            color: const Color(0xFF1E8E3E),
+            padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 16),
+            child: const Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.bolt_rounded, size: 18, color: Colors.white),
+                SizedBox(width: 8),
+                Text(
+                  'ΑΜΕΣΑ',
+                  style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: 0.5),
+                ),
+              ],
+            ),
+          ),
+
         // 2. SCROLLABLE BODY
         Flexible(
           child: SingleChildScrollView(
@@ -568,27 +612,8 @@ class _JobPopupContentState extends State<_JobPopupContent>
                   ),
                 ],
 
-                // Προγραμματισμένη ώρα
-                if (job.scheduledAt != null) ...[
-                  const SizedBox(height: 10),
-                  Container(
-                    width:   double.infinity,
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color:        Colors.blue.shade50,
-                      borderRadius: BorderRadius.circular(10),
-                      border:       Border.all(color: Colors.blue.shade200),
-                    ),
-                    child: Row(children: [
-                      Icon(Icons.schedule_rounded, size: 16, color: Colors.blue.shade700),
-                      const SizedBox(width: 8),
-                      Text(
-                        'Προγραμματισμένη: ${job.scheduledAt!.day}/${job.scheduledAt!.month} ${job.scheduledAt!.hour.toString().padLeft(2, "0")}:${job.scheduledAt!.minute.toString().padLeft(2, "0")}',
-                        style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Colors.blue.shade800),
-                      ),
-                    ]),
-                  ),
-                ],
+                // (Η ένδειξη «Προγραμματισμένη / ΑΜΕΣΑ» εμφανίζεται πλέον
+                //  ως μπάρα κάτω από το header.)
 
                 // Σημειώσεις
                 if (job.note != null && job.note!.isNotEmpty) ...[

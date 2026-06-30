@@ -160,6 +160,7 @@ class _JobAdminPageState extends State<JobAdminPage>
                   ),
                 _HistoryTab(
                   adminUid:        widget.adminUid,
+                  adminName:       widget.adminName,
                   isAdmin:         widget.isAdmin,
                   isMaster:        widget.isMaster,
                   managedGroupIds: widget.isMaster
@@ -407,8 +408,7 @@ class _OpenJobsTabState extends State<_OpenJobsTab>
           stream: JobService.allJobs(limit: 100),
           builder: (context, snap) {
             if (snap.connectionState == ConnectionState.waiting) {
-              return const Center(
-                  child: CircularProgressIndicator(color: Colors.amber));
+              return const JobListSkeleton(count: 4);
             }
             // Βάση: ενεργές + δικαιώματα + επιλεγμένα φίλτρα
             final base = (snap.data ?? [])
@@ -817,6 +817,7 @@ class _OpenJobsTabState extends State<_OpenJobsTab>
 
 class _HistoryTab extends StatefulWidget {
   final String       adminUid;
+  final String       adminName;
   final bool         isAdmin;
   final bool         isMaster;
   final List<String> managedGroupIds;
@@ -824,6 +825,7 @@ class _HistoryTab extends StatefulWidget {
 
   const _HistoryTab({
     required this.adminUid,
+    this.adminName       = '',
     this.isAdmin         = true,
     this.isMaster        = false,
     this.managedGroupIds = const [],
@@ -1124,6 +1126,8 @@ class _HistoryTabState extends State<_HistoryTab> {
                     job:            j,
                     isAdmin:        widget.isAdmin || widget.isMaster,
                     isMaster:       widget.isMaster,
+                    adminUid:       widget.adminUid,
+                    adminName:      widget.adminName,
                     viewerGroupIds: widget.isAdmin
                         ? widget.managedGroupIds
                         : widget.userGroupIds,

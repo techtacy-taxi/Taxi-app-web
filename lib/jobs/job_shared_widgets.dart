@@ -348,19 +348,20 @@ class AppButton extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
       minimumSize: const Size(0, 44),
     );
-    if (icon != null) {
-      return FilledButton.icon(
-        onPressed: onPressed,
-        style: style,
-        icon: Icon(icon, size: 18),
-        label: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
-      );
-    }
-    return FilledButton(
-      onPressed: onPressed,
-      style: style,
-      child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
-    );
+    final Widget btn = icon != null
+        ? FilledButton.icon(
+            onPressed: onPressed,
+            style: style,
+            icon: Icon(icon, size: 18),
+            label: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
+          )
+        : FilledButton(
+            onPressed: onPressed,
+            style: style,
+            child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
+          );
+    // Micro-bounce μόνο όταν το κουμπί είναι ενεργό.
+    return onPressed == null ? btn : PressableScale(child: btn);
   }
 }
 
@@ -387,18 +388,302 @@ class AppButtonTonal extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
       minimumSize: const Size(0, 44),
     );
-    if (icon != null) {
-      return FilledButton.icon(
-        onPressed: onPressed,
-        style: style,
-        icon: Icon(icon, size: 18),
-        label: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
+    final Widget btn = icon != null
+        ? FilledButton.icon(
+            onPressed: onPressed,
+            style: style,
+            icon: Icon(icon, size: 18),
+            label: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
+          )
+        : FilledButton(
+            onPressed: onPressed,
+            style: style,
+            child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
+          );
+    return onPressed == null ? btn : PressableScale(child: btn);
+  }
+}
+
+// ─── PressableScale ───────────────────────────────────────────────────────────
+//
+// Wrapper που δίνει αισθητό «micro-bounce» (scale 0.96 + ελαφριά διαφάνεια)
+// όταν πατιέται το παιδί του. Χρήση: τύλιξε ένα AppButton/AppButtonTonal ή
+// οποιοδήποτε tappable. Το ίδιο το onPressed/onTap του παιδιού παραμένει — το
+// PressableScale ΔΕΝ καταναλώνει το tap, μόνο ανιχνεύει press/release για το
+// εφέ. Σεβάσου το reduce-motion (MediaQuery.disableAnimations).
+class PressableScale extends StatefulWidget {
+  final Widget child;
+  final double pressedScale;
+  const PressableScale({
+    super.key,
+    required this.child,
+    this.pressedScale = 0.96,
+  });
+
+  @override
+  State<PressableScale> createState() => _PressableScaleState();
+}
+
+class _PressableScaleState extends State<PressableScale> {
+  bool _down = false;
+
+  void _set(bool v) {
+    if (_down != v && mounted) setState(() => _down = v);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final reduceMotion = MediaQuery.maybeOf(context)?.disableAnimations ?? false;
+    final scale = (_down && !reduceMotion) ? widget.pressedScale : 1.0;
+    return Listener(
+      onPointerDown:   (_) => _set(true),
+      onPointerUp:     (_) => _set(false),
+      onPointerCancel: (_) => _set(false),
+      child: AnimatedScale(
+        scale:    scale,
+        duration: const Duration(milliseconds: 90),
+        curve:    Curves.easeOut,
+        child: AnimatedOpacity(
+          opacity:  _down && !reduceMotion ? 0.92 : 1.0,
+          duration: const Duration(milliseconds: 90),
+          child: widget.child,
+        ),
+      ),
+    );
+  }
+}
+
+// ─── PulseRingDot ─────────────────────────────────────────────────────────────
+//
+// Κουκκίδα «ραντάρ»: σταθερό κέντρο + ΔΥΟ διαδοχικά rings που εκπέμπουν προς τα
+// έξω και σβήνουν, δίνοντας την αίσθηση ενεργού σήματος (π.χ. ανοιχτή δουλειά
+// σε αναμονή). Αντικαθιστά την παλιά απλή «άλω που φουσκώνει». Μηδενικό κόστος
+// (μόνο τοπικό repaint). Το χρώμα δίνεται από έξω — ΔΕΝ αλλάζει το φόντο της
+// κάρτας (το χρώμα φόντου έχει δική του σημασία: κόκκινο=εκκρεμεί κ.λπ.).
+class PulseRingDot extends StatefulWidget {
+  final Color  color;
+  final double size;       // διάμετρος σταθερής κουκκίδας
+  final double ringMax;    // πόσο μεγαλώνει το ring (συνολική διάμετρος box)
+  const PulseRingDot({
+    super.key,
+    required this.color,
+    this.size    = 7,
+    this.ringMax = 18,
+  });
+
+  @override
+  State<PulseRingDot> createState() => _PulseRingDotState();
+}
+
+class _PulseRingDotState extends State<PulseRingDot>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync:    this,
+      duration: const Duration(milliseconds: 1800),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  // Ένα ring: t∈[0,1] → διάμετρος size→ringMax, διαφάνεια 0.40→0.
+  Widget _ring(double t) {
+    final d = widget.size + (widget.ringMax - widget.size) * t;
+    return Container(
+      width: d, height: d,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: widget.color.withValues(alpha: 0.40 * (1 - t)),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final reduceMotion = MediaQuery.maybeOf(context)?.disableAnimations ?? false;
+    if (reduceMotion) {
+      // Χωρίς animation: απλή σταθερή κουκκίδα.
+      return SizedBox(
+        width: widget.ringMax, height: widget.ringMax,
+        child: Center(
+          child: Container(
+            width: widget.size, height: widget.size,
+            decoration: BoxDecoration(
+                color: widget.color, shape: BoxShape.circle),
+          ),
+        ),
       );
     }
-    return FilledButton(
-      onPressed: onPressed,
-      style: style,
-      child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
+    return SizedBox(
+      width: widget.ringMax, height: widget.ringMax,
+      child: AnimatedBuilder(
+        animation: _ctrl,
+        builder: (_, _) {
+          final t1 = _ctrl.value;                 // πρώτο ring
+          final t2 = (_ctrl.value + 0.5) % 1.0;   // δεύτερο, μισό κύκλο πίσω
+          return Stack(alignment: Alignment.center, children: [
+            _ring(t1),
+            _ring(t2),
+            Container(
+              width: widget.size, height: widget.size,
+              decoration: BoxDecoration(
+                  color: widget.color, shape: BoxShape.circle),
+            ),
+          ]);
+        },
+      ),
+    );
+  }
+}
+
+// ─── Shimmer skeleton ─────────────────────────────────────────────────────────
+//
+// Placeholder φόρτωσης με «λάμψη» που περνά διαγώνια — αντί για στρογγυλό
+// CircularProgressIndicator. Δίνει αίσθηση ταχύτητας. ShimmerBox = ένα
+// μεμονωμένο γκρι ορθογώνιο που λάμπει· χτίσε με αυτό το σχήμα του περιεχομένου
+// που έρχεται (π.χ. JobRouteSkeleton πιο κάτω).
+class ShimmerBox extends StatefulWidget {
+  final double width;
+  final double height;
+  final double radius;
+  const ShimmerBox({
+    super.key,
+    required this.width,
+    required this.height,
+    this.radius = 6,
+  });
+
+  @override
+  State<ShimmerBox> createState() => _ShimmerBoxState();
+}
+
+class _ShimmerBoxState extends State<ShimmerBox>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync:    this,
+      duration: const Duration(milliseconds: 1300),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final reduceMotion = MediaQuery.maybeOf(context)?.disableAnimations ?? false;
+    final base = Colors.grey.shade300;
+    final hi   = Colors.grey.shade100;
+    if (reduceMotion) {
+      return Container(
+        width:  widget.width,
+        height: widget.height,
+        decoration: BoxDecoration(
+          color: base,
+          borderRadius: BorderRadius.circular(widget.radius),
+        ),
+      );
+    }
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(widget.radius),
+      child: SizedBox(
+        width:  widget.width,
+        height: widget.height,
+        child: AnimatedBuilder(
+          animation: _ctrl,
+          builder: (_, _) {
+            final t = _ctrl.value;
+            final begin = -1.0 + 3.0 * t; // λάμψη -1 → 2
+            return DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment(begin, 0),
+                  end:   Alignment(begin + 1, 0),
+                  colors: [base, hi, base],
+                  stops: const [0.35, 0.5, 0.65],
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
+// Skeleton στο σχήμα μιας διαδρομής (τιμή + 2 γραμμές διεύθυνσης) — για όσο
+// φορτώνει η διεύθυνση/τιμή μιας δουλειάς.
+class JobRouteSkeleton extends StatelessWidget {
+  const JobRouteSkeleton({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: const [
+        ShimmerBox(width: 90,  height: 18, radius: 6),
+        SizedBox(height: 10),
+        ShimmerBox(width: 160, height: 13, radius: 5),
+        SizedBox(height: 7),
+        ShimmerBox(width: 120, height: 13, radius: 5),
+      ],
+    );
+  }
+}
+
+// Λίστα από shimmer «κάρτες» — αντικαθιστά το CircularProgressIndicator όταν
+// φορτώνει μια λίστα δουλειών. Δώσε πόσες ψεύτικες κάρτες θες (default 4).
+class JobListSkeleton extends StatelessWidget {
+  final int count;
+  const JobListSkeleton({super.key, this.count = 4});
+
+  Widget _card() {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(12, 6, 12, 6),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: const [
+          Row(children: [
+            ShimmerBox(width: 70, height: 22, radius: 20),
+            Spacer(),
+            ShimmerBox(width: 60, height: 22, radius: 8),
+          ]),
+          SizedBox(height: 12),
+          ShimmerBox(width: 140, height: 14, radius: 6),
+          SizedBox(height: 8),
+          ShimmerBox(width: 110, height: 14, radius: 6),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      padding: const EdgeInsets.only(top: 6),
+      children: [for (int i = 0; i < count; i++) _card()],
     );
   }
 }

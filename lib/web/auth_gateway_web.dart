@@ -218,14 +218,13 @@ class _Brand extends StatelessWidget {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Container(
-          width: 76, height: 76,
-          decoration: BoxDecoration(
-            color: const Color(0xFFFFB300),
-            borderRadius: BorderRadius.circular(20),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(20),
+          child: Image.asset(
+            'assets/app_icon.png',
+            width: 88, height: 88,
+            fit: BoxFit.cover,
           ),
-          child: const Icon(Icons.local_taxi_rounded,
-              size: 42, color: Colors.black87),
         ),
         const SizedBox(height: 18),
         const Text('Athens Taxi',

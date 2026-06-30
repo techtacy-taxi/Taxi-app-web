@@ -36,6 +36,7 @@ class AdminJobCard extends StatelessWidget {
   // Μπορεί ο χρήστης να επεξεργαστεί/ακυρώσει/σβήσει δουλειές;
   // Για δικές του/master → ναι. Για ξένες → ανάλογα το επίπεδο.
   bool get _canView   => isMaster || isAdmin;
+  bool get _canCopy   => isMaster || isAdmin; // αντιγραφή = δημιουργία νέας
   bool get _canEdit   => isMaster || (isAdmin && shareLevel.canEdit);
   bool get _canDelete => isMaster || (isAdmin && shareLevel.canDelete);
 
@@ -106,9 +107,9 @@ class AdminJobCard extends StatelessWidget {
               border:       Border.all(color: statusColor.withValues(alpha: 0.4)),
             ),
             child: Row(children: [
-              // Ανοιχτή δουλειά (χτυπάει) → παλλόμενη κουκκίδα· αλλιώς στατική
+              // Ανοιχτή δουλειά (χτυπάει) → κουκκίδα-ραντάρ· αλλιώς στατική
               job.isOpen && !job.stopped
-                  ? _PulsingDot(color: statusColor)
+                  ? PulseRingDot(color: statusColor, size: 7, ringMax: 16)
                   : Container(width: 7, height: 7,
                       decoration: BoxDecoration(
                           color: statusColor, shape: BoxShape.circle)),
@@ -160,6 +161,21 @@ class AdminJobCard extends StatelessWidget {
                     fontSize: 20, fontWeight: FontWeight.bold,
                     color: Color(0xFF1E8E3E))),
             const Spacer(),
+            // Αντιγραφή → νέα δουλειά με τα ίδια στοιχεία (master + admin)
+            if (_canCopy)
+              IconButton(
+                icon:    const Icon(Icons.copy_rounded, size: 20, color: Color(0xFF1565C0)),
+                tooltip: 'Αντιγραφή σε νέα',
+                onPressed: () {
+                  Navigator.of(context).push(MaterialPageRoute(
+                    builder: (_) => JobFormPage(
+                        adminUid:    adminUid,
+                        adminName:   adminName,
+                        isMaster:    isMaster,
+                        copyFromJob: job),
+                  ));
+                },
+              ),
             // Edit + Delete για open — κατά επίπεδο πρόσβασης
             if (job.isOpen && (_canEdit || _canDelete)) ...[
               if (_canEdit)
@@ -541,64 +557,6 @@ class _ClaimStatusBannerState extends State<_ClaimStatusBanner> {
           ]),
         ],
       ),
-    );
-  }
-}
-
-// ─── Παλλόμενη κουκκίδα κατάστασης (για ανοιχτές δουλειές που χτυπάνε) ───────
-class _PulsingDot extends StatefulWidget {
-  final Color color;
-  const _PulsingDot({required this.color});
-
-  @override
-  State<_PulsingDot> createState() => _PulsingDotState();
-}
-
-class _PulsingDotState extends State<_PulsingDot>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _ctrl;
-
-  @override
-  void initState() {
-    super.initState();
-    _ctrl = AnimationController(
-      vsync:    this,
-      duration: const Duration(milliseconds: 900),
-    )..repeat(reverse: true);
-  }
-
-  @override
-  void dispose() {
-    _ctrl.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: _ctrl,
-      builder: (_, _) {
-        // Παλμός: η εξωτερική «άλω» μεγαλώνει & σβήνει, η κουκκίδα σταθερή
-        final t = _ctrl.value;
-        return SizedBox(
-          width: 14, height: 14,
-          child: Stack(alignment: Alignment.center, children: [
-            Container(
-              width:  7 + 7 * t,
-              height: 7 + 7 * t,
-              decoration: BoxDecoration(
-                color: widget.color.withValues(alpha: 0.35 * (1 - t)),
-                shape: BoxShape.circle,
-              ),
-            ),
-            Container(
-              width: 7, height: 7,
-              decoration: BoxDecoration(
-                  color: widget.color, shape: BoxShape.circle),
-            ),
-          ]),
-        );
-      },
     );
   }
 }

@@ -13,6 +13,235 @@ import 'job_details_sheet.dart';
 import 'job_shared_widgets.dart';
 import 'job_model.dart';
 import 'job_service.dart';
+import 'ics_export_service.dart';
+
+// ─── Κουμπί «Στο ημερολόγιο» (κάτω-κάτω στο συρτάρι) ──────────────────────────
+// Μπλε, λευκά γράμματα. Ανοίγει picker για να διαλέξεις ΠΟΙΕΣ δουλειές θα
+// μπουν στο ημερολόγιο· μετά παράγει .ics & το ανοίγει (Android) / κατεβάζει (Web).
+class _AllToCalendarButton extends StatelessWidget {
+  final List<Job> jobs;
+  const _AllToCalendarButton({required this.jobs});
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: double.infinity,
+      child: FilledButton.icon(
+        onPressed: jobs.isEmpty
+            ? null
+            : () => showCalendarPicker(context, jobs),
+        style: FilledButton.styleFrom(
+          backgroundColor: const Color(0xFF1A73E8),
+          disabledBackgroundColor: const Color(0xFF1A73E8),
+          foregroundColor: Colors.white,
+          padding: const EdgeInsets.symmetric(vertical: 13),
+          shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14)),
+        ),
+        icon: const Icon(Icons.calendar_month_rounded, color: Colors.white),
+        label: const Text('Στο ημερολόγιο',
+            style: TextStyle(
+                fontSize: 14.5,
+                fontWeight: FontWeight.bold,
+                color: Colors.white)),
+      ),
+    );
+  }
+}
+
+// ─── Picker: διάλεξε ποιες δουλειές θα μπουν στο ημερολόγιο ───────────────────
+// Όλες ξεκινούν ΞΕΤΣΕΚΑΡΙΣΜΕΝΕΣ — διαλέγεις εσύ.
+Future<void> showCalendarPicker(BuildContext context, List<Job> jobs) {
+  return showDialog<void>(
+    context: context,
+    builder: (_) => _CalendarPickerDialog(jobs: jobs),
+  );
+}
+
+class _CalendarPickerDialog extends StatefulWidget {
+  final List<Job> jobs;
+  const _CalendarPickerDialog({required this.jobs});
+  @override
+  State<_CalendarPickerDialog> createState() => _CalendarPickerDialogState();
+}
+
+class _CalendarPickerDialogState extends State<_CalendarPickerDialog> {
+  late final List<bool> _checked;
+  bool _busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // Καμία τσεκαρισμένη εξαρχής.
+    _checked = List<bool>.filled(widget.jobs.length, false);
+  }
+
+  int get _count => _checked.where((c) => c).length;
+  bool get _allOn => _count == widget.jobs.length && widget.jobs.isNotEmpty;
+
+  void _toggleAll() {
+    final target = !_allOn;
+    setState(() {
+      for (var i = 0; i < _checked.length; i++) {
+        _checked[i] = target;
+      }
+    });
+  }
+
+  Future<void> _confirm() async {
+    if (_busy || _count == 0) return;
+    final selected = <Job>[];
+    for (var i = 0; i < widget.jobs.length; i++) {
+      if (_checked[i]) selected.add(widget.jobs[i]);
+    }
+    setState(() => _busy = true);
+    final ok = await IcsExportService.exportJobs(selected);
+    if (!mounted) return;
+    setState(() => _busy = false);
+    Navigator.of(context).pop();
+    final msg = ok
+        ? 'Άνοιγμα ημερολογίου με ${selected.length} '
+            'δουλειέ${selected.length == 1 ? "α" : "ς"}'
+        : 'Δεν ήταν δυνατό το άνοιγμα του ημερολογίου';
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(msg),
+        backgroundColor: ok ? const Color(0xFF1A73E8) : Colors.red.shade700,
+      ),
+    );
+  }
+
+  String _subtitle(Job j) {
+    final price = '${j.price.toStringAsFixed(2)}€';
+    if (j.scheduledAt != null) {
+      return '${DateFormat('dd/MM  HH:mm').format(j.scheduledAt!)} · $price';
+    }
+    return 'Άμεση · $price';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    const blue = Color(0xFF1A73E8);
+    return Dialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 40),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      clipBehavior: Clip.antiAlias,
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
+        // Κεφαλή
+        Container(
+          width: double.infinity,
+          color: blue,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          child: const Row(children: [
+            Icon(Icons.calendar_month_rounded, color: Colors.white, size: 22),
+            SizedBox(width: 10),
+            Expanded(child: Text('Ποιες στο ημερολόγιο;',
+                style: TextStyle(color: Colors.white, fontSize: 16,
+                    fontWeight: FontWeight.bold))),
+          ]),
+        ),
+        // Επιλογή όλων
+        InkWell(
+          onTap: _toggleAll,
+          child: Container(
+            width: double.infinity,
+            color: const Color(0xFFF5F8FE),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            child: Row(children: [
+              Icon(_allOn
+                  ? Icons.check_box_rounded
+                  : Icons.check_box_outline_blank_rounded,
+                  color: blue, size: 22),
+              const SizedBox(width: 12),
+              Text('Επιλογή όλων (${widget.jobs.length})',
+                  style: const TextStyle(fontSize: 13,
+                      fontWeight: FontWeight.bold, color: blue)),
+            ]),
+          ),
+        ),
+        // Λίστα δουλειών
+        Flexible(
+          child: ListView.builder(
+            shrinkWrap: true,
+            itemCount: widget.jobs.length,
+            itemBuilder: (ctx, i) {
+              final j = widget.jobs[i];
+              return InkWell(
+                onTap: () => setState(() => _checked[i] = !_checked[i]),
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
+                  decoration: BoxDecoration(
+                    border: Border(
+                        bottom: BorderSide(color: Colors.grey.shade200)),
+                  ),
+                  child: Row(children: [
+                    Icon(_checked[i]
+                        ? Icons.check_box_rounded
+                        : Icons.check_box_outline_blank_rounded,
+                        color: _checked[i] ? blue : Colors.grey.shade400,
+                        size: 22),
+                    const SizedBox(width: 12),
+                    Expanded(child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('${j.from} → ${j.to}',
+                            maxLines: 1, overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontSize: 14,
+                                fontWeight: FontWeight.w600)),
+                        const SizedBox(height: 1),
+                        Text(_subtitle(j),
+                            style: TextStyle(fontSize: 12.5,
+                                color: Colors.grey[600])),
+                      ],
+                    )),
+                  ]),
+                ),
+              );
+            },
+          ),
+        ),
+        // Κουμπιά
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
+          child: Row(children: [
+            Expanded(child: TextButton(
+              onPressed: _busy ? null : () => Navigator.of(context).pop(),
+              style: TextButton.styleFrom(
+                backgroundColor: const Color(0xFFF1F1F1),
+                foregroundColor: Colors.grey[700],
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12)),
+              ),
+              child: const Text('Ακύρωση',
+                  style: TextStyle(fontWeight: FontWeight.bold)),
+            )),
+            const SizedBox(width: 10),
+            Expanded(child: FilledButton.icon(
+              onPressed: (_busy || _count == 0) ? null : _confirm,
+              style: FilledButton.styleFrom(
+                backgroundColor: blue,
+                disabledBackgroundColor: blue.withValues(alpha: 0.4),
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12)),
+              ),
+              icon: _busy
+                  ? const SizedBox(width: 16, height: 16,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: Colors.white))
+                  : const Icon(Icons.calendar_month_rounded, size: 18),
+              label: Text(_count == 0 ? 'Προσθήκη' : 'Προσθήκη ($_count)',
+                  style: const TextStyle(fontWeight: FontWeight.bold)),
+            )),
+          ]),
+        ),
+      ]),
+    );
+  }
+}
 
 // ─── Εμφάνιση bottom sheet "Οι δουλειές μου" ─────────────────────────────────
 
@@ -137,6 +366,12 @@ class _MyJobsSheetBody extends StatelessWidget {
                   ),
                 ),
               ),
+            // Κουμπί «Όλες στο ημερολόγιο» — κάτω-κάτω, μόνο αν υπάρχουν δουλειές
+            if (sorted.isNotEmpty) ...[
+              const Divider(height: 1),
+              const SizedBox(height: 12),
+              _AllToCalendarButton(jobs: sorted),
+            ],
           ]),
         );
       },
@@ -216,7 +451,7 @@ class _MyJobsBottomBarState extends State<MyJobsBottomBar> {
     // Εκτίμηση ύψους ανά κάρτα δουλειάς: η κάρτα έχει badge ΡΑΝΤΕΒΟΥ/ΑΜΕΣΗ,
     // γραμμές από/προς, ποσά/κέρδος και 3 κουμπιά δράσης — χρειάζεται αρκετό
     // ύψος ώστε να φαίνεται ΟΛΟΚΛΗΡΗ (μαζί με το «Τέλος Διαδρομής»).
-    final est = 18.0 + count * 230.0;
+    final est = 18.0 + count * 230.0 + 66.0; // +66 για το κουμπί «Όλες στο ημερολόγιο»
     final h = est < cap ? est : cap;
     return h < 0 ? 0 : h;
   }
@@ -445,7 +680,11 @@ class _MyJobsBottomBarState extends State<MyJobsBottomBar> {
         child: _expanded
             ? Container(
                 color: Colors.white,
-                child: NotificationListener<ScrollNotification>(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Expanded(
+                      child: NotificationListener<ScrollNotification>(
                   // ΔΥΣΚΟΛΟ κλείσιμο: στην κορυφή της λίστας, το συρτάρι κλείνει
                   // μόνο αφού τραβήξεις προς τα κάτω συσσωρευτικά πάνω από το
                   // κατώφλι (_closeThreshold), Ή με δυνατό «πέταγμα» κάτω. Έτσι
@@ -495,6 +734,15 @@ class _MyJobsBottomBarState extends State<MyJobsBottomBar> {
                     ),
                   ),
                   ),
+                ),
+                    ),
+                    // Κουμπί «Όλες στο ημερολόγιο» — σταθερό κάτω-κάτω
+                    const Divider(height: 1),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(14, 10, 14, 12),
+                      child: _AllToCalendarButton(jobs: sorted),
+                    ),
+                  ],
                 ),
               )
             : null,

@@ -6,11 +6,14 @@
 // ── ΚΑΝΟΝΕΣ ΑΝΑΓΝΩΡΙΣΗΣ (heuristics) ─────────────────────────────────────────
 //
 //  Σειρά ελέγχου ανά γραμμή/token:
-//    1) Τηλέφωνο  → 00 + 14 ψηφία (ή 13 αν το 1ο μετά τα 00 = '1'),
-//                   ή + με 12 ψηφία (ή 11 αν το 1ο μετά το + είναι '1'),
-//                   ή 69 + σύνολο 10 ψηφία.
+//    1) Τηλέφωνο  → 00 + σύνολο 13–16 ψηφία (κινητό/διεθνές),
+//                   ή + με 11–14 ψηφία (κινητό/διεθνές),
+//                   ή 69 + σύνολο 10 ψηφία (κινητό),
+//                   ή 2 + σύνολο 10 ψηφία (σταθερό).
 //                   (αγνοούνται παρενθέσεις / κενά / παύλες)
-//                   Αν βρεθούν 2 τηλέφωνα: 1ο → πεδίο, 2ο → σχόλια.
+//                   Προτεραιότητα κύριου πεδίου: κινητό. Σταθερό (αρχίζει με 2)
+//                   πάει στο πεδίο μόνο αν δεν υπάρχει κινητό· αλλιώς → σχόλια.
+//                   Τυχόν επιπλέον τηλέφωνα → σχόλια.
 //    2) Τιμή      → περιέχει € (ή EUR / ευρώ) μαζί με αριθμό.
 //    3) Email     → οτιδήποτε περιέχει '@' (π.χ. kostas@gmail.com).
 //    4) Παιδικό   → "baby seat" με αριθμό πριν/μετά (κενό ή κολλητά).
@@ -214,6 +217,11 @@ class CalendarEventParser {
     int?    childSeat;
     final placeHits = <String>[];      // γραμμές που μοιάζουν με «μέρος»
     final leftovers = <String>[];      // ό,τι δεν ταίριασε → σχόλια
+    // Συλλογή τηλεφώνων με τύπο — η ανάθεση γίνεται στο τέλος ώστε τα κινητά
+    // να έχουν προτεραιότητα για το κύριο πεδίο, τα σταθερά (αρχίζουν με 2)
+    // να πάνε στο πεδίο μόνο αν ΔΕΝ υπάρχει κινητό, αλλιώς στα σχόλια.
+    final mobilePhones   = <String>[];
+    final landlinePhones = <String>[];
 
     for (final raw in lines) {
       final line = raw.trim();
@@ -229,12 +237,12 @@ class CalendarEventParser {
       }
 
       // 1) Τηλέφωνο (ολόκληρη γραμμή ή token μέσα στη γραμμή)
-      final ph = _findPhone(line);
+      final (ph, isLand) = _findPhoneTyped(line);
       if (ph != null) {
-        if (phone == null) {
-          phone = ph;
-        } else if (secondPhone == null && ph != phone) {
-          secondPhone = ph; // 2ο τηλέφωνο → θα μπει στα σχόλια
+        if (isLand) {
+          if (!landlinePhones.contains(ph)) landlinePhones.add(ph);
+        } else {
+          if (!mobilePhones.contains(ph)) mobilePhones.add(ph);
         }
         final rest = _stripToken(line, ph).trim();
         if (rest.isNotEmpty) leftovers.add(rest);
@@ -333,6 +341,26 @@ class CalendarEventParser {
     if (from == null && placeHits.isNotEmpty) from = placeHits.first;
     if (to == null && placeHits.length > 1) to = placeHits[1];
 
+    // ── Ανάθεση τηλεφώνων ──────────────────────────────────────────────────
+    // Προτεραιότητα κύριου πεδίου: κινητό. Σταθερό (αρχίζει με 2) μπαίνει στο
+    // πεδίο μόνο αν δεν υπάρχει κανένα κινητό. Τα υπόλοιπα → σχόλια.
+    final extraPhones = <String>[];
+    if (mobilePhones.isNotEmpty) {
+      phone = mobilePhones.first;
+      extraPhones.addAll(mobilePhones.skip(1)); // τυχόν 2ο κινητό
+      extraPhones.addAll(landlinePhones);       // όλα τα σταθερά
+    } else if (landlinePhones.isNotEmpty) {
+      phone = landlinePhones.first;             // μόνο σταθερό υπάρχει
+      extraPhones.addAll(landlinePhones.skip(1));
+    }
+    if (extraPhones.isNotEmpty) {
+      secondPhone = extraPhones.first;          // 2ο τηλέφωνο → ειδικό χειρισμό
+      // 3ο+ τηλέφωνα (σπάνιο) → σχόλια
+      for (final p in extraPhones.skip(1)) {
+        leftovers.add('📞 Τηλέφωνο: $p');
+      }
+    }
+
     // Όνομα: πρώτη ΣΥΝΤΟΜΗ γραμμή (1-4 λέξεις) που μοιάζει με όνομα.
     // Μεγαλύτερες/αβέβαιες γραμμές μένουν στα leftovers → πάνε στα σχόλια,
     // ώστε ο χρήστης να αποφασίσει αντί να μπει λάθος στο πεδίο «Όνομα».
@@ -370,53 +398,61 @@ class CalendarEventParser {
   // ───────────────────────────────────────────────────────────────────────────
 
   /// Τηλέφωνο (αγνοώντας παρενθέσεις/κενά/παύλες — μετράμε μόνο ψηφία):
-  ///   • Αρχίζει με 00 → σύνολο 13 ή 14 ψηφία.
-  ///   • Αρχίζει με +  → 11 ή 12 ψηφία μετά το +.
-  ///   • Αρχίζει με 69 → σύνολο 10 ψηφία.
-  /// Επιστρέφει την «καθαρή» μορφή ή null.
-  static String? _parsePhone(String s) {
+  ///   • Αρχίζει με 00 → σύνολο 13–16 ψηφία.            (κινητό/διεθνές)
+  ///   • Αρχίζει με +  → 11–14 ψηφία μετά το +.          (κινητό/διεθνές)
+  ///   • Αρχίζει με 69 → σύνολο 10 ψηφία.                (κινητό)
+  ///   • Αρχίζει με 2  → σύνολο 10 ψηφία.                (σταθερό — landline)
+  /// Επιστρέφει (καθαρό τηλέφωνο, isLandline) ή (null, false).
+  static (String?, bool) _parsePhoneTyped(String s) {
     final t = s.trim();
-    if (t.isEmpty) return null;
+    if (t.isEmpty) return (null, false);
 
     final plus = t.startsWith('+');
     final digits = t.replaceAll(RegExp(r'[^\d]'), '');
-    if (digits.isEmpty) return null;
+    if (digits.isEmpty) return (null, false);
 
     if (plus) {
-      // + ακολουθούμενο από 11 ή 12 ψηφία
-      if (digits.length == 11 || digits.length == 12) return '+$digits';
-      return null;
+      if (digits.length >= 11 && digits.length <= 14) return ('+$digits', false);
+      return (null, false);
     }
 
     if (digits.startsWith('00')) {
-      // 00 + σύνολο 13 ή 14 ψηφία
-      if (digits.length == 13 || digits.length == 14) return digits;
-      return null;
+      if (digits.length >= 13 && digits.length <= 16) return (digits, false);
+      return (null, false);
     }
 
-    if (digits.startsWith('69') && digits.length == 10) return digits;
+    if (digits.startsWith('69') && digits.length == 10) return (digits, false);
 
-    return null;
+    // Σταθερό: αρχίζει με 2, σύνολο 10 ψηφία.
+    if (digits.startsWith('2') && digits.length == 10) return (digits, true);
+
+    return (null, false);
   }
 
+  /// Συμβατότητα: επιστρέφει μόνο το τηλέφωνο (ή null).
+  static String? _parsePhone(String s) => _parsePhoneTyped(s).$1;
+
   /// Ψάχνει τηλέφωνο μέσα σε μια γραμμή που μπορεί να έχει κι άλλα.
-  static String? _findPhone(String line) {
+  /// Επιστρέφει (τηλέφωνο, isLandline) ή (null, false).
+  static (String?, bool) _findPhoneTyped(String line) {
     // Ολόκληρη γραμμή πρώτα.
-    final whole = _parsePhone(line);
-    if (whole != null) return whole;
+    final whole = _parsePhoneTyped(line);
+    if (whole.$1 != null) return whole;
 
     // Token-based: σπάσε σε κομμάτια και δοκίμασε καθένα + γειτονικά μαζί.
     final tokens = line.split(RegExp(r'\s+'));
     for (var i = 0; i < tokens.length; i++) {
-      // δοκίμασε 1..3 συνεχόμενα tokens (π.χ. "+30 (210) 1234567")
       for (var span = 1; span <= 3 && i + span <= tokens.length; span++) {
         final chunk = tokens.sublist(i, i + span).join(' ');
-        final p = _parsePhone(chunk);
-        if (p != null) return p;
+        final p = _parsePhoneTyped(chunk);
+        if (p.$1 != null) return p;
       }
     }
-    return null;
+    return (null, false);
   }
+
+  /// Συμβατότητα.
+  static String? _findPhone(String line) => _findPhoneTyped(line).$1;
 
   /// Email: απλός κανόνας — κάτι@κάτι.κάτι. Επιστρέφει το πρώτο που θα βρει.
   static String? _findEmail(String line) {

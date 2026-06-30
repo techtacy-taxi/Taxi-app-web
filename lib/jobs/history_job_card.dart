@@ -3,6 +3,7 @@
 import 'package:flutter/material.dart';
 import 'job_model.dart';
 import 'job_service.dart';
+import 'job_form.dart';
 import 'job_shared_widgets.dart';
 import 'job_details_sheet.dart';
 
@@ -10,6 +11,8 @@ class HistoryJobCard extends StatelessWidget {
   final Job          job;
   final bool         isAdmin;
   final bool         isMaster;        // ο master μπορεί να διορθώσει χρεώσεις
+  final String       adminUid;        // για αντιγραφή → νέα δουλειά
+  final String       adminName;
   final List<String> viewerGroupIds; // ομάδες του θεατή — για σήμα "εκτός ομάδας"
   final VoidCallback? onChanged;      // καλείται μετά από ακύρωση/διόρθωση
 
@@ -18,6 +21,8 @@ class HistoryJobCard extends StatelessWidget {
     required this.job,
     this.isAdmin        = true,
     this.isMaster       = false,
+    this.adminUid       = '',
+    this.adminName      = '',
     this.viewerGroupIds = const [],
     this.onChanged,
   });
@@ -148,6 +153,26 @@ class HistoryJobCard extends StatelessWidget {
                 style: TextStyle(fontSize: 11, color: Colors.grey[500]),
                 textAlign: TextAlign.center,
               ),
+            // Αντιγραφή → νέα δουλειά (master + admin), για κάθε δουλειά
+            if (isMaster || isAdmin) ...[
+              const SizedBox(width: 4),
+              IconButton(
+                icon:        const Icon(Icons.copy_rounded,
+                    size: 18, color: Color(0xFF1565C0)),
+                tooltip:     'Αντιγραφή σε νέα',
+                padding:     EdgeInsets.zero,
+                constraints: const BoxConstraints(),
+                onPressed:   () {
+                  Navigator.of(context).push(MaterialPageRoute(
+                    builder: (_) => JobFormPage(
+                        adminUid:    adminUid,
+                        adminName:   adminName,
+                        isMaster:    isMaster,
+                        copyFromJob: job),
+                  ));
+                },
+              ),
+            ],
             // Διόρθωση χρεώσεων — ΜΟΝΟ master, σε ολοκληρωμένη δουλειά
             if (isMaster && job.status == JobStatus.done) ...[
               const SizedBox(width: 4),

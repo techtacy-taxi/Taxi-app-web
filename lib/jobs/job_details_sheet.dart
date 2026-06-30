@@ -10,6 +10,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'job_model.dart';
 import 'job_service.dart';
 import 'saved_job_service.dart';
+import 'ics_export_service.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ΚΟΙΝΗ ΡΟΗ «ΤΕΛΟΣ ΔΙΑΔΡΟΜΗΣ» (+ προαιρετική ΕΠΙΣΤΡΟΦΗ)
@@ -556,6 +557,12 @@ class JobDetailsSheet extends StatelessWidget {
             const SizedBox(height: 10),
           ],
 
+          // Κουμπί «Προσθήκη στο ημερολόγιο» — για αυτή τη δουλειά
+          if (!historyMode) ...[
+            _JobToCalendarButton(job: job),
+            const SizedBox(height: 10),
+          ],
+
           // Κουμπί ολοκλήρωσης — κρύβεται στην υπενθύμιση ραντεβού
           if (!hideComplete)
             SizedBox(
@@ -815,3 +822,57 @@ Widget phoneBtn({
         ),
       ),
     );
+
+// ─── Κουμπί «Προσθήκη στο ημερολόγιο» για ΜΙΑ δουλειά ─────────────────────────
+class _JobToCalendarButton extends StatefulWidget {
+  final Job job;
+  const _JobToCalendarButton({required this.job});
+  @override
+  State<_JobToCalendarButton> createState() => _JobToCalendarButtonState();
+}
+
+class _JobToCalendarButtonState extends State<_JobToCalendarButton> {
+  bool _busy = false;
+
+  Future<void> _run() async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    final ok = await IcsExportService.exportJob(widget.job);
+    if (!mounted) return;
+    setState(() => _busy = false);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(ok
+            ? 'Άνοιγμα ημερολογίου'
+            : 'Δεν ήταν δυνατό το άνοιγμα του ημερολογίου'),
+        backgroundColor:
+            ok ? const Color(0xFF1A73E8) : Colors.red.shade700,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: double.infinity,
+      child: FilledButton.icon(
+        onPressed: _busy ? null : _run,
+        style: FilledButton.styleFrom(
+          backgroundColor: const Color(0xFF1A73E8),
+          disabledBackgroundColor: const Color(0xFF1A73E8),
+          foregroundColor: Colors.white,
+          padding: const EdgeInsets.symmetric(vertical: 14),
+          shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14)),
+        ),
+        icon: _busy
+            ? const SizedBox(width: 18, height: 18,
+                child: CircularProgressIndicator(
+                    strokeWidth: 2, color: Colors.white))
+            : const Icon(Icons.calendar_month_rounded),
+        label: const Text('Προσθήκη στο ημερολόγιο',
+            style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
+      ),
+    );
+  }
+}

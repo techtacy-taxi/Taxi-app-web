@@ -178,6 +178,7 @@ class _SavedJobsTabState extends State<SavedJobsTab> {
                             onEdit:   lvl.canEdit ? () => _editSaved(items[i]) : null,
                             onDelete: lvl.canDelete ? () => _deleteSaved(items[i]) : null,
                             onSend:   lvl.canSend ? () => _chooseSendTarget(items[i]) : null,
+                            onCopy:   () => _copySaved(items[i]),
                           ),
                         );
                       },
@@ -345,6 +346,18 @@ class _SavedJobsTabState extends State<SavedJobsTab> {
         hideComplete:  true, // αποθηκευμένη → όχι «Τέλος Διαδρομής»
       ),
     );
+  }
+
+  // ─── Αντιγραφή → νέα δουλειά ───────────────────────────────────────────────
+  Future<void> _copySaved(SavedJob s) async {
+    await Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => JobFormPage(
+        adminUid:    widget.adminUid,
+        adminName:   widget.adminName,
+        isMaster:    widget.isMaster,
+        copyFromJob: s.job,
+      ),
+    ));
   }
 
   // ─── Edit ────────────────────────────────────────────────────────────────
@@ -580,6 +593,7 @@ class _SavedJobCard extends StatelessWidget {
   final VoidCallback? onEdit;
   final VoidCallback? onDelete;
   final VoidCallback? onSend;
+  final VoidCallback? onCopy;
 
   const _SavedJobCard({
     required this.saved,
@@ -593,6 +607,7 @@ class _SavedJobCard extends StatelessWidget {
     this.onEdit,
     this.onDelete,
     this.onSend,
+    this.onCopy,
   });
 
   @override
@@ -672,6 +687,13 @@ class _SavedJobCard extends StatelessWidget {
                         fontSize: 18, fontWeight: FontWeight.bold,
                         color: Color(0xFF1E8E3E))),
                 const Spacer(),
+                if (onCopy != null)
+                  IconButton(
+                    icon: const Icon(Icons.copy_rounded,
+                        size: 20, color: Color(0xFF1565C0)),
+                    tooltip: 'Αντιγραφή σε νέα',
+                    onPressed: onCopy,
+                  ),
                 if (canSend)
                   IconButton(
                     icon: const Icon(Icons.send_rounded,

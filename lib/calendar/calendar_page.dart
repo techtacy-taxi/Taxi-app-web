@@ -10,6 +10,7 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:intl/intl.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:table_calendar/table_calendar.dart';
 
@@ -291,28 +292,197 @@ class _CalendarPageState extends State<CalendarPage> {
     return noteParts.isEmpty ? null : noteParts.join('\n\n');
   }
 
-  /// Κουμπί «Όλα σε δουλειές» — ρωτά τον χρήστη πώς να προχωρήσει.
-  Future<void> _convertAllForDay() async {
+  /// Picker: διάλεξε ΠΟΙΑ events θα μετατραπούν, μετά ρώτα τρόπο.
+  Future<void> _pickEventsForDay() async {
     final dayEvents = _eventsForDay(_selectedDay);
-    // Παράλειψε όσα έχουν ήδη μετατραπεί (αποφυγή διπλών).
-    final pending = dayEvents.where((ev) {
-      final st = _convertStates[ev.id] ?? ConvertState.none;
-      return st == ConvertState.none;
-    }).toList();
-    final skipped = dayEvents.length - pending.length;
+    if (dayEvents.isEmpty) return;
 
-    if (pending.isEmpty) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Όλα τα συμβάντα της ημέρας έχουν ήδη μετατραπεί.'),
-            backgroundColor: Color(0xFF5E35B1),
-          ),
-        );
-      }
-      return;
-    }
+    // Προεπιλογή: τσεκαρισμένα όσα ΔΕΝ έχουν μετατραπεί ακόμα.
+    final selected = <String>{
+      for (final ev in dayEvents)
+        if ((_convertStates[ev.id] ?? ConvertState.none) == ConvertState.none)
+          ev.id,
+    };
 
+    final confirmed = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSheet) {
+          return Container(
+            margin: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: const Color(0xFFFAF6EC),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            clipBehavior: Clip.antiAlias,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Κίτρινο header
+                Container(
+                  width: double.infinity,
+                  color: Colors.amber,
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 20, vertical: 16),
+                  child: Row(children: [
+                    const Icon(Icons.checklist_rounded,
+                        color: Colors.black87, size: 22),
+                    const SizedBox(width: 10),
+                    const Expanded(
+                      child: Text('Επιλογή συμβάντων',
+                          style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 18,
+                              color: Colors.black87)),
+                    ),
+                    Text('${selected.length}/${dayEvents.length}',
+                        style: const TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 14,
+                            color: Colors.black87)),
+                  ]),
+                ),
+                // Επιλογή όλων / κανενός
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+                  child: Row(children: [
+                    TextButton.icon(
+                      icon: const Icon(Icons.done_all_rounded, size: 18),
+                      label: const Text('Όλα'),
+                      onPressed: () => setSheet(() =>
+                          selected.addAll(dayEvents.map((e) => e.id))),
+                    ),
+                    TextButton.icon(
+                      icon: const Icon(Icons.remove_done_rounded, size: 18),
+                      label: const Text('Κανένα'),
+                      onPressed: () => setSheet(selected.clear),
+                    ),
+                  ]),
+                ),
+                // Λίστα events
+                Flexible(
+                  child: ListView.builder(
+                    shrinkWrap: true,
+                    padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+                    itemCount: dayEvents.length,
+                    itemBuilder: (_, i) {
+                      final ev = dayEvents[i];
+                      final st = _convertStates[ev.id] ?? ConvertState.none;
+                      final done = st != ConvertState.none;
+                      final checked = selected.contains(ev.id);
+                      final timeStr = ev.allDay
+                          ? 'Ολοήμερο'
+                          : DateFormat('HH:mm').format(ev.start);
+                      return Card(
+                        elevation: 0,
+                        margin: const EdgeInsets.only(bottom: 6),
+                        color: checked ? Colors.amber.shade50 : Colors.white,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          side: BorderSide(
+                              color: checked
+                                  ? Colors.amber
+                                  : Colors.grey.shade300),
+                        ),
+                        child: CheckboxListTile(
+                          value: checked,
+                          activeColor: Colors.amber.shade800,
+                          controlAffinity: ListTileControlAffinity.leading,
+                          onChanged: (v) => setSheet(() {
+                            if (v == true) {
+                              selected.add(ev.id);
+                            } else {
+                              selected.remove(ev.id);
+                            }
+                          }),
+                          title: Row(children: [
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 7, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: _purple.withValues(alpha: 0.1),
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: Text(timeStr,
+                                  style: const TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.bold,
+                                      color: _purple)),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(ev.title,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w500,
+                                      color: Colors.black87)),
+                            ),
+                          ]),
+                          subtitle: done
+                              ? Padding(
+                                  padding: const EdgeInsets.only(top: 4),
+                                  child: Text(
+                                    st == ConvertState.sent
+                                        ? '✓ Έγινε δουλειά'
+                                        : '✓ Αποθηκεύτηκε',
+                                    style: TextStyle(
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.bold,
+                                        color: st == ConvertState.sent
+                                            ? Colors.green.shade700
+                                            : Colors.blue.shade700),
+                                  ),
+                                )
+                              : null,
+                        ),
+                      );
+                    },
+                  ),
+                ),
+                // Κουμπιά
+                Padding(
+                  padding: EdgeInsets.fromLTRB(
+                      16, 4, 16, 16 + MediaQuery.of(ctx).viewPadding.bottom),
+                  child: Row(children: [
+                    Expanded(
+                      child: AppButtonTonal(
+                          label: 'Άκυρο',
+                          onPressed: () => Navigator.pop(ctx, false)),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: AppButton(
+                          label: 'Συνέχεια (${selected.length})',
+                          icon: Icons.arrow_forward_rounded,
+                          color: Colors.amber,
+                          fg: Colors.black,
+                          onPressed: selected.isEmpty
+                              ? null
+                              : () => Navigator.pop(ctx, true)),
+                    ),
+                  ]),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+
+    if (confirmed != true) return;
+    final chosen =
+        dayEvents.where((ev) => selected.contains(ev.id)).toList();
+    if (chosen.isEmpty) return;
+    await _askModeAndConvert(chosen);
+  }
+
+  /// Ρωτά «με έλεγχο / χωρίς έλεγχο» και εκτελεί τη μετατροπή.
+  Future<void> _askModeAndConvert(List<CalendarEvent> events) async {
+    if (events.isEmpty) return;
     final choice = await showDialog<String>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -343,12 +513,7 @@ class _CalendarPageState extends State<CalendarPage> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('${pending.length} συμβάντα θα μετατραπούν σε δουλειές.'),
-            if (skipped > 0) ...[
-              const SizedBox(height: 6),
-              Text('$skipped παραλείπονται (ήδη μετατρεμμένα).',
-                  style: TextStyle(fontSize: 13, color: Colors.grey[600])),
-            ],
+            Text('${events.length} συμβάντα θα μετατραπούν σε δουλειές.'),
             const SizedBox(height: 14),
             const Text('Πώς να γίνει;',
                 style: TextStyle(fontWeight: FontWeight.bold)),
@@ -392,9 +557,9 @@ class _CalendarPageState extends State<CalendarPage> {
     );
 
     if (choice == 'review') {
-      await _convertSequential(pending);
+      await _convertSequential(events);
     } else if (choice == 'auto') {
-      await _convertAuto(pending);
+      await _convertAuto(events);
     }
   }
 
@@ -972,29 +1137,21 @@ class _CalendarPageState extends State<CalendarPage> {
                   ),
                   const SizedBox(height: 8),
                   const Divider(height: 1),
-                  // Κουμπί «Όλα σε δουλειές» (αν υπάρχουν εκκρεμή συμβάντα)
-                  if (dayEvents.isNotEmpty) ...[
-                    Builder(builder: (_) {
-                      final pendingCount = dayEvents.where((ev) {
-                        final st = _convertStates[ev.id] ?? ConvertState.none;
-                        return st == ConvertState.none;
-                      }).length;
-                      if (pendingCount == 0) return const SizedBox.shrink();
-                      return Padding(
-                        padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
-                        child: SizedBox(
-                          width: double.infinity,
-                          child: AppButton(
-                            label: 'Όλα σε δουλειές ($pendingCount)',
-                            icon: Icons.playlist_add_check_rounded,
-                            color: Colors.amber,
-                            fg: Colors.black,
-                            onPressed: _convertAllForDay,
-                          ),
+                  // Κουμπί «Επιλογή» (αν υπάρχουν συμβάντα)
+                  if (dayEvents.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+                      child: SizedBox(
+                        width: double.infinity,
+                        child: AppButton(
+                          label: 'Επιλογή σε δουλειές',
+                          icon: Icons.checklist_rounded,
+                          color: Colors.amber,
+                          fg: Colors.black,
+                          onPressed: _pickEventsForDay,
                         ),
-                      );
-                    }),
-                  ],
+                      ),
+                    ),
                   Expanded(
                     child: dayEvents.isEmpty
                         ? ListView(
@@ -1111,10 +1268,10 @@ class _CalendarPageState extends State<CalendarPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // ── ΚΙΤΡΙΝΟ HEADER (ώρα + τίτλος + σήμανση) ──────────────────
+          // ── ΑΠΑΛΟ ΚΙΤΡΙΝΟ HEADER (ώρα + τίτλος + σήμανση) ────────────
           Container(
             width: double.infinity,
-            color: Colors.amber,
+            color: const Color(0xFFFAEEDA),
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
             child: Row(children: [
               Container(

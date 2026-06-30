@@ -318,14 +318,13 @@ class _Header extends StatelessWidget {
     final roleLabel = session.isMaster ? 'Master' : 'Εργολάβος';
     return Column(
       children: [
-        Container(
-          width: 54, height: 54,
-          decoration: BoxDecoration(
-            color: _kAmber,
-            borderRadius: BorderRadius.circular(15),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(15),
+          child: Image.asset(
+            'assets/app_icon.png',
+            width: 56, height: 56,
+            fit: BoxFit.cover,
           ),
-          child: const Icon(Icons.local_taxi_rounded,
-              size: 30, color: Colors.black87),
         ),
         const SizedBox(height: 12),
         Padding(

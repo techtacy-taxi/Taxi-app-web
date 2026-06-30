@@ -63,6 +63,11 @@ class JobFormPage extends StatefulWidget {
   final String adminName; // Εμφανιζόμενο όνομα για createdByName
   final bool   isMaster;  // αν δεν είναι master → app commission κλειδωμένο
   final Job?   editJob;
+  // ── Αντιγραφή δουλειάς ──
+  // Αν != null → ΑΝΤΙΓΡΑΦΟ υπάρχουσας δουλειάς: η φόρμα γεμίζει με όλα τα
+  // στοιχεία της, αλλά συμπεριφέρεται ως ΝΕΑ δουλειά (createJob, νέο doc).
+  // Το editJob/editSavedJob μένουν null ώστε η «Αποστολή» να δημιουργεί νέα.
+  final Job?   copyFromJob;
   final JobPrefill? prefill; // προσυμπλήρωση από διαδρομή πελάτη
   final Future<void> Function()? onCreated; // καλείται μετά από επιτυχή αποστολή
   final Future<void> Function()? onSavedDraft; // καλείται μετά από επιτυχή αποθήκευση draft
@@ -86,6 +91,7 @@ class JobFormPage extends StatefulWidget {
     this.adminName  = '',
     this.isMaster   = false,
     this.editJob,
+    this.copyFromJob,
     this.prefill,
     this.onCreated,
     this.onSavedDraft,
@@ -218,6 +224,21 @@ class _JobFormPageState extends State<JobFormPage> {
     } else if (widget.editSavedJob != null) {
       _prefill(widget.editSavedJob!);
       _loadSources();
+    } else if (widget.copyFromJob != null) {
+      // ΑΝΤΙΓΡΑΦΟ: γέμισε τα πεδία αλλά συμπεριφέρου ως νέα δουλειά.
+      _prefill(widget.copyFromJob!);
+      _loadSources();
+      // Αν η αρχική ήταν προγραμματισμένη → ζήτα νέα ώρα αμέσως.
+      // Άκυρο = μένει κενό → βγαίνει ΑΜΕΣΑ.
+      if (widget.copyFromJob!.scheduledAt != null) {
+        _scheduledAt = null;
+        _isScheduled = false;
+        WidgetsBinding.instance.addPostFrameCallback((_) async {
+          await _pickScheduledTime();
+          if (!mounted) return;
+          setState(() => _isScheduled = _scheduledAt != null);
+        });
+      }
     } else {
       _initNewJob();
     }
@@ -1018,7 +1039,11 @@ class _JobFormPageState extends State<JobFormPage> {
         title: Text(
             widget.isSavedDraft
                 ? 'Αποθηκευμένη'
-                : (widget.editJob == null ? 'Νέα Δουλειά' : 'Επεξεργασία'),
+                : (widget.editJob != null
+                    ? 'Επεξεργασία'
+                    : (widget.copyFromJob != null
+                        ? 'Νέα Δουλειά (Αντίγραφο)'
+                        : 'Νέα Δουλειά')),
             style: const TextStyle(fontWeight: FontWeight.bold)),
         backgroundColor: Colors.amber,
         foregroundColor: Colors.black,

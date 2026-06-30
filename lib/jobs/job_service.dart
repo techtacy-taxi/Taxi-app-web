@@ -1564,6 +1564,59 @@ class JobService {
     return map;
   }
 
+  /// LIVE έκδοση του [groupBillingTotals]: ακούει τις συλλογές που αλλάζουν
+  /// (billing_tx για χρεώσεις/πληρωμές, jobs(done) για τζίρο) και επανυπολογίζει
+  /// αυτόματα. Έτσι, μόλις κάποιος πληρώσει στην ομάδα, τα νούμερα ανανεώνονται
+  /// χωρίς να χρειάζεται έξοδος/επανείσοδος στη σελίδα.
+  ///
+  /// Κόστος ανάγνωσης: ίδιο με το one-shot ανά επανυπολογισμό· οι επανυπολογισμοί
+  /// γίνονται μόνο όταν ΟΝΤΩΣ αλλάζει κάτι (νέα πληρωμή/χρέωση ή νέα δουλειά).
+  static Stream<Map<String, Map<String, dynamic>>> groupBillingTotalsStream() {
+    // Trigger stream: κάθε αλλαγή σε billing_tx ή σε ολοκληρωμένες δουλειές
+    // πυροδοτεί επανυπολογισμό. Συγχωνεύουμε τα δύο snapshots σε «παλμούς».
+    final txStream = _fs.collection(_billingTx).snapshots();
+    final doneStream = _fs
+        .collection(_jobs)
+        .where('status', isEqualTo: JobStatus.done.name)
+        .snapshots();
+
+    // Απλό merge: κάθε snapshot από οποιοδήποτε stream → επανυπολογισμός.
+    final controller =
+        StreamController<Map<String, Map<String, dynamic>>>();
+    StreamSubscription? sub1, sub2;
+    var computing = false;
+    var pendingAgain = false;
+
+    Future<void> recompute() async {
+      if (computing) { pendingAgain = true; return; }
+      computing = true;
+      try {
+        final res = await groupBillingTotals();
+        if (!controller.isClosed) controller.add(res);
+      } finally {
+        computing = false;
+        if (pendingAgain) {
+          pendingAgain = false;
+          // ignore: unawaited_futures
+          recompute();
+        }
+      }
+    }
+
+    controller.onListen = () {
+      sub1 = txStream.listen((_) => recompute(),
+          onError: (e) => debugPrint('groupBilling tx err: $e'));
+      sub2 = doneStream.listen((_) => recompute(),
+          onError: (e) => debugPrint('groupBilling done err: $e'));
+    };
+    controller.onCancel = () async {
+      await sub1?.cancel();
+      await sub2?.cancel();
+    };
+
+    return controller.stream;
+  }
+
   /// Ανάλυση χρεώσεων/τζίρου ΑΝΑ ΟΜΑΔΑ με σωστή απόδοση:
   ///  • δουλειά ομάδας Χ → χρεώνεται στην ομάδα Χ
   ///  • δουλειά εκτός ομάδας → χρεώνεται στην 1η ομάδα του οδηγού
