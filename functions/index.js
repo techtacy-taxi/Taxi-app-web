@@ -2069,6 +2069,54 @@ async function sendBookingEmail(masterUid, toEmail, subject, bodyText, icsConten
   return true;
 }
 
+// ── Push για κράτηση από φόρμα: DATA-ONLY (ο handler αναλαμβάνει εμφάνιση) ────
+// Foreground → PublicBookingAlerts popup. Background/killed → _showPublicBookingBg.
+// Data-only ώστε να ΜΗΝ εμφανίζεται διπλή ειδοποίηση από το σύστημα.
+async function sendBookingPush(tokens, info) {
+  if (!tokens.length) return;
+  const data = {
+    type:       "public_booking",
+    savedJobId: String(info.savedJobId || ""),
+    from:       String(info.from || ""),
+    to:         String(info.to || ""),
+    clientName: String(info.clientName || ""),
+    when:       String(info.when || ""),
+    title:      "Νέα κράτηση από φόρμα",
+    body:       info.from + " → " + info.to + " · " + info.clientName,
+  };
+
+  const deadTokens = [];
+  for (let i = 0; i < tokens.length; i += 500) {
+    const chunk = tokens.slice(i, i + 500);
+    const res = await getMessaging().sendEachForMulticast({
+      tokens: chunk,
+      data,
+      android: { priority: "high", ttl: 5 * 60 * 1000 },
+    });
+    res.responses.forEach((r, idx) => {
+      if (!r.success) {
+        const code = r.error && r.error.code;
+        if (code === "messaging/invalid-registration-token" ||
+            code === "messaging/registration-token-not-registered") {
+          deadTokens.push(chunk[idx]);
+        } else if (r.error) {
+          console.warn("booking push error:", code, r.error.message);
+        }
+      }
+    });
+  }
+  if (deadTokens.length) {
+    try {
+      const db = getFirestore();
+      const snap = await db.collection("presence")
+        .where("fcmToken", "in", deadTokens.slice(0, 30)).get();
+      const batch = db.batch();
+      snap.docs.forEach((d) => batch.update(d.ref, { fcmToken: null }));
+      await batch.commit();
+    } catch (_) {}
+  }
+}
+
 exports.submitPublicBooking = onRequest(
   { region: "us-central1", cors: BOOKING_ALLOWED_ORIGINS, memory: "256MiB" },
   async (req, res) => {
@@ -2185,17 +2233,14 @@ exports.submitPublicBooking = onRequest(
       sendBookingEmail(masterUid, masterEmail, summary, emailBody, ics)
         .catch((e) => console.error("booking email failed:", e));
 
-      // ── 3) FCM στον master (ξεχωριστό type/εικονίδιο) ──────────────────────
+      // ── 3) FCM στον master (notification + data → χτυπά ακόμα & killed) ─────
       try {
         const tokens = await getMasterTokens();
-        await sendDataOnly(tokens, {
-          type:       "public_booking",          // ← το owner_alerts το ξεχωρίζει
+        await sendBookingPush(tokens, {
           savedJobId: savedRef.id,
           from, to,
           clientName: name,
           when:       whenStr,
-          title:      "Νέα κράτηση από φόρμα",
-          body:       from + " → " + to + " · " + name,
         });
       } catch (e) {
         console.error("booking FCM failed:", e);

@@ -18,6 +18,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../models.dart';
 import '../fcm_service.dart';
 import '../owner_alerts.dart';
+import '../public_booking_alert.dart';
 import '../permissions.dart';
 import '../profile_form.dart';
 import '../voice/voice_inbox.dart';
@@ -161,6 +162,9 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
     if ((_isAdmin || _isMaster) && _uid != null) {
       try { OwnerAlerts.instance.start(_uid!); } catch (_) {}
     }
+    if (_isMaster) {
+      try { PublicBookingAlerts.instance.start(); } catch (_) {}
+    }
     _lastPublishedPosition = null;
     try { _publishMyLocation(force: true); } catch (_) {}
     try { _startPeriodicLocationPublish(); } catch (_) {}
@@ -260,6 +264,12 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
           OwnerAlerts.instance.start(_uid!);
         } else {
           OwnerAlerts.instance.stop();
+        }
+        // Ειδοποιήσεις «νέα κράτηση από φόρμα»: μόνο για master.
+        if (_isMaster) {
+          PublicBookingAlerts.instance.start();
+        } else {
+          PublicBookingAlerts.instance.dispose();
         }
       }
     });
