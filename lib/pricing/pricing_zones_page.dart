@@ -589,7 +589,9 @@ class _PricingConfigTabState extends State<_PricingConfigTab> {
 
   @override
   void dispose() {
-    for (final ctrl in _c.values) ctrl.dispose();
+    for (final ctrl in _c.values) {
+      ctrl.dispose();
+    }
     super.dispose();
   }
 

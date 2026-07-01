@@ -10,18 +10,20 @@
 //  • Widget PlaceField — πεδίο "Από / Προς" με αναζήτηση Google
 //
 // ⚠️  ΠΡΟΣΟΧΗ — API KEY
-//  Το κλειδί παρακάτω είναι ΙΔΙΟ με αυτό του χάρτη (AndroidManifest.xml).
-//  Για να δουλέψουν οι κλήσεις web service (Places / Directions) πρέπει στο
-//  Google Cloud Console:
-//    1) να είναι ενεργοποιημένα τα: "Places API" και "Directions API"
-//    2) το κλειδί να ΜΗΝ έχει περιορισμό μόνο σε Android apps
-//       (αλλιώς φτιάξε ξεχωριστό κλειδί χωρίς application restriction
-//        και βάλ' το στο kGoogleWebApiKey).
+//  Δύο ΞΕΧΩΡΙΣΤΑ κλειδιά — ένα για κάθε πλατφόρμα, ώστε το καθένα να μπορεί
+//  να έχει το δικό του restriction στο Google Cloud Console:
+//    • Android app  → restriction "Android apps" (package name + SHA-1)
+//    • Web admin    → restriction "HTTP referrers" (τα domains σου)
+//  Χρειάζονται ενεργά: "Places API (New)" και "Directions API" (ή Routes API).
+//  Το ΠΑΛΙΟ κοινό/unrestricted κλειδί ΔΕΝ πρέπει να ξαναμπεί εδώ — μένει
+//  ΜΟΝΟ ως server-side secret (ROUTES_API_KEY στο Cloud Functions), ποτέ σε
+//  client κώδικα.
 
 import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 
 import 'client_model.dart';
 import 'job_shared_widgets.dart';
@@ -37,9 +39,20 @@ import '../web/_map_picker.dart';
 // API KEY
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Κλειδί για τις web υπηρεσίες (Places / Directions).
-/// Αν χρειαστεί ξεχωριστό κλειδί χωρίς Android restriction, άλλαξέ το εδώ.
-const String kGoogleWebApiKey = 'AIzaSyDJPu9BDH0TOaCUB8pTgEc16uNc5K5yYlY';
+/// Κλειδί ΜΟΝΟ για την Android εφαρμογή — restriction "Android apps":
+/// package name com.example.my_taxi_app + SHA-1 του debug.keystore
+/// (89:ED:34:13:AF:7B:72:57:76:16:6C:9A:EB:25:AA:FC:1E:39:75:AC — το ίδιο
+/// keystore υπογράφει προς το παρόν και τα release APK, βλ. build.gradle.kts).
+const String _kGooglePlacesKeyAndroid = 'ΒΑΛΕ_ΕΔΩ_ΤΟ_ΝΕΟ_ANDROID_KEY';
+
+/// Κλειδί ΜΟΝΟ για το web admin — restriction "HTTP referrers":
+/// taxi-app-web.pages.dev/* (και το δικό σου custom domain αν υπάρχει).
+const String _kGooglePlacesKeyWeb = 'ΒΑΛΕ_ΕΔΩ_ΤΟ_ΝΕΟ_WEB_KEY';
+
+/// Κλειδί για τις web υπηρεσίες (Places / Directions) — διαλέγεται αυτόματα
+/// ανά platform ώστε καθένα να δουλεύει ΜΟΝΟ από εκεί που πρέπει.
+const String kGoogleWebApiKey =
+    kIsWeb ? _kGooglePlacesKeyWeb : _kGooglePlacesKeyAndroid;
 
 /// Χώρα + γλώσσα για τα αποτελέσματα αναζήτησης.
 const String _kCountry  = 'gr';

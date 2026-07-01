@@ -21,16 +21,19 @@ const db = admin.firestore();
 
 // ── Ζώνες (κέντρο + ακτίνα σε μέτρα) — πραγματικές συντεταγμένες τοποθεσιών.
 // Άλλαξε ελεύθερα ακτίνες/κέντρα μετά, από τη σελίδα «Ζώνες & Τιμές».
+// ΣΗΜΕΙΩΣΗ: οι ακτίνες μεγάλωσαν εδώ (π.χ. Αεροδρόμιο 4χλμ → 9χλμ) γιατί
+// σημεία σαν «Αττική Οδός, Σπάτα» έπεφταν έξω από τον παλιό κύκλο και η
+// φόρμα τα υπολόγιζε λάθος με τον δυναμικό τύπο αντί για την πάγια τιμή.
 const ZONES = {
-  lavrio:   { name: "Λαύριο",                  lat: 37.7163, lng: 24.0586, radius: 5000 },
-  athens:   { name: "Αθήνα (κέντρο)",           lat: 37.9755, lng: 23.7348, radius: 6000 },
-  airport:  { name: "Αεροδρόμιο Ελ. Βενιζέλος", lat: 37.9364, lng: 23.9445, radius: 4000 },
-  lagonisi: { name: "Λαγονήσι",                 lat: 37.8330, lng: 23.9330, radius: 3000 },
-  koropi:   { name: "Κορωπί",                   lat: 37.9020, lng: 23.8990, radius: 3500 },
-  varkiza:  { name: "Βάρκιζα",                  lat: 37.8130, lng: 23.7960, radius: 2500 },
-  voula:    { name: "Βούλα",                    lat: 37.8460, lng: 23.7800, radius: 2500 },
-  glyfada:  { name: "Γλυφάδα",                  lat: 37.8710, lng: 23.7530, radius: 3000 },
-  piraeus:  { name: "Πειραιάς",                 lat: 37.9475, lng: 23.6350, radius: 4500 },
+  lavrio:   { name: "Λαύριο",                  lat: 37.7163, lng: 24.0586, radius: 6000 },
+  athens:   { name: "Αθήνα (κέντρο)",           lat: 37.9755, lng: 23.7348, radius: 7000 },
+  airport:  { name: "Αεροδρόμιο Ελ. Βενιζέλος", lat: 37.9364, lng: 23.9445, radius: 9000 },
+  lagonisi: { name: "Λαγονήσι",                 lat: 37.8330, lng: 23.9330, radius: 4000 },
+  koropi:   { name: "Κορωπί",                   lat: 37.9020, lng: 23.8990, radius: 4500 },
+  varkiza:  { name: "Βάρκιζα",                  lat: 37.8130, lng: 23.7960, radius: 3000 },
+  voula:    { name: "Βούλα",                    lat: 37.8460, lng: 23.7800, radius: 3000 },
+  glyfada:  { name: "Γλυφάδα",                  lat: 37.8710, lng: 23.7530, radius: 4000 },
+  piraeus:  { name: "Πειραιάς",                 lat: 37.9475, lng: 23.6350, radius: 6000 },
 };
 
 // [fromZoneId, toZoneId, taxi, van, taxiForeign?, vanForeign?]
