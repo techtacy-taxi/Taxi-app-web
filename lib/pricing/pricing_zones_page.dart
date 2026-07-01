@@ -426,10 +426,12 @@ class _PricingZonesPageState extends State<PricingZonesPage> {
         ));
       }
     }
-    if (mounted) setState(() {
+    if (mounted) {
+      setState(() {
       _mode = _MapMode.view;
       _dragPosition = null;
     });
+    }
   }
 
   void _onZoneTap(PricingZone z) {
@@ -815,38 +817,47 @@ class _PricingConfigTab extends StatefulWidget {
 
 class _PricingConfigTabState extends State<_PricingConfigTab> {
   static const _keys = [
-    'base', 'perKm', 'perMin', 'minCharge', 'minChargeNight', 'nightPctTaxi', 'nightPctVan',
-    'vanPct', 'seatPrice',
+    'base', 'perKm', 'perKmOutside', 'perMin', 'minCharge', 'minChargeNight',
+    'nightPctTaxi', 'nightPctVan', 'vanPct', 'luggagePer', 'seatPrice',
   ];
 
   static const _defaults = {
-    'base': 3.5, 'perKm': 1.0, 'perMin': 0.2, 'minCharge': 25.0, 'minChargeNight': 35.0,
+    'base': 3.5, 'perKm': 1.0, 'perKmOutside': 2.0, 'perMin': 0.2,
+    'minCharge': 25.0, 'minChargeNight': 35.0,
     'nightPctTaxi': 30.0, 'nightPctVan': 25.0,
-    'vanPct': 90.0, 'seatPrice': 5.0,
+    'vanPct': 90.0, 'luggagePer': 0.0, 'seatPrice': 5.0,
   };
 
   static const _labels = {
     'base':           'Βάση εκκίνησης (€)',
     'perKm':          '€ ανά χιλιόμετρο (εντός Αττικής)',
+    'perKmOutside':   '€ ανά χιλιόμετρο (εκτός Αττικής)',
     'perMin':         '€ ανά λεπτό',
     'minCharge':      'Ελάχιστη χρέωση διαδρομής, ημέρα (€)',
     'minChargeNight': 'Ελάχιστη χρέωση διαδρομής, νύχτα (€)',
     'nightPctTaxi':   'Νυχτερινή προσαύξηση Ταξί (%)',
     'nightPctVan':    'Νυχτερινή προσαύξηση Βαν (%)',
     'vanPct':         'Βαν = Ταξί + (%) — δυναμικός τύπος',
+    'luggagePer':     '€ ανά βαλίτσα',
     'seatPrice':      '€ ανά παιδικό κάθισμα',
   };
+
+  static const _defaultFormula = 'base + km*perKm + min*perMin';
 
   final Map<String, TextEditingController> _c = {
     for (final k in _keys) k: TextEditingController(),
   };
+  final _formulaCtrl = TextEditingController();
   bool _nightAppliesToZones = true;
   bool _loaded = false;
   bool _saving = false;
 
   @override
   void dispose() {
-    for (final ctrl in _c.values) ctrl.dispose();
+    for (final ctrl in _c.values) {
+      ctrl.dispose();
+    }
+    _formulaCtrl.dispose();
     super.dispose();
   }
 
@@ -872,6 +883,8 @@ class _PricingConfigTabState extends State<_PricingConfigTab> {
             _c[k]!.text = (v == v.roundToDouble()) ? v.toStringAsFixed(0) : v.toString();
           }
           _nightAppliesToZones = data['nightAppliesToZones'] as bool? ?? true;
+          final f = (data['customFormula'] as String?)?.trim() ?? '';
+          _formulaCtrl.text = f.isEmpty ? _defaultFormula : f;
           _loaded = true;
         }
         return SingleChildScrollView(
@@ -879,11 +892,11 @@ class _PricingConfigTabState extends State<_PricingConfigTab> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              const Text('Ισχύει για διαδρομές εκτός ζωνών — βαλίτσες ΔΕΝ χρεώνονται καθόλου',
+              const Text('Ισχύει για διαδρομές εκτός ζωνών',
                   style: TextStyle(color: Colors.grey, fontSize: 12)),
               const SizedBox(height: 4),
               const Text(
-                'Εκτός Αττικής ισχύει πάντα 2€/χλμ (σταθερό στον server) και η φόρμα ζητά επικοινωνία μέσω WhatsApp.',
+                'Εκτός Αττικής χρησιμοποιείται το «€/χλμ εκτός Αττικής» και η φόρμα ζητά επικοινωνία μέσω WhatsApp.',
                 style: TextStyle(color: Colors.grey, fontSize: 12),
               ),
               const SizedBox(height: 10),
@@ -895,6 +908,9 @@ class _PricingConfigTabState extends State<_PricingConfigTab> {
                 ),
                 const SizedBox(height: 10),
               ],
+              const SizedBox(height: 8),
+              _buildFormulaEditor(),
+              const SizedBox(height: 8),
               SwitchListTile(
                 contentPadding: EdgeInsets.zero,
                 title: const Text('Νυχτερινή προσαύξηση και στις σταθερές τιμές ζωνών'),
@@ -914,12 +930,91 @@ class _PricingConfigTabState extends State<_PricingConfigTab> {
     );
   }
 
+  Widget _buildFormulaEditor() {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.deepPurple.withValues(alpha: 0.05),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.deepPurple.withValues(alpha: 0.3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              const Expanded(
+                child: Text('Μαθηματικός τύπος (προχωρημένο)',
+                    style: TextStyle(fontWeight: FontWeight.bold)),
+              ),
+              TextButton.icon(
+                icon: const Icon(Icons.restore_rounded, size: 18),
+                label: const Text('Επαναφορά'),
+                onPressed: () => setState(() => _formulaCtrl.text = _defaultFormula),
+              ),
+            ],
+          ),
+          const Text(
+            'Διαθέσιμες μεταβλητές: km, min, base, perKm, perMin, luggage, seats. '
+            'Πράξεις: + − * / ( ). Άφησέ το κενό ή «Επαναφορά» για τον προεπιλεγμένο.',
+            style: TextStyle(color: Colors.grey, fontSize: 11),
+          ),
+          const SizedBox(height: 8),
+          TextFormField(
+            controller: _formulaCtrl,
+            decoration: const InputDecoration(
+              labelText: 'Τύπος',
+              hintText: 'base + km*perKm + min*perMin',
+              border: OutlineInputBorder(),
+            ),
+            style: const TextStyle(fontFamily: 'monospace'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Έλεγχος εγκυρότητας τύπου (ίδια λογική με τον server): επιτρέπονται μόνο
+  // αριθμοί, οι γνωστές μεταβλητές, και οι πράξεις + − * / ( ).
+  bool _isFormulaValid(String formula) {
+    final f = formula.trim();
+    if (f.isEmpty) return true; // κενό = προεπιλεγμένος, επιτρεπτό
+    const allowed = ['km', 'min', 'luggage', 'seats', 'base', 'perKm', 'perMin'];
+    var expr = f;
+    for (final name in allowed) {
+      expr = expr.replaceAll(RegExp('\\b$name\\b'), '(1)');
+    }
+    if (!RegExp(r'^[0-9.+\-*/()\s]+$').hasMatch(expr)) return false;
+    // Ισορροπία παρενθέσεων
+    var depth = 0;
+    for (final ch in expr.split('')) {
+      if (ch == '(') depth++;
+      if (ch == ')') depth--;
+      if (depth < 0) return false;
+    }
+    return depth == 0;
+  }
+
   Future<void> _save() async {
+    // Έλεγχος τύπου πριν την αποθήκευση.
+    final formula = _formulaCtrl.text.trim();
+    if (!_isFormulaValid(formula)) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        backgroundColor: Colors.red,
+        content: Text('Ο τύπος δεν είναι έγκυρος. Χρησιμοποίησε μόνο τις γνωστές '
+            'μεταβλητές και τις πράξεις + − * / ( ), ή πάτα «Επαναφορά».'),
+        duration: Duration(seconds: 6),
+      ));
+      return;
+    }
     setState(() => _saving = true);
+    // Αν ο τύπος είναι ίδιος με τον προεπιλεγμένο, αποθηκεύουμε κενό (=default).
+    final formulaToSave = (formula == _defaultFormula) ? '' : formula;
     final data = <String, dynamic>{
       for (final k in _keys)
         k: double.tryParse(_c[k]!.text.replaceAll(',', '.')) ?? _defaults[k],
       'nightAppliesToZones': _nightAppliesToZones,
+      'customFormula': formulaToSave,
     };
     try {
       await widget.db.collection('app_settings').doc('pricing').set(data, SetOptions(merge: true));
