@@ -103,8 +103,10 @@ class PricingZonesPage extends StatefulWidget {
 
 class _PricingZonesPageState extends State<PricingZonesPage> {
   final _db = FirebaseFirestore.instance;
+  GoogleMapController? _mapCtrl;
   _MapMode _mode = _MapMode.view;
   String? _selectedZoneId;
+  bool _didFitBounds = false;
 
   static const CameraPosition _initialCamera = CameraPosition(
     target: LatLng(37.9838, 23.7275), // Αθήνα
@@ -137,11 +139,51 @@ class _PricingZonesPageState extends State<PricingZonesPage> {
     );
   }
 
+  void _fitBoundsToZones(List<PricingZone> zones) {
+    if (_mapCtrl == null || zones.isEmpty) return;
+    if (zones.length == 1) {
+      _mapCtrl!.animateCamera(
+        CameraUpdate.newLatLngZoom(LatLng(zones.first.lat, zones.first.lng), 11),
+      );
+      return;
+    }
+    double minLat = zones.first.lat, maxLat = zones.first.lat;
+    double minLng = zones.first.lng, maxLng = zones.first.lng;
+    for (final z in zones) {
+      if (z.lat < minLat) minLat = z.lat;
+      if (z.lat > maxLat) maxLat = z.lat;
+      if (z.lng < minLng) minLng = z.lng;
+      if (z.lng > maxLng) maxLng = z.lng;
+    }
+    _mapCtrl!.animateCamera(CameraUpdate.newLatLngBounds(
+      LatLngBounds(southwest: LatLng(minLat, minLng), northeast: LatLng(maxLat, maxLng)),
+      60,
+    ));
+  }
+
   Widget _buildMap() {
     return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
       stream: _db.collection('pricing_zones').snapshots(),
       builder: (context, snap) {
+        if (snap.hasError) {
+          return Container(
+            color: Colors.red.shade50,
+            padding: const EdgeInsets.all(16),
+            alignment: Alignment.center,
+            child: Text(
+              'Σφάλμα ανάγνωσης ζωνών:\n${snap.error}\n\n'
+              'Πιθανή αιτία: δεν έχουν γίνει deploy οι Firestore rules '
+              '(firebase deploy --only firestore:rules).',
+              style: const TextStyle(color: Colors.red),
+              textAlign: TextAlign.center,
+            ),
+          );
+        }
         final zones = (snap.data?.docs ?? []).map(PricingZone.fromDoc).toList();
+        if (zones.isNotEmpty && !_didFitBounds) {
+          _didFitBounds = true;
+          WidgetsBinding.instance.addPostFrameCallback((_) => _fitBoundsToZones(zones));
+        }
         final circles = <Circle>{
           for (final z in zones)
             Circle(
@@ -161,12 +203,43 @@ class _PricingZonesPageState extends State<PricingZonesPage> {
             GoogleMap(
               initialCameraPosition: _initialCamera,
               circles: circles,
-              onMapCreated: (_) {},
+              onMapCreated: (c) {
+                _mapCtrl = c;
+                if (zones.isNotEmpty) {
+                  WidgetsBinding.instance.addPostFrameCallback((_) => _fitBoundsToZones(zones));
+                }
+              },
               onTap: (latLng) => _onMapTap(latLng),
               myLocationButtonEnabled: false,
               zoomControlsEnabled: true,
             ),
-            Positioned(left: 12, right: 12, bottom: 12, child: _buildModeBar()),
+            if (snap.connectionState == ConnectionState.active && zones.isEmpty)
+              Positioned(
+                top: 72, left: 16, right: 16,
+                child: Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.white, borderRadius: BorderRadius.circular(10),
+                    boxShadow: const [BoxShadow(blurRadius: 8, color: Colors.black26)],
+                  ),
+                  child: const Text(
+                    'Δεν βρέθηκε καμία ζώνη στη βάση. Αν μόλις έτρεξες το seed_pricing.js, '
+                    'έλεγξε ότι έγινε deploy το firestore.rules — αλλιώς η φόρμα δεν έχει '
+                    'άδεια να τις διαβάσει.',
+                    style: TextStyle(fontSize: 12),
+                  ),
+                ),
+              ),
+            Positioned(
+              right: 12, bottom: 70,
+              child: FloatingActionButton.small(
+                heroTag: 'fitBounds',
+                backgroundColor: Colors.white,
+                onPressed: () => _fitBoundsToZones(zones),
+                child: const Icon(Icons.center_focus_strong_rounded, color: Colors.black87),
+              ),
+            ),
+            Positioned(left: 0, right: 0, top: 0, child: _buildModeBar()),
           ],
         );
       },
@@ -175,38 +248,56 @@ class _PricingZonesPageState extends State<PricingZonesPage> {
 
   Widget _buildModeBar() {
     if (_mode == _MapMode.view) {
-      return Row(
-        mainAxisAlignment: MainAxisAlignment.end,
-        children: [
-          AppButton(
-            label: 'Νέα ζώνη',
-            icon: Icons.add_location_alt_rounded,
+      return Align(
+        alignment: Alignment.topCenter,
+        child: Padding(
+          padding: const EdgeInsets.only(top: 12),
+          child: ElevatedButton.icon(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: _kAmber,
+              foregroundColor: Colors.black87,
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+              textStyle: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+              elevation: 4,
+            ),
+            icon: const Icon(Icons.add_location_alt_rounded),
+            label: const Text('Νέα ζώνη — πατήστε εδώ, μετά στον χάρτη'),
             onPressed: () => setState(() {
               _mode = _MapMode.addZone;
               _selectedZoneId = null;
             }),
           ),
-        ],
+        ),
       );
     }
     final label = _mode == _MapMode.addZone
-        ? 'Πατήστε στον χάρτη για τη θέση της νέας ζώνης'
-        : 'Πατήστε στον χάρτη για τη νέα θέση της ζώνης';
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        boxShadow: const [BoxShadow(blurRadius: 8, color: Colors.black26)],
-      ),
-      child: Row(
-        children: [
-          Expanded(child: Text(label, style: const TextStyle(fontWeight: FontWeight.w600))),
-          TextButton(
-            onPressed: () => setState(() => _mode = _MapMode.view),
-            child: const Text('Άκυρο'),
-          ),
-        ],
+        ? '👆 Πατήστε τώρα στον χάρτη για τη θέση της νέας ζώνης'
+        : '👆 Πατήστε τώρα στον χάρτη για τη νέα θέση της ζώνης';
+    return Align(
+      alignment: Alignment.topCenter,
+      child: Container(
+        margin: const EdgeInsets.only(top: 12, left: 12, right: 12),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+          color: Colors.deepPurple,
+          borderRadius: BorderRadius.circular(12),
+          boxShadow: const [BoxShadow(blurRadius: 8, color: Colors.black38)],
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Flexible(
+              child: Text(label,
+                  style: const TextStyle(
+                      color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
+            ),
+            const SizedBox(width: 8),
+            TextButton(
+              onPressed: () => setState(() => _mode = _MapMode.view),
+              child: const Text('Άκυρο', style: TextStyle(color: Colors.white70)),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -310,20 +401,30 @@ class _PricingZonesPageState extends State<PricingZonesPage> {
                         onPressed: () async {
                           final name = nameCtrl.text.trim();
                           if (name.isEmpty) return;
-                          if (existing == null && newPosition != null) {
-                            await _db.collection('pricing_zones').add({
-                              'name':   name,
-                              'lat':    newPosition.latitude,
-                              'lng':    newPosition.longitude,
-                              'radius': radius,
-                            });
-                          } else if (existing != null) {
-                            await _db.collection('pricing_zones').doc(existing.id).update({
-                              'name':   name,
-                              'radius': radius,
-                            });
+                          try {
+                            if (existing == null && newPosition != null) {
+                              await _db.collection('pricing_zones').add({
+                                'name':   name,
+                                'lat':    newPosition.latitude,
+                                'lng':    newPosition.longitude,
+                                'radius': radius,
+                              });
+                            } else if (existing != null) {
+                              await _db.collection('pricing_zones').doc(existing.id).update({
+                                'name':   name,
+                                'radius': radius,
+                              });
+                            }
+                            if (dctx.mounted) Navigator.of(dctx).pop();
+                          } catch (e) {
+                            if (dctx.mounted) {
+                              ScaffoldMessenger.of(dctx).showSnackBar(SnackBar(
+                                backgroundColor: Colors.red,
+                                content: Text('Απέτυχε η αποθήκευση: $e'),
+                                duration: const Duration(seconds: 6),
+                              ));
+                            }
                           }
-                          if (dctx.mounted) Navigator.of(dctx).pop();
                         },
                       ),
                     ],
@@ -527,12 +628,22 @@ class _RoutesTab extends StatelessWidget {
                     'vanForeign': vanFCtrl.text.trim().isEmpty
                         ? null : double.tryParse(vanFCtrl.text.replaceAll(',', '.')),
                   };
-                  if (existing == null) {
-                    await db.collection('pricing_routes').add(data);
-                  } else {
-                    await db.collection('pricing_routes').doc(existing.id).update(data);
+                  try {
+                    if (existing == null) {
+                      await db.collection('pricing_routes').add(data);
+                    } else {
+                      await db.collection('pricing_routes').doc(existing.id).update(data);
+                    }
+                    if (dctx.mounted) Navigator.of(dctx).pop();
+                  } catch (e) {
+                    if (dctx.mounted) {
+                      ScaffoldMessenger.of(dctx).showSnackBar(SnackBar(
+                        backgroundColor: Colors.red,
+                        content: Text('Απέτυχε η αποθήκευση: $e'),
+                        duration: const Duration(seconds: 6),
+                      ));
+                    }
                   }
-                  if (dctx.mounted) Navigator.of(dctx).pop();
                 },
                 child: const Text('Αποθήκευση'),
               ),
@@ -557,13 +668,13 @@ class _PricingConfigTab extends StatefulWidget {
 class _PricingConfigTabState extends State<_PricingConfigTab> {
   static const _keys = [
     'base', 'perKm', 'perMin', 'minCharge', 'minChargeNight', 'nightPctTaxi', 'nightPctVan',
-    'vanExtra', 'luggageFree', 'luggagePer', 'seatPrice',
+    'vanPct', 'seatPrice',
   ];
 
   static const _defaults = {
     'base': 3.5, 'perKm': 1.0, 'perMin': 0.2, 'minCharge': 25.0, 'minChargeNight': 35.0,
-    'nightPctTaxi': 30.0, 'nightPctVan': 25.0, 'vanExtra': 15.0,
-    'luggageFree': 4.0, 'luggagePer': 1.0, 'seatPrice': 5.0,
+    'nightPctTaxi': 30.0, 'nightPctVan': 25.0,
+    'vanPct': 90.0, 'seatPrice': 5.0,
   };
 
   static const _labels = {
@@ -574,9 +685,7 @@ class _PricingConfigTabState extends State<_PricingConfigTab> {
     'minChargeNight': 'Ελάχιστη χρέωση διαδρομής, νύχτα (€)',
     'nightPctTaxi':   'Νυχτερινή προσαύξηση Ταξί (%)',
     'nightPctVan':    'Νυχτερινή προσαύξηση Βαν (%)',
-    'vanExtra':       'Πρόσθετο Βαν (€, δυναμικός τύπος)',
-    'luggageFree':    'Δωρεάν βαλίτσες',
-    'luggagePer':     '€ ανά επιπλέον βαλίτσα',
+    'vanPct':         'Βαν = Ταξί + (%) — δυναμικός τύπος',
     'seatPrice':      '€ ανά παιδικό κάθισμα',
   };
 
@@ -589,9 +698,7 @@ class _PricingConfigTabState extends State<_PricingConfigTab> {
 
   @override
   void dispose() {
-    for (final ctrl in _c.values) {
-      ctrl.dispose();
-    }
+    for (final ctrl in _c.values) ctrl.dispose();
     super.dispose();
   }
 
@@ -600,6 +707,16 @@ class _PricingConfigTabState extends State<_PricingConfigTab> {
     return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
       stream: widget.db.collection('app_settings').doc('pricing').snapshots(),
       builder: (context, snap) {
+        if (snap.hasError) {
+          return Padding(
+            padding: const EdgeInsets.all(16),
+            child: Text(
+              'Σφάλμα ανάγνωσης ρυθμίσεων:\n${snap.error}\n\n'
+              'Πιθανή αιτία: δεν έχουν γίνει deploy οι Firestore rules.',
+              style: const TextStyle(color: Colors.red),
+            ),
+          );
+        }
         if (!_loaded && snap.hasData) {
           final data = snap.data!.data() ?? {};
           for (final k in _keys) {
@@ -614,7 +731,7 @@ class _PricingConfigTabState extends State<_PricingConfigTab> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              const Text('Ισχύει για διαδρομές εκτός ζωνών',
+              const Text('Ισχύει για διαδρομές εκτός ζωνών — βαλίτσες ΔΕΝ χρεώνονται καθόλου',
                   style: TextStyle(color: Colors.grey, fontSize: 12)),
               const SizedBox(height: 4),
               const Text(
@@ -656,7 +773,17 @@ class _PricingConfigTabState extends State<_PricingConfigTab> {
         k: double.tryParse(_c[k]!.text.replaceAll(',', '.')) ?? _defaults[k],
       'nightAppliesToZones': _nightAppliesToZones,
     };
-    await widget.db.collection('app_settings').doc('pricing').set(data, SetOptions(merge: true));
+    try {
+      await widget.db.collection('app_settings').doc('pricing').set(data, SetOptions(merge: true));
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          backgroundColor: Colors.red,
+          content: Text('Απέτυχε η αποθήκευση: $e'),
+          duration: const Duration(seconds: 6),
+        ));
+      }
+    }
     if (mounted) setState(() => _saving = false);
   }
 }
