@@ -2208,25 +2208,34 @@ async function computeEstimate({
       }
     }
     outsideAttica = isOutsideAttica(fromLat, fromLng) || isOutsideAttica(toLat, toLng);
-    const isNightNow = !!scheduledNaive && isNightWindow(scheduledNaive);
-    const minChargeNow = isNightNow ? cfg.minChargeNight : cfg.minCharge;
     const perKmNow = outsideAttica ? 2.0 : cfg.perKm;
 
     let p = cfg.base + distanceKm * perKmNow + durationMin * cfg.perMin;
-    if (p < minChargeNow) minChargeApplied = true;
-    p = Math.max(p, minChargeNow);
     const luggageExtra = Math.max(0, luggage - cfg.luggageFree) * cfg.luggagePer;
     const seatsExtra = childSeatCount * cfg.seatPrice;
     p += luggageExtra + seatsExtra;
     if (vehicle === "van") p += cfg.vanExtra;
-    basePrice = p;
+    basePrice = p; // ΧΩΡΙΣ ελάχιστη ακόμα — αυτή εφαρμόζεται ΜΕΤΑ το νυχτερινό (βλ. παρακάτω)
   }
 
   const nightApplies = !!scheduledNaive && isNightWindow(scheduledNaive) && (!zoneMatch || cfg.nightAppliesToZones);
   const nightMult = nightApplies ? 1 + (vehicle === "van" ? cfg.nightPctVan : cfg.nightPctTaxi) / 100 : 1;
 
-  const price = Math.floor(basePrice * nightMult);
-  const referencePrice = baseOtherPrice != null ? Math.floor(baseOtherPrice * nightMult) : price;
+  let price = basePrice * nightMult;
+  let referencePriceRaw = baseOtherPrice != null ? baseOtherPrice * nightMult : price;
+
+  // Η ελάχιστη χρέωση (25€ μέρα / 35€ νύχτα) εφαρμόζεται στο ΤΕΛΙΚΟ ποσό —
+  // αυτό που θα πληρώσει ο πελάτης — όχι στη βάση πριν το νυχτερινό.
+  if (!zoneMatch) {
+    const isNightNow = !!scheduledNaive && isNightWindow(scheduledNaive);
+    const minChargeNow = isNightNow ? cfg.minChargeNight : cfg.minCharge;
+    if (price < minChargeNow) minChargeApplied = true;
+    price = Math.max(price, minChargeNow);
+    referencePriceRaw = Math.max(referencePriceRaw, minChargeNow);
+  }
+
+  price = Math.floor(price);
+  const referencePrice = Math.floor(referencePriceRaw);
 
   // «Αρχική τιμή» = αυτή που, με -8% έκπτωση γνωριμίας, δίνει ακριβώς την
   // τιμή αναφοράς (του ξένου πελάτη, ή τη δική του τιμή αν δεν υπάρχει
