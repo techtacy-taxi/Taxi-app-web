@@ -2142,8 +2142,7 @@ async function getPricingData() {
   const cfg = Object.assign(
     {
       base: 3.5, perKm: 1.0, perMin: 0.2, minCharge: 25, minChargeNight: 35,
-      nightPctTaxi: 30, nightPctVan: 25, vanExtra: 15,
-      luggageFree: 4, luggagePer: 1, seatPrice: 5,
+      nightPctTaxi: 30, nightPctVan: 25, vanPct: 90, seatPrice: 5,
       nightAppliesToZones: true,
     },
     cfgDoc.exists ? cfgDoc.data() : {}
@@ -2211,10 +2210,9 @@ async function computeEstimate({
     const perKmNow = outsideAttica ? 2.0 : cfg.perKm;
 
     let p = cfg.base + distanceKm * perKmNow + durationMin * cfg.perMin;
-    const luggageExtra = Math.max(0, luggage - cfg.luggageFree) * cfg.luggagePer;
     const seatsExtra = childSeatCount * cfg.seatPrice;
-    p += luggageExtra + seatsExtra;
-    if (vehicle === "van") p += cfg.vanExtra;
+    p += seatsExtra; // βαλίτσες: καμία χρέωση
+    if (vehicle === "van") p = p * (1 + cfg.vanPct / 100); // Βαν = Ταξί + vanPct%
     basePrice = p; // ΧΩΡΙΣ ελάχιστη ακόμα — αυτή εφαρμόζεται ΜΕΤΑ το νυχτερινό (βλ. παρακάτω)
   }
 
