@@ -92,7 +92,7 @@ class PricingRoute {
 
 // ─── Page ───────────────────────────────────────────────────────────────────
 
-enum _MapMode { view, addZone, moveZone }
+enum _MapMode { view, placeZone, moveZone }
 
 class PricingZonesPage extends StatefulWidget {
   const PricingZonesPage({super.key});
@@ -107,6 +107,12 @@ class _PricingZonesPageState extends State<PricingZonesPage> {
   _MapMode _mode = _MapMode.view;
   String? _selectedZoneId;
   bool _didFitBounds = false;
+
+  // Κατά τη μετακίνηση ζώνης: η τρέχουσα (συρόμενη) θέση του κέντρου.
+  LatLng? _dragPosition;
+  double _dragRadius = 3000;
+  // Τρέχον κέντρο κάμερας — για να μπαίνει η νέα ζώνη στο κέντρο του χάρτη.
+  LatLng _cameraCenter = const LatLng(37.9838, 23.7275);
 
   static const CameraPosition _initialCamera = CameraPosition(
     target: LatLng(37.9838, 23.7275), // Αθήνα
@@ -184,11 +190,17 @@ class _PricingZonesPageState extends State<PricingZonesPage> {
           _didFitBounds = true;
           WidgetsBinding.instance.addPostFrameCallback((_) => _fitBoundsToZones(zones));
         }
+        final movingZone = _mode == _MapMode.moveZone && _selectedZoneId != null
+            ? zones.where((z) => z.id == _selectedZoneId).cast<PricingZone?>().firstOrNull
+            : null;
         final circles = <Circle>{
           for (final z in zones)
             Circle(
               circleId: CircleId(z.id),
-              center: LatLng(z.lat, z.lng),
+              // Κατά τη μετακίνηση, ο κύκλος αυτής της ζώνης ακολουθεί τον marker.
+              center: (movingZone != null && z.id == movingZone.id && _dragPosition != null)
+                  ? _dragPosition!
+                  : LatLng(z.lat, z.lng),
               radius: z.radius,
               consumeTapEvents: true,
               strokeWidth: z.id == _selectedZoneId ? 3 : 1,
@@ -197,12 +209,45 @@ class _PricingZonesPageState extends State<PricingZonesPage> {
                   .withValues(alpha: 0.18),
               onTap: () => _onZoneTap(z),
             ),
+          // Νέα ζώνη υπό τοποθέτηση — κόκκινος κύκλος.
+          if (_mode == _MapMode.placeZone && _dragPosition != null)
+            Circle(
+              circleId: const CircleId('_newZone'),
+              center: _dragPosition!,
+              radius: _dragRadius,
+              strokeWidth: 3,
+              strokeColor: Colors.red,
+              fillColor: Colors.red.withValues(alpha: 0.18),
+            ),
         };
+        final markers = <Marker>{};
+        if (movingZone != null) {
+          final pos = _dragPosition ?? LatLng(movingZone.lat, movingZone.lng);
+          markers.add(Marker(
+            markerId: const MarkerId('_dragMarker'),
+            position: pos,
+            draggable: true,
+            onDrag: (p) => setState(() => _dragPosition = p),
+            onDragEnd: (p) => setState(() => _dragPosition = p),
+          ));
+        }
+        if (_mode == _MapMode.placeZone && _dragPosition != null) {
+          markers.add(Marker(
+            markerId: const MarkerId('_newZoneMarker'),
+            position: _dragPosition!,
+            draggable: true,
+            icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
+            onDrag: (p) => setState(() => _dragPosition = p),
+            onDragEnd: (p) => setState(() => _dragPosition = p),
+          ));
+        }
         return Stack(
           children: [
             GoogleMap(
               initialCameraPosition: _initialCamera,
               circles: circles,
+              markers: markers,
+              onCameraMove: (pos) => _cameraCenter = pos.target,
               onMapCreated: (c) {
                 _mapCtrl = c;
                 if (zones.isNotEmpty) {
@@ -261,23 +306,70 @@ class _PricingZonesPageState extends State<PricingZonesPage> {
               elevation: 4,
             ),
             icon: const Icon(Icons.add_location_alt_rounded),
-            label: const Text('Νέα ζώνη — πατήστε εδώ, μετά στον χάρτη'),
+            label: const Text('Νέα ζώνη'),
             onPressed: () => setState(() {
-              _mode = _MapMode.addZone;
+              _mode = _MapMode.placeZone;
               _selectedZoneId = null;
+              _dragPosition = _cameraCenter; // ξεκινά στο κέντρο του χάρτη
+              _dragRadius = 3000;
             }),
           ),
         ),
       );
     }
-    final label = _mode == _MapMode.addZone
-        ? '👆 Πατήστε τώρα στον χάρτη για τη θέση της νέας ζώνης'
-        : '👆 Πατήστε τώρα στον χάρτη για τη νέα θέση της ζώνης';
+    if (_mode == _MapMode.placeZone) {
+      return Align(
+        alignment: Alignment.topCenter,
+        child: Container(
+          margin: const EdgeInsets.only(top: 12, left: 12, right: 12),
+          padding: const EdgeInsets.fromLTRB(16, 8, 8, 8),
+          decoration: BoxDecoration(
+            color: Colors.red.shade700,
+            borderRadius: BorderRadius.circular(12),
+            boxShadow: const [BoxShadow(blurRadius: 8, color: Colors.black38)],
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Flexible(
+                child: Text('✋ Σύρετε την κόκκινη πινέζα στη θέση της ζώνης',
+                    style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
+              ),
+              const SizedBox(width: 8),
+              TextButton(
+                onPressed: () => setState(() {
+                  _mode = _MapMode.view;
+                  _dragPosition = null;
+                }),
+                child: const Text('Άκυρο', style: TextStyle(color: Colors.white70)),
+              ),
+              ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: _kAmber,
+                  foregroundColor: Colors.black87,
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                  textStyle: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+                icon: const Icon(Icons.check_rounded),
+                label: const Text('ΟΚ'),
+                onPressed: () {
+                  final pos = _dragPosition;
+                  if (pos == null) return;
+                  setState(() => _mode = _MapMode.view);
+                  _openZoneDialog(newPosition: pos);
+                },
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+    // moveZone
     return Align(
       alignment: Alignment.topCenter,
       child: Container(
         margin: const EdgeInsets.only(top: 12, left: 12, right: 12),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        padding: const EdgeInsets.fromLTRB(16, 8, 8, 8),
         decoration: BoxDecoration(
           color: Colors.deepPurple,
           borderRadius: BorderRadius.circular(12),
@@ -286,20 +378,58 @@ class _PricingZonesPageState extends State<PricingZonesPage> {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Flexible(
-              child: Text(label,
-                  style: const TextStyle(
-                      color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
+            const Flexible(
+              child: Text('✋ Σύρετε τη ζώνη στη νέα θέση',
+                  style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
             ),
             const SizedBox(width: 8),
             TextButton(
-              onPressed: () => setState(() => _mode = _MapMode.view),
+              onPressed: () => setState(() {
+                _mode = _MapMode.view;
+                _dragPosition = null;
+              }),
               child: const Text('Άκυρο', style: TextStyle(color: Colors.white70)),
+            ),
+            ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _kAmber,
+                foregroundColor: Colors.black87,
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                textStyle: const TextStyle(fontWeight: FontWeight.bold),
+              ),
+              icon: const Icon(Icons.check_rounded),
+              label: const Text('ΟΚ'),
+              onPressed: _saveDraggedZone,
             ),
           ],
         ),
       ),
     );
+  }
+
+  Future<void> _saveDraggedZone() async {
+    if (_selectedZoneId == null || _dragPosition == null) {
+      setState(() => _mode = _MapMode.view);
+      return;
+    }
+    try {
+      await _db.collection('pricing_zones').doc(_selectedZoneId).update({
+        'lat': _dragPosition!.latitude,
+        'lng': _dragPosition!.longitude,
+      });
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          backgroundColor: Colors.red,
+          content: Text('Απέτυχε η μετακίνηση: $e'),
+          duration: const Duration(seconds: 6),
+        ));
+      }
+    }
+    if (mounted) setState(() {
+      _mode = _MapMode.view;
+      _dragPosition = null;
+    });
   }
 
   void _onZoneTap(PricingZone z) {
@@ -309,16 +439,8 @@ class _PricingZonesPageState extends State<PricingZonesPage> {
   }
 
   Future<void> _onMapTap(LatLng pos) async {
-    if (_mode == _MapMode.addZone) {
-      setState(() => _mode = _MapMode.view);
-      await _openZoneDialog(newPosition: pos);
-    } else if (_mode == _MapMode.moveZone && _selectedZoneId != null) {
-      await _db.collection('pricing_zones').doc(_selectedZoneId).update({
-        'lat': pos.latitude,
-        'lng': pos.longitude,
-      });
-      setState(() => _mode = _MapMode.view);
-    }
+    // Τοποθέτηση & μετακίνηση γίνονται πλέον με drag & drop + κουμπί ΟΚ.
+    // Το tap στον χάρτη δεν κάνει κάτι.
   }
 
   Future<void> _openZoneDialog({PricingZone? existing, LatLng? newPosition}) async {
@@ -329,12 +451,19 @@ class _PricingZonesPageState extends State<PricingZonesPage> {
       context: context,
       builder: (dctx) => StatefulBuilder(
         builder: (c, setLocal) {
-          return Dialog(
-            clipBehavior: Clip.antiAlias,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
+          return Align(
+            alignment: Alignment.topCenter,
+            child: Padding(
+              padding: const EdgeInsets.only(top: 12, left: 12, right: 12),
+              child: Material(
+                type: MaterialType.transparency,
+                child: Dialog(
+                  insetPadding: EdgeInsets.zero,
+                  clipBehavior: Clip.antiAlias,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
                 Container(
                   width: double.infinity,
                   color: _kAmber,
@@ -361,7 +490,11 @@ class _PricingZonesPageState extends State<PricingZonesPage> {
                         min: 500, max: 20000, divisions: 39,
                         value: radius,
                         label: '${(radius / 1000).toStringAsFixed(1)} χλμ',
-                        onChanged: (v) => setLocal(() => radius = v),
+                        onChanged: (v) {
+                          setLocal(() => radius = v);
+                          // Ζωντανή ενημέρωση του κόκκινου κύκλου (νέα ζώνη).
+                          if (existing == null) setState(() => _dragRadius = v);
+                        },
                       ),
                       const SizedBox(height: 10),
                       if (existing != null)
@@ -376,6 +509,7 @@ class _PricingZonesPageState extends State<PricingZonesPage> {
                                   setState(() {
                                     _mode = _MapMode.moveZone;
                                     _selectedZoneId = existing.id;
+                                    _dragPosition = LatLng(existing.lat, existing.lng);
                                   });
                                 },
                               ),
@@ -400,37 +534,51 @@ class _PricingZonesPageState extends State<PricingZonesPage> {
                         icon: Icons.check_rounded,
                         onPressed: () async {
                           final name = nameCtrl.text.trim();
-                          if (name.isEmpty) return;
+                          if (name.isEmpty) {
+                            ScaffoldMessenger.of(dctx).showSnackBar(const SnackBar(
+                              content: Text('Δώστε όνομα στη ζώνη'),
+                            ));
+                            return;
+                          }
+                          final navigator = Navigator.of(dctx);
+                          final messenger = ScaffoldMessenger.of(dctx);
                           try {
                             if (existing == null && newPosition != null) {
-                              await _db.collection('pricing_zones').add({
+                              final ref = await _db.collection('pricing_zones').add({
                                 'name':   name,
                                 'lat':    newPosition.latitude,
                                 'lng':    newPosition.longitude,
                                 'radius': radius,
                               });
+                              navigator.pop();
+                              // Η νέα ζώνη γίνεται επιλεγμένη (μωβ).
+                              if (mounted) setState(() => _selectedZoneId = ref.id);
                             } else if (existing != null) {
                               await _db.collection('pricing_zones').doc(existing.id).update({
                                 'name':   name,
                                 'radius': radius,
                               });
+                              navigator.pop();
+                              if (mounted) setState(() => _selectedZoneId = existing.id);
+                            } else {
+                              navigator.pop();
                             }
-                            if (dctx.mounted) Navigator.of(dctx).pop();
                           } catch (e) {
-                            if (dctx.mounted) {
-                              ScaffoldMessenger.of(dctx).showSnackBar(SnackBar(
-                                backgroundColor: Colors.red,
-                                content: Text('Απέτυχε η αποθήκευση: $e'),
-                                duration: const Duration(seconds: 6),
-                              ));
-                            }
+                            messenger.showSnackBar(SnackBar(
+                              backgroundColor: Colors.red,
+                              content: Text('Απέτυχε η αποθήκευση: $e'),
+                              duration: const Duration(seconds: 6),
+                            ));
                           }
                         },
                       ),
                     ],
                   ),
                 ),
-              ],
+                    ],
+                  ),
+                ),
+              ),
             ),
           );
         },
