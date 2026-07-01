@@ -2005,6 +2005,292 @@ const BOOKING_ALLOWED_ORIGINS = [
 // ── helper: ασφαλές κείμενο (όχι undefined/null) ────────────────────────────
 function s(v) { return (v == null ? "" : String(v)).trim(); }
 
+// ════════════════════════════════════════════════════════════════════════════
+//  ΤΙΜΟΛΟΓΗΣΗ ΔΗΜΟΣΙΑΣ ΦΟΡΜΑΣ (estimatePrice + submitPublicBooking)
+//
+//  Ζώνες (πάγιες τιμές γνωστών διαδρομών) + δυναμικός τύπος για ό,τι δεν
+//  ταιριάζει σε ζώνη + νυχτερινό τιμολόγιο + μπλάκαουτ/ελάχιστη προθεσμία.
+//  Το κλειδί Google (Routes API) ΔΕΝ φεύγει ποτέ από τον server — secret.
+// ════════════════════════════════════════════════════════════════════════════
+const ROUTES_API_KEY = defineSecret("ROUTES_API_KEY");
+
+// ── Ώρα Ελλάδας ως «naive» Date (τα UTC getters δείχνουν ελληνική ώρα) ──────
+// Έτσι οι συγκρίσεις (προθεσμία, νυχτερινό, μπλάκαουτ) δουλεύουν σωστά χωρίς
+// να εξαρτώνται από τη ζώνη ώρας του server.
+function athensNaiveDate(realDate) {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Europe/Athens", year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
+  }).formatToParts(realDate);
+  const get = (t) => Number(parts.find((p) => p.type === t).value);
+  return new Date(Date.UTC(get("year"), get("month") - 1, get("day"), get("hour"), get("minute"), get("second")));
+}
+function athensNaiveFromDateTimeStrings(dateStr, timeStr) {
+  const [y, m, d] = s(dateStr).split("-").map(Number);
+  const [hh, mm] = (s(timeStr) || "00:00").split(":").map(Number);
+  if (!y || !m || !d) return null;
+  return new Date(Date.UTC(y, m - 1, d, hh || 0, mm || 0, 0));
+}
+
+// ── Νυχτερινό τιμολόγιο 23:30–05:30 ──────────────────────────────────────────
+function isNightWindow(naiveDate) {
+  const mins = naiveDate.getUTCHours() * 60 + naiveDate.getUTCMinutes();
+  return mins >= 23 * 60 + 30 || mins < 5 * 60 + 30;
+}
+
+// ── Μπλάκαουτ: μόνο το ΑΜΕΣΩΣ επόμενο παράθυρο 22:30–08:00 από «τώρα» ───────
+function nearestBlackoutWindow(simNaive) {
+  const mins = simNaive.getUTCHours() * 60 + simNaive.getUTCMinutes();
+  const start = new Date(simNaive);
+  start.setUTCHours(22, 30, 0, 0);
+  if (mins < 8 * 60) start.setUTCDate(start.getUTCDate() - 1);
+  const end = new Date(start);
+  end.setUTCDate(end.getUTCDate() + 1);
+  end.setUTCHours(8, 0, 0, 0);
+  return { start, end };
+}
+
+// ── Λόγοι μπλοκαρίσματος υποβολής (μπλάκαουτ / προθεσμία / μεγάλη παραγγελία)
+function computeGate(simNaive, scheduledNaive, persons, luggage) {
+  const reasons = [];
+  if (!scheduledNaive) return reasons;
+  const bw = nearestBlackoutWindow(simNaive);
+  if (scheduledNaive >= bw.start && scheduledNaive < bw.end) reasons.push("blackout");
+  const leadHours = (scheduledNaive - simNaive) / 3600000;
+  if (leadHours < 2) reasons.push("lead_time");
+  if (persons >= 5 || luggage >= 5) reasons.push("large_order");
+  return reasons;
+}
+
+// ── Απόσταση ευθείας γραμμής (fallback αν αποτύχει το Routes API) ──────────
+function haversineKm(a, b) {
+  const R = 6371, toRad = (d) => (d * Math.PI) / 180;
+  const dLat = toRad(b.lat - a.lat), dLng = toRad(b.lng - a.lng);
+  const x = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
+}
+
+// ── Πραγματική απόσταση/διάρκεια μέσω Routes API (κλειδί ΜΟΝΟ server-side) ──
+async function routesDistanceDuration(origin, dest, apiKey) {
+  if (!apiKey) return null;
+  try {
+    const resp = await fetch("https://routes.googleapis.com/directions/v2:computeRoutes", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": apiKey,
+        "X-Goog-FieldMask": "routes.distanceMeters,routes.duration",
+      },
+      body: JSON.stringify({
+        origin: { location: { latLng: { latitude: origin.lat, longitude: origin.lng } } },
+        destination: { location: { latLng: { latitude: dest.lat, longitude: dest.lng } } },
+        travelMode: "DRIVE",
+        routingPreference: "TRAFFIC_AWARE",
+      }),
+    });
+    const data = await resp.json();
+    const route = data && data.routes && data.routes[0];
+    if (!route) return null;
+    return {
+      distanceKm: Number(route.distanceMeters || 0) / 1000,
+      durationMin: parseInt(route.duration, 10) / 60,
+    };
+  } catch (e) {
+    console.error("routesDistanceDuration error:", e);
+    return null;
+  }
+}
+
+// ── Πρόχειρα όρια Αττικής (bounding box) — για να ξέρουμε πότε μια διαδρομή
+// βγαίνει έξω και χρειάζεται 2€/χλμ + υποχρεωτική επικοινωνία μέσω WhatsApp.
+const ATTICA_BOUNDS = { south: 37.55, north: 38.35, west: 23.10, east: 24.10 };
+function isOutsideAttica(lat, lng) {
+  if (lat == null || lng == null) return false;
+  return lat < ATTICA_BOUNDS.south || lat > ATTICA_BOUNDS.north ||
+         lng < ATTICA_BOUNDS.west || lng > ATTICA_BOUNDS.east;
+}
+
+// ── Ταίριασμα σημείου σε ζώνη (μέσα στην ακτίνα της, η πιο κοντινή αν πολλές)
+function matchZone(lat, lng, zones) {
+  let best = null, bestKm = Infinity;
+  for (const z of zones) {
+    if (z.lat == null || z.lng == null) continue;
+    const dKm = haversineKm({ lat, lng }, { lat: z.lat, lng: z.lng });
+    if (dKm * 1000 <= Number(z.radius || 0) && dKm < bestKm) { best = z; bestKm = dKm; }
+  }
+  return best;
+}
+
+// ── Ρυθμίσεις τιμολόγησης (ζώνες + διαδρομές + δυναμικός τύπος), cache 60″ ──
+let _pricingCache = null;
+let _pricingCacheAt = 0;
+async function getPricingData() {
+  const now = Date.now();
+  if (_pricingCache && now - _pricingCacheAt < 60000) return _pricingCache;
+  const db = getFirestore();
+  const [zonesSnap, routesSnap, cfgDoc] = await Promise.all([
+    db.collection("pricing_zones").get(),
+    db.collection("pricing_routes").get(),
+    db.collection("app_settings").doc("pricing").get(),
+  ]);
+  const zones = zonesSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  const routes = {};
+  routesSnap.docs.forEach((d) => {
+    const r = d.data();
+    if (r.fromZoneId && r.toZoneId) routes[r.fromZoneId + ">" + r.toZoneId] = r;
+  });
+  const cfg = Object.assign(
+    {
+      base: 3.5, perKm: 1.0, perMin: 0.2, minCharge: 25, minChargeNight: 35,
+      nightPctTaxi: 30, nightPctVan: 25, vanExtra: 15,
+      luggageFree: 4, luggagePer: 1, seatPrice: 5,
+      nightAppliesToZones: true,
+    },
+    cfgDoc.exists ? cfgDoc.data() : {}
+  );
+  _pricingCache = { zones, routes, cfg };
+  _pricingCacheAt = now;
+  return _pricingCache;
+}
+
+// ── Κεντρικός υπολογισμός τιμής (ζώνη ή δυναμικός τύπος + νυχτερινό) ───────
+// Επιπλέον υπολογίζει την «αρχική τιμή» (πριν την έκπτωση γνωριμίας 8%) που
+// εμφανίζεται διαγραμμένη δίπλα στην τελική τιμή. Για διαδρομές όπου ο
+// Έλληνας πελάτης έχει ήδη χαμηλότερη τιμή από τον ξένο, χρησιμοποιούμε ΤΗΝ
+// ΙΔΙΑ «αρχική» με του ξένου και υπολογίζουμε πόσο % έκπτωση βγαίνει αυτό
+// (στρογγυλό, όχι δεκαδικό) — άρα ο Έλληνας βλέπει μεγαλύτερο ποσοστό.
+async function computeEstimate({
+  fromLat, fromLng, toLat, toLng, persons, luggage, childSeatCount,
+  vehicleType, isGreek, scheduledNaive, apiKey,
+}) {
+  const { zones, routes, cfg } = await getPricingData();
+  const forced = persons >= 5 || luggage >= 5;
+  const vehicle = forced ? "van" : (vehicleType === "van" ? "van" : "taxi");
+
+  const fromZone = fromLat != null && fromLng != null ? matchZone(fromLat, fromLng, zones) : null;
+  const toZone = toLat != null && toLng != null ? matchZone(toLat, toLng, zones) : null;
+
+  let basePrice = 0;        // τιμή αυτού του πελάτη, πριν το νυχτερινό
+  let baseOtherPrice = null; // τιμή που θα είχε ο «άλλος τύπος» πελάτη (αν υπάρχει διαφοροποίηση)
+  let zoneMatch = false;
+  let minChargeApplied = false;
+  let outsideAttica = false;
+
+  if (fromZone && toZone) {
+    const route = routes[fromZone.id + ">" + toZone.id];
+    if (route) {
+      zoneMatch = true;
+      const ownField = vehicle === "van" ? "van" : "taxi";
+      const foreignField = vehicle === "van" ? "vanForeign" : "taxiForeign";
+      const ownPrice = Number(route[ownField] || 0);
+      const foreignPrice = route[foreignField] != null ? Number(route[foreignField]) : null;
+      if (foreignPrice != null && isGreek) {
+        basePrice = ownPrice;
+        baseOtherPrice = foreignPrice; // ο ξένος είναι η βάση αναφοράς (τυπικό -8%)
+      } else if (foreignPrice != null && !isGreek) {
+        basePrice = foreignPrice;
+      } else {
+        basePrice = ownPrice;
+      }
+    }
+  }
+
+  if (!zoneMatch) {
+    let distanceKm = 0, durationMin = 0;
+    if (fromLat != null && fromLng != null && toLat != null && toLng != null) {
+      const rd = await routesDistanceDuration({ lat: fromLat, lng: fromLng }, { lat: toLat, lng: toLng }, apiKey);
+      if (rd) {
+        distanceKm = rd.distanceKm;
+        durationMin = rd.durationMin;
+      } else {
+        distanceKm = haversineKm({ lat: fromLat, lng: fromLng }, { lat: toLat, lng: toLng }) * 1.3;
+        durationMin = (distanceKm / 45) * 60;
+      }
+    }
+    outsideAttica = isOutsideAttica(fromLat, fromLng) || isOutsideAttica(toLat, toLng);
+    const isNightNow = !!scheduledNaive && isNightWindow(scheduledNaive);
+    const minChargeNow = isNightNow ? cfg.minChargeNight : cfg.minCharge;
+    const perKmNow = outsideAttica ? 2.0 : cfg.perKm;
+
+    let p = cfg.base + distanceKm * perKmNow + durationMin * cfg.perMin;
+    if (p < minChargeNow) minChargeApplied = true;
+    p = Math.max(p, minChargeNow);
+    const luggageExtra = Math.max(0, luggage - cfg.luggageFree) * cfg.luggagePer;
+    const seatsExtra = childSeatCount * cfg.seatPrice;
+    p += luggageExtra + seatsExtra;
+    if (vehicle === "van") p += cfg.vanExtra;
+    basePrice = p;
+  }
+
+  const nightApplies = !!scheduledNaive && isNightWindow(scheduledNaive) && (!zoneMatch || cfg.nightAppliesToZones);
+  const nightMult = nightApplies ? 1 + (vehicle === "van" ? cfg.nightPctVan : cfg.nightPctTaxi) / 100 : 1;
+
+  const price = Math.floor(basePrice * nightMult);
+  const referencePrice = baseOtherPrice != null ? Math.floor(baseOtherPrice * nightMult) : price;
+
+  // «Αρχική τιμή» = αυτή που, με -8% έκπτωση γνωριμίας, δίνει ακριβώς την
+  // τιμή αναφοράς (του ξένου πελάτη, ή τη δική του τιμή αν δεν υπάρχει
+  // διαφοροποίηση). Ο Έλληνας βλέπει την ΙΔΙΑ αρχική με τον ξένο, οπότε το
+  // πραγματικό του ποσοστό έκπτωσης βγαίνει μεγαλύτερο.
+  const displayOriginal = Math.round((referencePrice / 0.92) * 100) / 100;
+  let discountPercent = displayOriginal > 0 ? Math.round((1 - price / displayOriginal) * 100) : 8;
+  if (!isFinite(discountPercent)) discountPercent = 8;
+
+  return { price, nightApplies, vehicle, zoneMatch, minChargeApplied, displayOriginal, discountPercent, outsideAttica };
+}
+
+// ── estimatePrice: καλείται ζωντανά από τη φόρμα καθώς συμπληρώνει ο πελάτης ─
+exports.estimatePrice = onRequest(
+  { region: "us-central1", cors: BOOKING_ALLOWED_ORIGINS, memory: "256MiB", secrets: [ROUTES_API_KEY] },
+  async (req, res) => {
+    if (req.method !== "POST") return res.status(405).json({ ok: false, error: "method_not_allowed" });
+    try {
+      const b = req.body || {};
+      const num = (v) => (v == null || v === "" || isNaN(Number(v)) ? null : Number(v));
+      const fromLat = num(b.fromLat), fromLng = num(b.fromLng);
+      const toLat = num(b.toLat), toLng = num(b.toLng);
+      const persons = Math.max(1, parseInt(b.persons, 10) || 1);
+      const luggage = Math.max(0, parseInt(b.luggage, 10) || 0);
+      const childSeatCount = Math.max(0, parseInt(b.childSeatCount, 10) || 0);
+      const vehicleType = s(b.vehicleType) === "van" ? "van" : "taxi";
+      const lang = s(b.lang) || "el";
+      const dialCode = s(b.dialCode);
+      const isGreek = lang === "el" ? true : dialCode === "+30";
+
+      let scheduledNaive = null, gateReasons = [];
+      const date = s(b.date), time = s(b.time);
+      if (date && time) {
+        scheduledNaive = athensNaiveFromDateTimeStrings(date, time);
+        const simNaive = athensNaiveDate(new Date());
+        gateReasons = computeGate(simNaive, scheduledNaive, persons, luggage);
+      }
+
+      const result = await computeEstimate({
+        fromLat, fromLng, toLat, toLng, persons, luggage, childSeatCount,
+        vehicleType, isGreek, scheduledNaive, apiKey: ROUTES_API_KEY.value(),
+      });
+      if (result.outsideAttica && !gateReasons.includes("outside_attica")) {
+        gateReasons.push("outside_attica");
+      }
+
+      return res.status(200).json({
+        ok: true,
+        price: result.price,
+        nightApplies: result.nightApplies,
+        vehicle: result.vehicle,
+        blocked: gateReasons.length > 0,
+        reasons: gateReasons,
+        displayOriginal: result.displayOriginal,
+        discountPercent: result.discountPercent,
+        minChargeApplied: result.minChargeApplied,
+      });
+    } catch (e) {
+      console.error("estimatePrice error:", e);
+      return res.status(500).json({ ok: false, error: "server_error" });
+    }
+  }
+);
+
 // ── helper: φτιάχνει .ics για τη δουλειά (ώρα Ελλάδας) ───────────────────────
 function buildIcs({ from, to, startDate, durationMin, summary, description }) {
   // startDate: JS Date (UTC). Μορφή ICS σε UTC (Z).
@@ -2078,7 +2364,7 @@ async function sendBookingEmail(masterUid, toEmail, subject, bodyText, icsConten
 
 exports.submitPublicBooking = onRequest(
   { region: "us-central1", cors: BOOKING_ALLOWED_ORIGINS, memory: "256MiB",
-    secrets: [GCAL_CLIENT_SECRET] },
+    secrets: [GCAL_CLIENT_SECRET, ROUTES_API_KEY] },
   async (req, res) => {
     // CORS preflight το χειρίζεται το cors:[...] παραπάνω.
     if (req.method !== "POST") {
@@ -2107,6 +2393,29 @@ exports.submitPublicBooking = onRequest(
       const num = (v) => (v == null || v === "" || isNaN(Number(v))) ? null : Number(v);
       const fromLat = num(b.fromLat), fromLng = num(b.fromLng);
       const toLat = num(b.toLat), toLng = num(b.toLng);
+
+      // ── Έλεγχος μπλάκαουτ/ελάχιστης προθεσμίας/μεγάλης παραγγελίας/εκτός
+      //    Αττικής — ελέγχεται ΚΑΙ εδώ (όχι μόνο client-side): ένα POST
+      //    απευθείας στο API δεν μπορεί να προσπεράσει τους κανόνες.
+      const scheduledNaive = athensNaiveFromDateTimeStrings(date, time);
+      const simNaive = athensNaiveDate(new Date());
+      const gateReasons = computeGate(simNaive, scheduledNaive, persons, luggage);
+
+      // Έλληνας/ξένος πελάτης: πρώτα η γλώσσα σελίδας, δεύτερο fallback ο
+      // κωδικός χώρας του τηλεφώνου.
+      const dialCode = (phone.match(/^\+\d+/) || [""])[0];
+      const isGreek = lang === "el" ? true : dialCode === "+30";
+
+      const estimate = await computeEstimate({
+        fromLat, fromLng, toLat, toLng, persons, luggage, childSeatCount,
+        vehicleType, isGreek, scheduledNaive, apiKey: ROUTES_API_KEY.value(),
+      });
+      if (estimate.outsideAttica && !gateReasons.includes("outside_attica")) {
+        gateReasons.push("outside_attica");
+      }
+      if (gateReasons.length) {
+        return res.status(400).json({ ok: false, error: "outside_booking_window", reasons: gateReasons });
+      }
 
       const masterUid = await findMasterUid();
       if (!masterUid) {
@@ -2158,7 +2467,7 @@ exports.submitPublicBooking = onRequest(
         childSeatCount: childSeatCount,
         vehicleType:    vehicleType,     // 'taxi' | 'van'
         note:           fullNote,
-        price:          0,               // ΦΑΣΗ 1: ο master βάζει τιμή
+        price:          estimate.price,   // υπολογισμένη τιμή (ζώνη ή δυναμικός τύπος)
         scheduledAt:    Timestamp.fromDate(startDate),  // ραντεβού (Job.fromDoc)
         lang:           lang,
         ownerUid:       masterUid,

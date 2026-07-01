@@ -85,9 +85,13 @@ class PublicBookingAlerts {
         final data = change.doc.data() ?? {};
         final from = (data['from'] ?? '').toString();
         final to   = (data['to'] ?? '').toString();
-        // Ήχος + δόνηση (χτυπά ακόμα & με κλειστή οθόνη).
-        showPublicBookingNotification(savedJobId: id, from: from, to: to);
-        _bump();
+        // ΣΗΜΑΝΤΙΚΟ: περιμένουμε να ΞΕΚΙΝΗΣΕΙ πραγματικά ο ήχος πριν ανοίξει
+        // το popup. Αλλιώς, αν ο master πατήσει «ΟΚ» πολύ γρήγορα, το stop
+        // τρέχει πριν προλάβει να ξεκινήσει το startRingtoneLoop (async —
+        // φόρτωμα mp3) και ο ήχος «ξεκινάει μετά το ΟΚ», σαν να μη σταματάει.
+        showPublicBookingNotification(savedJobId: id, from: from, to: to).then((_) {
+          _bump();
+        });
       }
     }
   }

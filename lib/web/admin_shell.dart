@@ -25,6 +25,7 @@ import '../jobs/billing_page.dart';
 import '../calendar/calendar_page.dart';
 import '../voice/groups_admin.dart';
 import '../masters/masters_admin_page.dart';
+import '../pricing/pricing_zones_page.dart';
 import 'auth_gateway_web.dart';
 import 'ics_upload_web.dart';
 import 'map_web_page.dart';
@@ -118,6 +119,15 @@ class _AdminShellState extends State<AdminShell> {
         label: 'Διαχείριση',
         icon: Icons.admin_panel_settings_rounded,
         page: MastersAdminPage(masterUid: s.uid),
+      ));
+    }
+
+    // Ζώνες & Τιμές (τιμοκατάλογος δημόσιας φόρμας κράτησης) — μόνο master.
+    if (s.isMaster) {
+      sections.add(const _Section(
+        label: 'Ζώνες & Τιμές',
+        icon: Icons.price_change_rounded,
+        page: PricingZonesPage(),
       ));
     }
 

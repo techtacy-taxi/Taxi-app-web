@@ -202,6 +202,17 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    // ── pricing_zones/{id} / pricing_routes/{id} — «Ζώνες & Τιμές» ─────────
+    // Πάγιες τιμές γνωστών διαδρομών της δημόσιας φόρμας κράτησης. Τα
+    // διαβάζει ο server (Cloud Function estimatePrice, Admin SDK — παρακάμπτει
+    // τα rules)· από τον client τα διαχειρίζεται ΜΟΝΟ ο master.
+    match /pricing_zones/{id} {
+      allow read, write: if isMaster();
+    }
+    match /pricing_routes/{id} {
+      allow read, write: if isMaster();
+    }
+
     // ── app_broadcasts/{id} — ανακοινώσεις (owner alerts) ──────────────────
     // Διαβάζονται και πριν την έγκριση (alert gate) → signedIn.
     match /app_broadcasts/{id} {

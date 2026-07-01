@@ -40,6 +40,7 @@ import '../jobs/billing_page.dart';
 import '../jobs/job_service.dart';
 import '../masters/masters_admin_page.dart';
 import '../calendar/calendar_page.dart';
+import '../pricing/pricing_zones_page.dart';
 
 class HomeMapPage extends StatefulWidget {
   const HomeMapPage({super.key});
@@ -746,6 +747,12 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
           builder: (_) => MastersAdminPage(masterUid: _uid ?? ''),
         ));
         return;
+      case MenuAction.pricingZones:
+        if (!mounted) return;
+        Navigator.of(context).push(MaterialPageRoute(
+          builder: (_) => const PricingZonesPage(),
+        ));
+        return;
       case MenuAction.calendar:
         if (!mounted) return;
         Navigator.of(context).push(MaterialPageRoute(
@@ -1062,6 +1069,29 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
                                       fontWeight: FontWeight.bold,
                                       color: Colors.deepPurple)),
                               Text('Ορισμός ρόλων & ομάδων',
+                                  style: TextStyle(
+                                      fontSize: 10, color: Colors.grey)),
+                            ],
+                          ),
+                        ]),
+                      ),
+                    if (_isMaster) const PopupMenuDivider(),
+                    // Ζώνες & Τιμές (φόρμα κράτησης) — μόνο για master
+                    if (_isMaster)
+                      PopupMenuItem(
+                        value: MenuAction.pricingZones,
+                        child: Row(children: [
+                          const Icon(Icons.price_change_rounded, color: Colors.teal),
+                          const SizedBox(width: 12),
+                          const Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text('Ζώνες & Τιμές',
+                                  style: TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.teal)),
+                              Text('Τιμοκατάλογος δημόσιας φόρμας',
                                   style: TextStyle(
                                       fontSize: 10, color: Colors.grey)),
                             ],
