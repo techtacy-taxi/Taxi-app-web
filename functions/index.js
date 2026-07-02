@@ -2071,18 +2071,37 @@ function haversineKm(a, b) {
 }
 
 // ── Ασφαλής υπολογιστής προσαρμοσμένου τύπου ────────────────────────────────
-// Επιτρέπονται ΜΟΝΟ: αριθμοί, οι μεταβλητές km/min/luggage/seats/base/perKm/
-// perMin, οι πράξεις + - * / ( ) και κενά. Οτιδήποτε άλλο απορρίπτεται —
-// έτσι κανείς δεν μπορεί να «τρέξει» επικίνδυνο κώδικα μέσω του τύπου.
+// Επιτρέπονται ΜΟΝΟ: αριθμοί, οι παρακάτω ονομασμένες μεταβλητές, οι πράξεις
+// + - * / ( ) και κενά. Οτιδήποτε άλλο απορρίπτεται — έτσι κανείς δεν μπορεί
+// να «τρέξει» επικίνδυνο κώδικα μέσω του τύπου.
+//
+// Διαθέσιμες μεταβλητές (ίδια ονόματα στη σελίδα admin):
+//   km        = χιλιόμετρα διαδρομής
+//   min       = λεπτά διαδρομής
+//   luggage   = πλήθος βαλιτσών
+//   seats     = πλήθος παιδικών καθισμάτων
+//   base      = βάση εκκίνησης (€)
+//   perKm     = €/χλμ (το κατάλληλο, εντός ή εκτός Αττικής)
+//   perMin    = €/λεπτό
+//   minDay    = ελάχιστη χρέωση ημέρας (€)
+//   minNight  = ελάχιστη χρέωση νύχτας (€)
+//   nightTaxi = νυχτερινή προσαύξηση ταξί (%)
+//   nightVan  = νυχτερινή προσαύξηση βαν (%)
+//   vanPct    = ποσοστό βαν επί του ταξί (%)
+//   luggagePer= €/βαλίτσα
+//   seatPrice = €/παιδικό κάθισμα
+const FORMULA_VARS = [
+  "km", "min", "luggage", "seats", "base", "perKm", "perMin",
+  "minDay", "minNight", "nightTaxi", "nightVan", "vanPct", "luggagePer", "seatPrice",
+];
 function evalCustomFormula(formula, vars) {
   if (!formula || typeof formula !== "string" || formula.trim() === "") return null;
-  const allowedNames = ["km", "min", "luggage", "seats", "base", "perKm", "perMin"];
-  // Αντικατάσταση ονομάτων μεταβλητών με τις τιμές τους.
   let expr = formula;
-  for (const name of allowedNames) {
+  // Μεγαλύτερα ονόματα πρώτα, ώστε το "min" να μη «σπάει» το "minDay"/"minNight".
+  const names = [...FORMULA_VARS].sort((a, b) => b.length - a.length);
+  for (const name of names) {
     expr = expr.replace(new RegExp("\\b" + name + "\\b", "g"), "(" + Number(vars[name] || 0) + ")");
   }
-  // Μετά την αντικατάσταση, επιτρέπονται ΜΟΝΟ ψηφία, . + - * / ( ) και κενά.
   if (!/^[0-9.+\-*/()\s]+$/.test(expr)) {
     console.warn("evalCustomFormula: rejected unsafe formula:", formula);
     return null;
@@ -2241,9 +2260,13 @@ async function computeEstimate({
 
     let p;
     // Αν έχει οριστεί προσαρμοσμένος τύπος και είναι έγκυρος, τον χρησιμοποιούμε.
+    const isNightForFormula = !!scheduledNaive && isNightWindow(scheduledNaive);
     const custom = evalCustomFormula(cfg.customFormula, {
       km: distanceKm, min: durationMin, luggage, seats: childSeatCount,
       base: cfg.base, perKm: perKmNow, perMin: cfg.perMin,
+      minDay: cfg.minCharge, minNight: cfg.minChargeNight,
+      nightTaxi: cfg.nightPctTaxi, nightVan: cfg.nightPctVan,
+      vanPct: cfg.vanPct, luggagePer: (cfg.luggagePer ?? 0), seatPrice: cfg.seatPrice,
     });
     if (custom != null) {
       p = custom;

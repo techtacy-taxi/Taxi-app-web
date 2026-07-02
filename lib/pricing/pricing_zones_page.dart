@@ -122,26 +122,56 @@ class _PricingZonesPageState extends State<PricingZonesPage> {
   @override
   Widget build(BuildContext context) {
     final isDesktop = MediaQuery.of(context).size.width >= 900;
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Ζώνες & Τιμές'),
-        backgroundColor: _kAmber,
-        foregroundColor: Colors.black87,
+
+    if (isDesktop) {
+      return Scaffold(
+        appBar: AppBar(
+          title: const Text('Ζώνες & Τιμές'),
+          backgroundColor: _kAmber,
+          foregroundColor: Colors.black87,
+        ),
+        body: Row(
+          children: [
+            Expanded(flex: 3, child: _buildMap()),
+            const VerticalDivider(width: 1),
+            SizedBox(width: 420, child: _buildPanel()),
+          ],
+        ),
+      );
+    }
+
+    // Κινητό: 3 ξεχωριστά tabs — ο χάρτης παίρνει όλη την οθόνη στο δικό του
+    // tab (αντί να μοιράζεται ύψος με τη λίστα), και το SafeArea εμποδίζει
+    // το κουμπί «Νέα διαδρομή» / «Αποθήκευση» να κρύβεται πίσω από τη μπάρα
+    // πλοήγησης του Android (gesture bar).
+    return DefaultTabController(
+      length: 3,
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('Ζώνες & Τιμές'),
+          backgroundColor: _kAmber,
+          foregroundColor: Colors.black87,
+          bottom: const TabBar(
+            labelColor: Colors.black87,
+            unselectedLabelColor: Colors.black54,
+            indicatorColor: Colors.black87,
+            tabs: [
+              Tab(text: 'Χάρτης'),
+              Tab(text: 'Διαδρομές'),
+              Tab(text: 'Δυναμικός τύπος'),
+            ],
+          ),
+        ),
+        body: SafeArea(
+          child: TabBarView(
+            children: [
+              _buildMap(),
+              _RoutesTab(db: _db),
+              _PricingConfigTab(db: _db),
+            ],
+          ),
+        ),
       ),
-      body: isDesktop
-          ? Row(
-              children: [
-                Expanded(flex: 3, child: _buildMap()),
-                const VerticalDivider(width: 1),
-                SizedBox(width: 420, child: _buildPanel()),
-              ],
-            )
-          : Column(
-              children: [
-                SizedBox(height: 320, child: _buildMap()),
-                Expanded(child: _buildPanel()),
-              ],
-            ),
     );
   }
 
@@ -930,6 +960,23 @@ class _PricingConfigTabState extends State<_PricingConfigTab> {
     );
   }
 
+  static const _varLegend = [
+    ['km', 'χιλιόμετρα διαδρομής'],
+    ['min', 'λεπτά διαδρομής'],
+    ['base', 'βάση εκκίνησης (€)'],
+    ['perKm', '€/χλμ (εντός ή εκτός Αττικής, το κατάλληλο)'],
+    ['perMin', '€/λεπτό'],
+    ['minDay', 'ελάχιστο ημέρας (€)'],
+    ['minNight', 'ελάχιστο νύχτας (€)'],
+    ['nightTaxi', 'νυχτ. προσαύξηση ταξί (%)'],
+    ['nightVan', 'νυχτ. προσαύξηση βαν (%)'],
+    ['vanPct', 'ποσοστό βαν επί ταξί (%)'],
+    ['luggagePer', '€/βαλίτσα'],
+    ['seatPrice', '€/παιδικό κάθισμα'],
+    ['luggage', 'πλήθος βαλιτσών'],
+    ['seats', 'πλήθος παιδικών καθισμάτων'],
+  ];
+
   Widget _buildFormulaEditor() {
     return Container(
       padding: const EdgeInsets.all(12),
@@ -954,20 +1001,57 @@ class _PricingConfigTabState extends State<_PricingConfigTab> {
               ),
             ],
           ),
+          const SizedBox(height: 4),
           const Text(
-            'Διαθέσιμες μεταβλητές: km, min, base, perKm, perMin, luggage, seats. '
-            'Πράξεις: + − * / ( ). Άφησέ το κενό ή «Επαναφορά» για τον προεπιλεγμένο.',
+            'Ο τύπος υπολογίζει την τιμή Ταξί για διαδρομές εκτός ζωνών. Το Βαν και το '
+            'νυχτερινό εφαρμόζονται αυτόματα μετά. Πράξεις: + − * / ( ).',
             style: TextStyle(color: Colors.grey, fontSize: 11),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 10),
           TextFormField(
             controller: _formulaCtrl,
+            maxLines: null,
             decoration: const InputDecoration(
               labelText: 'Τύπος',
               hintText: 'base + km*perKm + min*perMin',
               border: OutlineInputBorder(),
             ),
-            style: const TextStyle(fontFamily: 'monospace'),
+            style: const TextStyle(fontFamily: 'monospace', fontSize: 15),
+          ),
+          const SizedBox(height: 12),
+          const Text('Διαθέσιμες μεταβλητές (γράψε το όνομα μέσα στον τύπο):',
+              style: TextStyle(fontWeight: FontWeight.w600, fontSize: 12)),
+          const SizedBox(height: 6),
+          // Υπόμνημα: όνομα → επεξήγηση. Πάτησε ένα για να μπει στον τύπο.
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              for (final v in _varLegend)
+                Tooltip(
+                  message: v[1],
+                  child: ActionChip(
+                    label: Text(v[0], style: const TextStyle(fontFamily: 'monospace', fontSize: 12)),
+                    backgroundColor: Colors.deepPurple.withValues(alpha: 0.08),
+                    onPressed: () {
+                      // Εισαγωγή του ονόματος στη θέση του δρομέα.
+                      final t = _formulaCtrl.text;
+                      final sel = _formulaCtrl.selection;
+                      final at = (sel.start >= 0) ? sel.start : t.length;
+                      final newText = t.replaceRange(at, sel.end >= 0 ? sel.end : at, v[0]);
+                      _formulaCtrl.text = newText;
+                      _formulaCtrl.selection =
+                          TextSelection.collapsed(offset: at + v[0].length);
+                    },
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'Παράδειγμα: για «το βράδυ +1€/χλμ πάνω από το ελάχιστο νύχτας» θα μπορούσες '
+            'να γράψεις: minNight + km*(perKm+1)',
+            style: TextStyle(color: Colors.grey, fontSize: 11, fontStyle: FontStyle.italic),
           ),
         ],
       ),
@@ -979,13 +1063,15 @@ class _PricingConfigTabState extends State<_PricingConfigTab> {
   bool _isFormulaValid(String formula) {
     final f = formula.trim();
     if (f.isEmpty) return true; // κενό = προεπιλεγμένος, επιτρεπτό
-    const allowed = ['km', 'min', 'luggage', 'seats', 'base', 'perKm', 'perMin'];
+    const allowed = [
+      'luggagePer', 'seatPrice', 'minNight', 'minDay', 'nightTaxi', 'nightVan',
+      'vanPct', 'perKm', 'perMin', 'luggage', 'seats', 'base', 'km', 'min',
+    ]; // ταξινομημένα από τα μεγαλύτερα ονόματα προς τα μικρότερα
     var expr = f;
     for (final name in allowed) {
       expr = expr.replaceAll(RegExp('\\b$name\\b'), '(1)');
     }
     if (!RegExp(r'^[0-9.+\-*/()\s]+$').hasMatch(expr)) return false;
-    // Ισορροπία παρενθέσεων
     var depth = 0;
     for (final ch in expr.split('')) {
       if (ch == '(') depth++;
