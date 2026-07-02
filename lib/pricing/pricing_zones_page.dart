@@ -3,9 +3,18 @@
 // «Ζώνες & Τιμές» — μόνο master.
 //
 // Διαχείριση:
-//   • Ζώνες τιμολόγησης: κύκλοι πάνω στον χάρτη (κέντρο + ακτίνα), π.χ.
-//     «Λαύριο», «Αεροδρόμιο», «Λαγονήσι». Προσθήκη με tap στον χάρτη,
-//     μετακίνηση με tap σε νέο σημείο, επεξεργασία ονόματος/ακτίνας, διαγραφή.
+//   • Ζώνες τιμολόγησης: ΟΡΘΟΓΩΝΙΑ πάνω στον χάρτη (Βόρειο/Νότιο/Ανατολικό/
+//     Δυτικό όριο), π.χ. «Λαύριο», «Αεροδρόμιο», «Λαγονήσι».
+//       - Web: 4 λαβές στις γωνίες (σαν crop tool φωτογραφίας) — τραβάς μια
+//         γωνία και αλλάζει μέγεθος/σχήμα ελεύθερα (μπορεί να γίνει επίμηκες).
+//         Μια λαβή στο κέντρο μετακινεί όλο το ορθογώνιο.
+//       - Κινητό: ένα slider «Μέγεθος» μεγαλώνει/μικραίνει το ΥΠΑΡΧΟΝ σχήμα
+//         αναλογικά (πλάτος & ύψος μαζί) — αν έχει γίνει επίμηκες από το web,
+//         ΜΕΝΕΙ επίμηκες, δεν ξαναγίνεται τετράγωνο/κύκλος.
+//   • Παλιές ζώνες (μόνο lat/lng/radius, από πριν αυτή την αλλαγή) συνεχίζουν
+//     να δουλεύουν κανονικά — μετατρέπονται αυτόματα σε τετράγωνο ορθογώνιο
+//     γύρω από το παλιό τους κέντρο με βάση την παλιά ακτίνα, και μόλις τις
+//     αποθηκεύσεις ξανά, αποκτούν μόνιμα τα νέα πεδία (north/south/east/west).
 //   • Διαδρομές: πάγιες τιμές Ταξί/Βαν (+ προαιρετικά τιμή ξένου πελάτη)
 //     ανάμεσα σε δύο ζώνες, με κατεύθυνση (Από → Προς).
 //   • Δυναμικός τύπος: βάση/χλμ/λεπτό/ελάχιστη χρέωση/νυχτερινές προσαυξήσεις/
@@ -13,10 +22,13 @@
 //
 // Ίδιο Firestore (pricing_zones, pricing_routes, app_settings/pricing) το
 // διαβάζει η δημόσια φόρμα κράτησης μέσω του Cloud Function estimatePrice —
-// ό,τι αλλάξει εδώ ισχύει αμέσως και εκεί.
+// ό,τι αλλάξει εδώ ισχύει αμέσως και εκεί. Το functions/index.js ξέρει να
+// διαβάζει και τα παλιά κυκλικά δεδομένα και τα νέα ορθογώνια.
 //
 // Χρησιμοποιείται και από τον Web Admin Panel (admin_shell.dart) και από την
 // Android εφαρμογή (menu χάρτη, μόνο master) — ίδιο widget, ίδιο lib/.
+
+import 'dart:math' as math;
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
@@ -27,6 +39,24 @@ import '../jobs/job_shared_widgets.dart';
 const Color _kAmber     = Color(0xFFFFB300);
 const Color _kAmberDark = Color(0xFF5A3D00);
 
+// ── Μετατροπές μέτρων ↔ μοιρών (πρόχειρες, αρκετά ακριβείς για την Αττική) ──
+const double _kMetersPerDegLat = 111320.0;
+double _mToDegLat(double m) => m / _kMetersPerDegLat;
+double _degLatToM(double d) => d * _kMetersPerDegLat;
+double _cosLat(double atLatDeg) =>
+    math.cos(atLatDeg * math.pi / 180).abs().clamp(0.01, 1.0);
+double _mToDegLng(double m, double atLatDeg) => m / (_kMetersPerDegLat * _cosLat(atLatDeg));
+double _degLngToM(double d, double atLatDeg) => d * _kMetersPerDegLat * _cosLat(atLatDeg);
+
+// Απλή δομή ορίων ορθογωνίου.
+class _Bounds {
+  final double north, south, east, west;
+  const _Bounds({required this.north, required this.south, required this.east, required this.west});
+  LatLng get center => LatLng((north + south) / 2, (east + west) / 2);
+  double get halfHeightM => _degLatToM((north - south) / 2);
+  double get halfWidthM => _degLngToM((east - west) / 2, center.latitude);
+}
+
 // ─── Models ─────────────────────────────────────────────────────────────────
 
 class PricingZone {
@@ -34,7 +64,8 @@ class PricingZone {
   final String name;
   final double lat;
   final double lng;
-  final double radius; // μέτρα
+  final double radius; // μέτρα — ΠΑΛΙΟ μοντέλο (κύκλος), κρατιέται για fallback
+  final double? north, south, east, west; // ΝΕΟ μοντέλο (ορθογώνιο)
 
   PricingZone({
     required this.id,
@@ -42,7 +73,22 @@ class PricingZone {
     required this.lat,
     required this.lng,
     required this.radius,
+    this.north,
+    this.south,
+    this.east,
+    this.west,
   });
+
+  bool get hasBounds => north != null && south != null && east != null && west != null;
+
+  // Πάντα επιστρέφει ορθογώνιο — είτε το αποθηκευμένο, είτε παράγωγο (τετράγωνο)
+  // από το παλιό μοντέλο κύκλου, για ζώνες που δεν έχουν ακόμα μετατραπεί.
+  _Bounds get bounds {
+    if (hasBounds) return _Bounds(north: north!, south: south!, east: east!, west: west!);
+    final dLat = _mToDegLat(radius);
+    final dLng = _mToDegLng(radius, lat);
+    return _Bounds(north: lat + dLat, south: lat - dLat, east: lng + dLng, west: lng - dLng);
+  }
 
   factory PricingZone.fromDoc(QueryDocumentSnapshot<Map<String, dynamic>> d) {
     final m = d.data();
@@ -52,6 +98,10 @@ class PricingZone {
       lat:    (m['lat'] as num?)?.toDouble() ?? 0,
       lng:    (m['lng'] as num?)?.toDouble() ?? 0,
       radius: (m['radius'] as num?)?.toDouble() ?? 3000,
+      north:  (m['north'] as num?)?.toDouble(),
+      south:  (m['south'] as num?)?.toDouble(),
+      east:   (m['east'] as num?)?.toDouble(),
+      west:   (m['west'] as num?)?.toDouble(),
     );
   }
 }
@@ -92,8 +142,6 @@ class PricingRoute {
 
 // ─── Page ───────────────────────────────────────────────────────────────────
 
-enum _MapMode { view, placeZone, moveZone }
-
 class PricingZonesPage extends StatefulWidget {
   const PricingZonesPage({super.key});
 
@@ -104,22 +152,18 @@ class PricingZonesPage extends StatefulWidget {
 class _PricingZonesPageState extends State<PricingZonesPage> {
   final _db = FirebaseFirestore.instance;
   GoogleMapController? _mapCtrl;
-  _MapMode _mode = _MapMode.view;
-  String? _selectedZoneId;
+  String? _selectedZoneId; // != null: επεξεργασία υπάρχουσας ζώνης
+  bool _placingNew = false; // true: τοποθέτηση νέας ζώνης
   bool _didFitBounds = false;
 
-  // Επεξεργασία επιλεγμένης/νέας ζώνης — ΧΩΡΙΣ popup:
-  //  • όνομα: πεδίο στην πάνω κίτρινη μπάρα (AppBar)
-  //  • ακτίνα: slider σε μπάρα τέρμα κάτω (πάνω από το navigation bar)
-  //  • Αποθήκευση: κουμπί τέρμα δεξιά στην πάνω μπάρα
-  final _nameCtrl = TextEditingController();
-  double _editRadius = 3000;
-  LatLng? _dragPosition;      // θέση κατά τη μετακίνηση / νέα ζώνη
+  // Ορθογώνιο υπό επεξεργασία (νέα ζώνη ή επιλεγμένη υπάρχουσα).
+  double? _editNorth, _editSouth, _editEast, _editWest;
   LatLng _cameraCenter = const LatLng(37.9838, 23.7275);
   bool _saving = false;
 
-  bool get _isEditing =>
-      _mode == _MapMode.placeZone || _selectedZoneId != null;
+  final _nameCtrl = TextEditingController();
+
+  bool get _isEditing => _placingNew || _selectedZoneId != null;
 
   static const CameraPosition _initialCamera = CameraPosition(
     target: LatLng(37.9838, 23.7275), // Αθήνα
@@ -136,22 +180,19 @@ class _PricingZonesPageState extends State<PricingZonesPage> {
   Widget build(BuildContext context) {
     final isDesktop = MediaQuery.of(context).size.width >= 900;
 
-    // Η πάνω κίτρινη μπάρα: σε λειτουργία επεξεργασίας δείχνει το πεδίο
-    // ονόματος + Αποθήκευση (τέρμα δεξιά). Αλλιώς τον κανονικό τίτλο.
     final appBar = AppBar(
       backgroundColor: _kAmber,
       foregroundColor: Colors.black87,
       title: _isEditing
           ? TextField(
               controller: _nameCtrl,
-              autofocus: _mode == _MapMode.placeZone && _nameCtrl.text.isEmpty,
+              autofocus: _placingNew && _nameCtrl.text.isEmpty,
               decoration: const InputDecoration(
                 hintText: 'Όνομα ζώνης (π.χ. Λαύριο)',
                 border: InputBorder.none,
                 hintStyle: TextStyle(color: Colors.black45),
               ),
-              style: const TextStyle(
-                  color: Colors.black87, fontWeight: FontWeight.w600),
+              style: const TextStyle(color: Colors.black87, fontWeight: FontWeight.w600),
             )
           : const Text('Ζώνες & Τιμές'),
       actions: [
@@ -193,7 +234,7 @@ class _PricingZonesPageState extends State<PricingZonesPage> {
         appBar: appBar,
         body: Row(
           children: [
-            Expanded(flex: 3, child: _buildMap()),
+            Expanded(flex: 3, child: _buildMap(isDesktop: true)),
             const VerticalDivider(width: 1),
             SizedBox(width: 420, child: _buildPanel()),
           ],
@@ -201,8 +242,6 @@ class _PricingZonesPageState extends State<PricingZonesPage> {
       );
     }
 
-    // Κινητό: 3 tabs, με SafeArea ώστε τίποτα να μην κρύβεται πίσω από τη
-    // μπάρα πλοήγησης του Android.
     return DefaultTabController(
       length: 3,
       child: Scaffold(
@@ -210,7 +249,7 @@ class _PricingZonesPageState extends State<PricingZonesPage> {
         body: SafeArea(
           child: TabBarView(
             children: [
-              _buildMap(),
+              _buildMap(isDesktop: false),
               _RoutesTab(db: _db),
               _PricingConfigTab(db: _db),
             ],
@@ -224,38 +263,91 @@ class _PricingZonesPageState extends State<PricingZonesPage> {
 
   void _startNewZone() {
     setState(() {
-      _mode = _MapMode.placeZone;
+      _placingNew = true;
       _selectedZoneId = null;
       _nameCtrl.text = '';
-      _editRadius = 3000;
-      _dragPosition = _cameraCenter; // ξεκινά στο κέντρο του χάρτη
+      final dLat = _mToDegLat(3000);
+      final dLng = _mToDegLng(3000, _cameraCenter.latitude);
+      _editNorth = _cameraCenter.latitude + dLat;
+      _editSouth = _cameraCenter.latitude - dLat;
+      _editEast  = _cameraCenter.longitude + dLng;
+      _editWest  = _cameraCenter.longitude - dLng;
     });
   }
 
   void _selectZone(PricingZone z) {
     setState(() {
-      _mode = _MapMode.view;
+      _placingNew = false;
       _selectedZoneId = z.id;
       _nameCtrl.text = z.name;
-      _editRadius = z.radius;
-      _dragPosition = null;
-    });
-  }
-
-  void _startMove(PricingZone z) {
-    setState(() {
-      _mode = _MapMode.moveZone;
-      _selectedZoneId = z.id;
-      _dragPosition = LatLng(z.lat, z.lng);
+      final b = z.bounds;
+      _editNorth = b.north;
+      _editSouth = b.south;
+      _editEast  = b.east;
+      _editWest  = b.west;
     });
   }
 
   void _cancelEdit() {
     setState(() {
-      _mode = _MapMode.view;
+      _placingNew = false;
       _selectedZoneId = null;
-      _dragPosition = null;
+      _editNorth = _editSouth = _editEast = _editWest = null;
       _nameCtrl.text = '';
+    });
+  }
+
+  // Μετακίνηση όλου του ορθογωνίου (ίδιο μέγεθος, νέο κέντρο) — λαβή κέντρου.
+  void _translateTo(LatLng newCenter) {
+    final oldCenter = _Bounds(north: _editNorth!, south: _editSouth!, east: _editEast!, west: _editWest!).center;
+    final dLat = newCenter.latitude - oldCenter.latitude;
+    final dLng = newCenter.longitude - oldCenter.longitude;
+    setState(() {
+      _editNorth = _editNorth! + dLat;
+      _editSouth = _editSouth! + dLat;
+      _editEast  = _editEast! + dLng;
+      _editWest  = _editWest! + dLng;
+    });
+  }
+
+  // Αλλαγή μεγέθους τραβώντας μια γωνία (μόνο web) — ελεύθερο σχήμα.
+  void _resizeCorner({required bool isNorth, required bool isEast, required LatLng p}) {
+    const minSizeDeg = 0.003; // ελάχιστο μέγεθος ώστε να μη «σπάει» το ορθογώνιο
+    setState(() {
+      if (isNorth) {
+        _editNorth = p.latitude > _editSouth! + minSizeDeg ? p.latitude : _editSouth! + minSizeDeg;
+      } else {
+        _editSouth = p.latitude < _editNorth! - minSizeDeg ? p.latitude : _editNorth! - minSizeDeg;
+      }
+      if (isEast) {
+        _editEast = p.longitude > _editWest! + minSizeDeg ? p.longitude : _editWest! + minSizeDeg;
+      } else {
+        _editWest = p.longitude < _editEast! - minSizeDeg ? p.longitude : _editEast! - minSizeDeg;
+      }
+    });
+  }
+
+  // Αναλογική μεγέθυνση/σμίκρυνση (κινητό) — κρατά το ΥΠΑΡΧΟΝ σχήμα (π.χ.
+  // επίμηκες), δεν το ξαναφέρνει σε τετράγωνο/κύκλο.
+  double get _editAvgHalfSizeM {
+    final b = _Bounds(north: _editNorth!, south: _editSouth!, east: _editEast!, west: _editWest!);
+    return (b.halfHeightM + b.halfWidthM) / 2;
+  }
+
+  void _scaleProportionally(double newAvgHalfSizeM) {
+    final b = _Bounds(north: _editNorth!, south: _editSouth!, east: _editEast!, west: _editWest!);
+    final curAvg = _editAvgHalfSizeM;
+    final scale = curAvg > 1 ? newAvgHalfSizeM / curAvg : 1.0;
+    final center = b.center;
+    final newHalfHeightM = (b.halfHeightM * scale).clamp(200.0, 40000.0);
+    final newHalfWidthM  = (b.halfWidthM  * scale).clamp(200.0, 40000.0);
+    final dLat = _mToDegLat(newHalfHeightM);
+    final dLng = _mToDegLng(newHalfWidthM, center.latitude);
+    setState(() {
+      _editNorth = center.latitude + dLat;
+      _editSouth = center.latitude - dLat;
+      _editEast  = center.longitude + dLng;
+      _editWest  = center.longitude - dLng;
     });
   }
 
@@ -268,39 +360,30 @@ class _PricingZonesPageState extends State<PricingZonesPage> {
       return;
     }
     setState(() => _saving = true);
+    final b = _Bounds(north: _editNorth!, south: _editSouth!, east: _editEast!, west: _editWest!);
+    final center = b.center;
+    final data = <String, dynamic>{
+      'name':   name,
+      'lat':    center.latitude,
+      'lng':    center.longitude,
+      'radius': (b.halfHeightM + b.halfWidthM) / 2, // fallback/legacy πληροφορία
+      'north':  b.north,
+      'south':  b.south,
+      'east':   b.east,
+      'west':   b.west,
+    };
     try {
-      if (_mode == _MapMode.placeZone) {
-        final pos = _dragPosition ?? _cameraCenter;
-        final ref = await _db.collection('pricing_zones').add({
-          'name': name,
-          'lat': pos.latitude,
-          'lng': pos.longitude,
-          'radius': _editRadius,
-        });
+      if (_placingNew) {
+        final ref = await _db.collection('pricing_zones').add(data);
         if (mounted) {
           setState(() {
-            _mode = _MapMode.view;
+            _placingNew = false;
             _selectedZoneId = ref.id; // η νέα ζώνη μένει επιλεγμένη (μωβ)
-            _dragPosition = null;
           });
         }
       } else if (_selectedZoneId != null) {
-        final data = <String, dynamic>{
-          'name': name,
-          'radius': _editRadius,
-        };
-        // Αν έγινε μετακίνηση, αποθηκεύουμε και τη νέα θέση.
-        if (_mode == _MapMode.moveZone && _dragPosition != null) {
-          data['lat'] = _dragPosition!.latitude;
-          data['lng'] = _dragPosition!.longitude;
-        }
         await _db.collection('pricing_zones').doc(_selectedZoneId).update(data);
-        if (mounted) {
-          setState(() {
-            _mode = _MapMode.view;
-            _dragPosition = null;
-          });
-        }
+        if (mounted) setState(() {});
       }
     } catch (e) {
       if (mounted) {
@@ -357,13 +440,13 @@ class _PricingZonesPageState extends State<PricingZonesPage> {
       );
       return;
     }
-    double minLat = zones.first.lat, maxLat = zones.first.lat;
-    double minLng = zones.first.lng, maxLng = zones.first.lng;
+    double minLat = 90, maxLat = -90, minLng = 180, maxLng = -180;
     for (final z in zones) {
-      if (z.lat < minLat) minLat = z.lat;
-      if (z.lat > maxLat) maxLat = z.lat;
-      if (z.lng < minLng) minLng = z.lng;
-      if (z.lng > maxLng) maxLng = z.lng;
+      final b = z.bounds;
+      if (b.south < minLat) minLat = b.south;
+      if (b.north > maxLat) maxLat = b.north;
+      if (b.west < minLng) minLng = b.west;
+      if (b.east > maxLng) maxLng = b.east;
     }
     _mapCtrl!.animateCamera(CameraUpdate.newLatLngBounds(
       LatLngBounds(southwest: LatLng(minLat, minLng), northeast: LatLng(maxLat, maxLng)),
@@ -371,7 +454,7 @@ class _PricingZonesPageState extends State<PricingZonesPage> {
     ));
   }
 
-  Widget _buildMap() {
+  Widget _buildMap({required bool isDesktop}) {
     return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
       stream: _db.collection('pricing_zones').snapshots(),
       builder: (context, snap) {
@@ -398,61 +481,88 @@ class _PricingZonesPageState extends State<PricingZonesPage> {
         final selected = _selectedZoneId != null
             ? zones.where((z) => z.id == _selectedZoneId).cast<PricingZone?>().firstOrNull
             : null;
+        final editingBounds = _isEditing && _editNorth != null
+            ? _Bounds(north: _editNorth!, south: _editSouth!, east: _editEast!, west: _editWest!)
+            : null;
 
-        final circles = <Circle>{
+        final polygons = <Polygon>{
           for (final z in zones)
-            Circle(
-              circleId: CircleId(z.id),
-              // Η επιλεγμένη ζώνη ακολουθεί το drag & τη live ακτίνα.
-              center: (z.id == _selectedZoneId && _dragPosition != null)
-                  ? _dragPosition!
-                  : LatLng(z.lat, z.lng),
-              radius: z.id == _selectedZoneId ? _editRadius : z.radius,
-              consumeTapEvents: true,
-              strokeWidth: z.id == _selectedZoneId ? 3 : 1,
-              strokeColor: z.id == _selectedZoneId ? Colors.deepPurple : _kAmber,
-              fillColor: (z.id == _selectedZoneId ? Colors.deepPurple : _kAmber)
-                  .withValues(alpha: 0.18),
-              onTap: () => _selectZone(z),
-            ),
-          // Νέα ζώνη υπό τοποθέτηση — κόκκινος κύκλος.
-          if (_mode == _MapMode.placeZone && _dragPosition != null)
-            Circle(
-              circleId: const CircleId('_newZone'),
-              center: _dragPosition!,
-              radius: _editRadius,
+            if (!(z.id == _selectedZoneId && editingBounds != null))
+              Polygon(
+                polygonId: PolygonId(z.id),
+                points: _rectPoints(z.bounds),
+                consumeTapEvents: true,
+                strokeWidth: 1,
+                strokeColor: _kAmber,
+                fillColor: _kAmber.withValues(alpha: 0.18),
+                onTap: () => _selectZone(z),
+              ),
+          if (editingBounds != null)
+            Polygon(
+              polygonId: PolygonId(_placingNew ? '_newZone' : _selectedZoneId!),
+              points: _rectPoints(editingBounds),
               strokeWidth: 3,
-              strokeColor: Colors.red,
-              fillColor: Colors.red.withValues(alpha: 0.18),
+              strokeColor: _placingNew ? Colors.red : Colors.deepPurple,
+              fillColor: (_placingNew ? Colors.red : Colors.deepPurple).withValues(alpha: 0.18),
             ),
         };
 
         final markers = <Marker>{};
-        if (_mode == _MapMode.moveZone && selected != null) {
+        if (editingBounds != null) {
+          // Κέντρο — μετακίνηση όλου του ορθογωνίου (και στις δύο πλατφόρμες).
           markers.add(Marker(
-            markerId: const MarkerId('_dragMarker'),
-            position: _dragPosition ?? LatLng(selected.lat, selected.lng),
+            markerId: const MarkerId('_center'),
+            position: editingBounds.center,
             draggable: true,
-            onDrag: (p) => setState(() => _dragPosition = p),
-            onDragEnd: (p) => setState(() => _dragPosition = p),
+            icon: BitmapDescriptor.defaultMarkerWithHue(
+                _placingNew ? BitmapDescriptor.hueRed : BitmapDescriptor.hueViolet),
+            onDrag: _translateTo,
+            onDragEnd: _translateTo,
           ));
-        }
-        if (_mode == _MapMode.placeZone && _dragPosition != null) {
-          markers.add(Marker(
-            markerId: const MarkerId('_newZoneMarker'),
-            position: _dragPosition!,
-            draggable: true,
-            icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
-            onDrag: (p) => setState(() => _dragPosition = p),
-            onDragEnd: (p) => setState(() => _dragPosition = p),
-          ));
+          // Γωνίες — ΜΟΝΟ web: ελεύθερη αλλαγή μεγέθους/σχήματος, σαν crop tool.
+          if (isDesktop) {
+            markers.addAll([
+              Marker(
+                markerId: const MarkerId('_ne'),
+                position: LatLng(editingBounds.north, editingBounds.east),
+                draggable: true,
+                icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueOrange),
+                onDrag: (p) => _resizeCorner(isNorth: true, isEast: true, p: p),
+                onDragEnd: (p) => _resizeCorner(isNorth: true, isEast: true, p: p),
+              ),
+              Marker(
+                markerId: const MarkerId('_nw'),
+                position: LatLng(editingBounds.north, editingBounds.west),
+                draggable: true,
+                icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueOrange),
+                onDrag: (p) => _resizeCorner(isNorth: true, isEast: false, p: p),
+                onDragEnd: (p) => _resizeCorner(isNorth: true, isEast: false, p: p),
+              ),
+              Marker(
+                markerId: const MarkerId('_se'),
+                position: LatLng(editingBounds.south, editingBounds.east),
+                draggable: true,
+                icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueOrange),
+                onDrag: (p) => _resizeCorner(isNorth: false, isEast: true, p: p),
+                onDragEnd: (p) => _resizeCorner(isNorth: false, isEast: true, p: p),
+              ),
+              Marker(
+                markerId: const MarkerId('_sw'),
+                position: LatLng(editingBounds.south, editingBounds.west),
+                draggable: true,
+                icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueOrange),
+                onDrag: (p) => _resizeCorner(isNorth: false, isEast: false, p: p),
+                onDragEnd: (p) => _resizeCorner(isNorth: false, isEast: false, p: p),
+              ),
+            ]);
+          }
         }
 
         return Stack(
           children: [
             GoogleMap(
               initialCameraPosition: _initialCamera,
-              circles: circles,
+              polygons: polygons,
               markers: markers,
               onCameraMove: (pos) => _cameraCenter = pos.target,
               onMapCreated: (c) {
@@ -481,7 +591,6 @@ class _PricingZonesPageState extends State<PricingZonesPage> {
                   ),
                 ),
               ),
-            // Πάνω σειρά κουμπιών: Νέα ζώνη + (αν υπάρχει επιλογή) Μετακίνηση/Διαγραφή
             Positioned(
               left: 0, right: 0, top: 12,
               child: Center(
@@ -497,19 +606,9 @@ class _PricingZonesPageState extends State<PricingZonesPage> {
                       ),
                       icon: const Icon(Icons.add_location_alt_rounded, size: 18),
                       label: const Text('Νέα ζώνη'),
-                      onPressed: _mode == _MapMode.placeZone ? null : _startNewZone,
+                      onPressed: _placingNew ? null : _startNewZone,
                     ),
-                    if (selected != null && _mode != _MapMode.placeZone) ...[
-                      ElevatedButton.icon(
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.deepPurple,
-                          foregroundColor: Colors.white,
-                          elevation: 4,
-                        ),
-                        icon: const Icon(Icons.open_with_rounded, size: 18),
-                        label: Text(_mode == _MapMode.moveZone ? 'Σύρετε…' : 'Μετακίνηση'),
-                        onPressed: _mode == _MapMode.moveZone ? null : () => _startMove(selected),
-                      ),
+                    if (selected != null)
                       ElevatedButton.icon(
                         style: ElevatedButton.styleFrom(
                           backgroundColor: Colors.red.shade700,
@@ -520,13 +619,12 @@ class _PricingZonesPageState extends State<PricingZonesPage> {
                         label: const Text('Διαγραφή'),
                         onPressed: () => _deleteSelected(zones),
                       ),
-                    ],
                   ],
                 ),
               ),
             ),
-            // Μπάρα ακτίνας — τέρμα κάτω, ΠΑΝΩ από τη μπάρα πλοήγησης (SafeArea).
-            if (_isEditing)
+            // Κινητό ΜΟΝΟ: slider αναλογικής μεγέθυνσης — κρατά επίμηκες σχήμα.
+            if (_isEditing && !isDesktop && editingBounds != null)
               Positioned(
                 left: 0, right: 0, bottom: 0,
                 child: SafeArea(
@@ -541,19 +639,35 @@ class _PricingZonesPageState extends State<PricingZonesPage> {
                     ),
                     child: Row(
                       children: [
-                        Text('Ακτίνα: ${(_editRadius / 1000).toStringAsFixed(1)} χλμ',
+                        Text('Μέγεθος: ${(_editAvgHalfSizeM / 1000).toStringAsFixed(1)} χλμ',
                             style: const TextStyle(fontWeight: FontWeight.w600)),
                         Expanded(
                           child: Slider(
-                            min: 500, max: 20000, divisions: 39,
-                            value: _editRadius.clamp(500, 20000),
-                            activeColor: _mode == _MapMode.placeZone ? Colors.red : Colors.deepPurple,
-                            label: '${(_editRadius / 1000).toStringAsFixed(1)} χλμ',
-                            onChanged: (v) => setState(() => _editRadius = v),
+                            min: 300, max: 20000,
+                            value: _editAvgHalfSizeM.clamp(300, 20000),
+                            activeColor: _placingNew ? Colors.red : Colors.deepPurple,
+                            label: '${(_editAvgHalfSizeM / 1000).toStringAsFixed(1)} χλμ',
+                            onChanged: _scaleProportionally,
                           ),
                         ),
                       ],
                     ),
+                  ),
+                ),
+              ),
+            // Web: μικρή υπενθύμιση για τις λαβές γωνιών.
+            if (_isEditing && isDesktop)
+              Positioned(
+                left: 12, bottom: 12,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: Colors.black87,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Text(
+                    'Σύρε τις πορτοκαλί γωνίες για μέγεθος/σχήμα · σύρε το κέντρο για μετακίνηση',
+                    style: TextStyle(color: Colors.white, fontSize: 12),
                   ),
                 ),
               ),
@@ -562,6 +676,13 @@ class _PricingZonesPageState extends State<PricingZonesPage> {
       },
     );
   }
+
+  List<LatLng> _rectPoints(_Bounds b) => [
+        LatLng(b.north, b.west),
+        LatLng(b.north, b.east),
+        LatLng(b.south, b.east),
+        LatLng(b.south, b.west),
+      ];
 
   Widget _buildPanel() {
     return DefaultTabController(
@@ -804,9 +925,7 @@ class _PricingConfigTabState extends State<_PricingConfigTab> {
 
   @override
   void dispose() {
-    for (final ctrl in _c.values) {
-      ctrl.dispose();
-    }
+    for (final ctrl in _c.values) ctrl.dispose();
     super.dispose();
   }
 

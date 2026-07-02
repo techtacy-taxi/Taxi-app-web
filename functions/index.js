@@ -2110,13 +2110,28 @@ function isOutsideAttica(lat, lng) {
          lng < ATTICA_BOUNDS.west || lng > ATTICA_BOUNDS.east;
 }
 
-// ── Ταίριασμα σημείου σε ζώνη (μέσα στην ακτίνα της, η πιο κοντινή αν πολλές)
+// ── Έλεγχος αν ένα σημείο είναι μέσα σε μια ζώνη ────────────────────────────
+// Υποστηρίζει ΚΑΙ το νέο μοντέλο (ορθογώνιο north/south/east/west, από τις
+// λαβές αλλαγής μεγέθους στο web) ΚΑΙ το παλιό (κύκλος lat/lng/radius, για
+// ζώνες που δεν έχουν ακόμα ξανααποθηκευτεί με το νέο UI).
+function pointInZone(lat, lng, z) {
+  if (z.north != null && z.south != null && z.east != null && z.west != null) {
+    return lat <= z.north && lat >= z.south && lng <= z.east && lng >= z.west;
+  }
+  if (z.lat == null || z.lng == null) return false;
+  const dKm = haversineKm({ lat, lng }, { lat: z.lat, lng: z.lng });
+  return dKm * 1000 <= Number(z.radius || 0);
+}
+
+// ── Ταίριασμα σημείου σε ζώνη (μέσα στα όριά της, η πιο κοντινή στο κέντρο
+// αν το σημείο πέφτει μέσα σε παραπάνω από μία) ─────────────────────────────
 function matchZone(lat, lng, zones) {
   let best = null, bestKm = Infinity;
   for (const z of zones) {
     if (z.lat == null || z.lng == null) continue;
+    if (!pointInZone(lat, lng, z)) continue;
     const dKm = haversineKm({ lat, lng }, { lat: z.lat, lng: z.lng });
-    if (dKm * 1000 <= Number(z.radius || 0) && dKm < bestKm) { best = z; bestKm = dKm; }
+    if (dKm < bestKm) { best = z; bestKm = dKm; }
   }
   return best;
 }
