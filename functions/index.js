@@ -1492,6 +1492,32 @@ exports.generateMonthlyReport = onCall(
     return runMonthlyReport(key);
   });
 
+// ─── Άνοιγμα του φακέλου Drive με τις μηνιαίες αναφορές (χωρίς να φτιάχνει
+//     καινούργιο PDF) — έτσι ο master βλέπει όλους τους μήνες με ένα κλικ,
+//     χωρίς να χρειάζεται να ξαναπατήσει «δημιουργία» κάθε φορά. ─────────────
+exports.getReportsFolderLink = onCall(
+  { memory: "256MiB", timeoutSeconds: 60, secrets: [GCAL_CLIENT_SECRET] },
+  async (request) => {
+    const uid = request.auth && request.auth.uid;
+    if (!uid) throw new HttpsError("unauthenticated", "Απαιτείται σύνδεση.");
+    const me = await getFirestore().collection("presence").doc(uid).get();
+    if (!me.exists || me.data().master !== true) {
+      throw new HttpsError("permission-denied", "Μόνο για τον master.");
+    }
+    const masterUid = await findMasterUid();
+    if (!masterUid) {
+      throw new HttpsError("failed-precondition", "Δεν βρέθηκε master.");
+    }
+    const token = await freshAccessTokenFor(masterUid);
+    if (!token) {
+      throw new HttpsError("failed-precondition",
+        "Δεν υπάρχει σύνδεση με το Google Drive — χρειάζεται επανασύνδεση " +
+        "ημερολογίου (Ρυθμίσεις → Ημερολόγιο) για να αποκτηθεί το scope του Drive.");
+    }
+    const folderId = await driveEnsureFolder(token);
+    return { link: `https://drive.google.com/drive/folders/${folderId}` };
+  });
+
 // ─── Διαγραφή παλιών δεδομένων Firestore (>3 μήνες) ─────────────────────────
 //
 // Στρατηγική χώρου: τα PDF στο Drive μένουν για πάντα (είναι το μόνιμο αρχείο),
@@ -2175,6 +2201,13 @@ async function getPricingData() {
 // Έλληνας πελάτης έχει ήδη χαμηλότερη τιμή από τον ξένο, χρησιμοποιούμε ΤΗΝ
 // ΙΔΙΑ «αρχική» με του ξένου και υπολογίζουμε πόσο % έκπτωση βγαίνει αυτό
 // (στρογγυλό, όχι δεκαδικό) — άρα ο Έλληνας βλέπει μεγαλύτερο ποσοστό.
+//
+// Κάθε τιμή του δυναμικού τύπου (base, perKm, perKmOutside, perMin, minCharge,
+// minChargeNight, nightPctTaxi, nightPctVan, vanPct, luggagePer, seatPrice)
+// μπορεί προαιρετικά να έχει ξεχωριστή τιμή για ξένους πελάτες, αποθηκευμένη
+// στο ίδιο όνομα + "Foreign" (π.χ. perKmForeign). Αν δεν υπάρχει (null), οι
+// ξένοι χρησιμοποιούν την ίδια τιμή με τους Έλληνες — καμία αλλαγή στη
+// συμπεριφορά μέχρι ο master να ενεργοποιήσει συγκεκριμένο διακοπτάκι.
 async function computeEstimate({
   fromLat, fromLng, toLat, toLng, persons, luggage, childSeatCount,
   vehicleType, isGreek, scheduledNaive, apiKey,
@@ -2186,11 +2219,19 @@ async function computeEstimate({
   const fromZone = fromLat != null && fromLng != null ? matchZone(fromLat, fromLng, zones) : null;
   const toZone = toLat != null && toLng != null ? matchZone(toLat, toLng, zones) : null;
 
-  let basePrice = 0;        // τιμή αυτού του πελάτη, πριν το νυχτερινό
-  let baseOtherPrice = null; // τιμή που θα είχε ο «άλλος τύπος» πελάτη (αν υπάρχει διαφοροποίηση)
+  // Επιλογή τιμής ανά εθνικότητα για τον δυναμικό τύπο.
+  function pick(key, useGreek) {
+    const foreignVal = cfg[key + "Foreign"];
+    if (!useGreek && foreignVal != null) return Number(foreignVal);
+    return Number(cfg[key]);
+  }
+
+  let basePrice = 0;         // τιμή αυτού του πελάτη, πριν το νυχτερινό
+  let baseOtherPrice = null; // τιμή που θα είχε ο «άλλος τύπος» πελάτη (για το reference/έκπτωση)
   let zoneMatch = false;
   let minChargeApplied = false;
   let outsideAttica = false;
+  let distanceKm = 0, durationMin = 0;
 
   if (fromZone && toZone) {
     const route = routes[fromZone.id + ">" + toZone.id];
@@ -2212,7 +2253,6 @@ async function computeEstimate({
   }
 
   if (!zoneMatch) {
-    let distanceKm = 0, durationMin = 0;
     if (fromLat != null && fromLng != null && toLat != null && toLng != null) {
       const rd = await routesDistanceDuration({ lat: fromLat, lng: fromLng }, { lat: toLat, lng: toLng }, apiKey);
       if (rd) {
@@ -2224,30 +2264,54 @@ async function computeEstimate({
       }
     }
     outsideAttica = isOutsideAttica(fromLat, fromLng) || isOutsideAttica(toLat, toLng);
-    const perKmNow = outsideAttica ? (cfg.perKmOutside ?? 2.0) : cfg.perKm;
 
-    let p = cfg.base + distanceKm * perKmNow + durationMin * cfg.perMin;
-    const luggageExtra = luggage * (cfg.luggagePer ?? 0); // επεξεργάσιμη χρέωση βαλίτσας (default 0)
-    const seatsExtra = childSeatCount * cfg.seatPrice;
-    p += luggageExtra + seatsExtra;
-    if (vehicle === "van") p = p * (1 + cfg.vanPct / 100); // Βαν = Ταξί + vanPct%
-    basePrice = p; // ΧΩΡΙΣ ελάχιστη ακόμα — αυτή εφαρμόζεται ΜΕΤΑ το νυχτερινό (βλ. παρακάτω)
+    // Υπολογίζει την πλήρη δυναμική τιμή (πριν νυχτερινό/ελάχιστη) για τη
+    // δοσμένη εθνικότητα — χρησιμοποιείται ΚΑΙ για τον ίδιο τον πελάτη ΚΑΙ
+    // για το reference (ώστε να δείχνεται σωστή έκπτωση γνωριμίας).
+    function dynamicPrice(useGreek) {
+      const base = pick("base", useGreek);
+      const perKmField = outsideAttica ? "perKmOutside" : "perKm";
+      const perKmNow = pick(perKmField, useGreek);
+      const perMinNow = pick("perMin", useGreek);
+      const luggagePerNow = pick("luggagePer", useGreek);
+      const seatPriceNow = pick("seatPrice", useGreek);
+      const vanPctNow = pick("vanPct", useGreek);
+      let p = base + distanceKm * perKmNow + durationMin * perMinNow;
+      p += luggage * luggagePerNow + childSeatCount * seatPriceNow;
+      if (vehicle === "van") p = p * (1 + vanPctNow / 100);
+      return p;
+    }
+
+    basePrice = dynamicPrice(isGreek);
+    baseOtherPrice = dynamicPrice(!isGreek); // πάντα υπολογίζεται, ώστε να δείχνεται σωστή έκπτωση
   }
 
-  const nightApplies = !!scheduledNaive && isNightWindow(scheduledNaive) && (!zoneMatch || cfg.nightAppliesToZones);
-  const nightMult = nightApplies ? 1 + (vehicle === "van" ? cfg.nightPctVan : cfg.nightPctTaxi) / 100 : 1;
+  // ── Νυχτερινό — για ζώνες κοινό ποσοστό (η διαφοροποίηση Έλληνα/ξένου
+  // γίνεται ήδη μέσω taxi/taxiForeign στη διαδρομή), για δυναμικό τύπο ανά
+  // εθνικότητα αν έχει οριστεί ξεχωριστό ποσοστό.
+  const isNightNow = !!scheduledNaive && isNightWindow(scheduledNaive);
+  const nightApplies = isNightNow && (!zoneMatch || cfg.nightAppliesToZones);
 
-  let price = basePrice * nightMult;
-  let referencePriceRaw = baseOtherPrice != null ? baseOtherPrice * nightMult : price;
+  function nightMultFor(useGreek) {
+    if (!nightApplies) return 1;
+    const pct = zoneMatch
+      ? (vehicle === "van" ? cfg.nightPctVan : cfg.nightPctTaxi)
+      : pick(vehicle === "van" ? "nightPctVan" : "nightPctTaxi", useGreek);
+    return 1 + pct / 100;
+  }
 
-  // Η ελάχιστη χρέωση (25€ μέρα / 35€ νύχτα) εφαρμόζεται στο ΤΕΛΙΚΟ ποσό —
-  // αυτό που θα πληρώσει ο πελάτης — όχι στη βάση πριν το νυχτερινό.
+  let price = basePrice * nightMultFor(isGreek);
+  let referencePriceRaw = baseOtherPrice != null ? baseOtherPrice * nightMultFor(!isGreek) : price;
+
+  // Η ελάχιστη χρέωση (25€ μέρα / 35€ νύχτα, ή οι ξένες τιμές αν έχουν
+  // οριστεί) εφαρμόζεται στο ΤΕΛΙΚΟ ποσό — μετά το νυχτερινό, όχι πριν.
   if (!zoneMatch) {
-    const isNightNow = !!scheduledNaive && isNightWindow(scheduledNaive);
-    const minChargeNow = isNightNow ? cfg.minChargeNight : cfg.minCharge;
-    if (price < minChargeNow) minChargeApplied = true;
-    price = Math.max(price, minChargeNow);
-    referencePriceRaw = Math.max(referencePriceRaw, minChargeNow);
+    const minKey = isNightNow ? "minChargeNight" : "minCharge";
+    const minOwn = pick(minKey, isGreek);
+    const minOther = pick(minKey, !isGreek);
+    if (price < minOwn) minChargeApplied = true;
+    price = Math.max(price, minOwn);
+    referencePriceRaw = Math.max(referencePriceRaw, minOther);
   }
 
   price = Math.floor(price);

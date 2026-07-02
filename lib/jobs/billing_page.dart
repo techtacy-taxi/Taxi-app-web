@@ -84,6 +84,12 @@ class BillingPage extends StatelessWidget {
         actions: [
           if (isMaster)
             IconButton(
+              tooltip: 'Άνοιγμα φακέλου Google Drive',
+              icon: const Icon(Icons.folder_open_rounded),
+              onPressed: () => _openReportsFolder(context),
+            ),
+          if (isMaster)
+            IconButton(
               tooltip: 'Μηνιαία Αναφορά PDF',
               icon: const Icon(Icons.picture_as_pdf_rounded),
               onPressed: () => _showReportDialog(context),
@@ -129,6 +135,49 @@ class BillingPage extends StatelessWidget {
       'Οκτώβριος', 'Νοέμβριος', 'Δεκέμβριος'];
     final p = key.split('-');
     return '${months[int.parse(p[1])]} ${p[0]}';
+  }
+
+  // ─── Άνοιγμα φακέλου Drive (χωρίς νέο PDF) — μόνο master ──────────────────
+  Future<void> _openReportsFolder(BuildContext context) async {
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.showSnackBar(const SnackBar(
+      duration: Duration(seconds: 20),
+      content: Row(children: [
+        SizedBox(width: 18, height: 18,
+            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)),
+        SizedBox(width: 12),
+        Expanded(child: Text('Άνοιγμα φακέλου Google Drive…')),
+      ]),
+    ));
+    try {
+      final callable = FirebaseFunctions.instance
+          .httpsCallable('getReportsFolderLink',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
+      final res  = await callable.call<Map<String, dynamic>>();
+      final data = Map<String, dynamic>.from(res.data);
+      final link = (data['link'] ?? '') as String;
+      messenger.hideCurrentSnackBar();
+      if (link.isEmpty) {
+        messenger.showSnackBar(SnackBar(
+          backgroundColor: Colors.red.shade700,
+          content: const Text('Δεν βρέθηκε φάκελος αναφορών.'),
+        ));
+        return;
+      }
+      await launchUrl(Uri.parse(link), mode: LaunchMode.externalApplication);
+    } on FirebaseFunctionsException catch (e) {
+      messenger.hideCurrentSnackBar();
+      messenger.showSnackBar(SnackBar(
+        backgroundColor: Colors.red.shade700,
+        content: Text('Σφάλμα: ${e.message ?? e.code}'),
+      ));
+    } catch (e) {
+      messenger.hideCurrentSnackBar();
+      messenger.showSnackBar(SnackBar(
+        backgroundColor: Colors.red.shade700,
+        content: Text('Σφάλμα: $e'),
+      ));
+    }
   }
 
   void _showReportDialog(BuildContext context) {

@@ -916,16 +916,28 @@ class _PricingConfigTabState extends State<_PricingConfigTab> {
     'seatPrice':      '€ ανά παιδικό κάθισμα',
   };
 
+  // Κύριες τιμές (Έλληνας/κοινή).
   final Map<String, TextEditingController> _c = {
     for (final k in _keys) k: TextEditingController(),
   };
+  // Τιμές ξένου πελάτη — χρησιμοποιούνται μόνο όταν _foreignOn[key] == true.
+  final Map<String, TextEditingController> _cForeign = {
+    for (final k in _keys) k: TextEditingController(),
+  };
+  final Map<String, bool> _foreignOn = {for (final k in _keys) k: false};
+
   bool _nightAppliesToZones = true;
   bool _loaded = false;
   bool _saving = false;
 
   @override
   void dispose() {
-    for (final ctrl in _c.values) ctrl.dispose();
+    for (final ctrl in _c.values) {
+      ctrl.dispose();
+    }
+    for (final ctrl in _cForeign.values) {
+      ctrl.dispose();
+    }
     super.dispose();
   }
 
@@ -949,6 +961,11 @@ class _PricingConfigTabState extends State<_PricingConfigTab> {
           for (final k in _keys) {
             final v = (data[k] as num?)?.toDouble() ?? _defaults[k]!;
             _c[k]!.text = (v == v.roundToDouble()) ? v.toStringAsFixed(0) : v.toString();
+            final fv = (data['${k}Foreign'] as num?)?.toDouble();
+            _foreignOn[k] = fv != null;
+            _cForeign[k]!.text = fv != null
+                ? ((fv == fv.roundToDouble()) ? fv.toStringAsFixed(0) : fv.toString())
+                : _c[k]!.text; // αρχικοποίηση με την ίδια τιμή, βολικό σημείο εκκίνησης
           }
           _nightAppliesToZones = data['nightAppliesToZones'] as bool? ?? true;
           _loaded = true;
@@ -965,15 +982,15 @@ class _PricingConfigTabState extends State<_PricingConfigTab> {
                 'Εκτός Αττικής χρησιμοποιείται το «€/χλμ εκτός Αττικής» και η φόρμα ζητά επικοινωνία μέσω WhatsApp.',
                 style: TextStyle(color: Colors.grey, fontSize: 12),
               ),
-              const SizedBox(height: 10),
-              for (final k in _keys) ...[
-                TextFormField(
-                  controller: _c[k],
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                  decoration: InputDecoration(labelText: _labels[k]),
-                ),
-                const SizedBox(height: 10),
-              ],
+              const SizedBox(height: 4),
+              const Text(
+                'Ο διακόπτης δίπλα σε κάθε τιμή ενεργοποιεί ξεχωριστή τιμή για ξένους πελάτες — '
+                'αν μείνει κλειστός, όλοι πληρώνουν την ίδια τιμή, όπως πριν.',
+                style: TextStyle(color: Colors.grey, fontSize: 12),
+              ),
+              const SizedBox(height: 12),
+              for (final k in _keys) _buildFieldRow(k),
+              const SizedBox(height: 8),
               SwitchListTile(
                 contentPadding: EdgeInsets.zero,
                 title: const Text('Νυχτερινή προσαύξηση και στις σταθερές τιμές ζωνών'),
@@ -993,11 +1010,81 @@ class _PricingConfigTabState extends State<_PricingConfigTab> {
     );
   }
 
+  Widget _buildFieldRow(String k) {
+    final on = _foreignOn[k] ?? false;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(_labels[k]!, style: const TextStyle(fontSize: 15)),
+              ),
+              Switch(
+                value: on,
+                onChanged: (v) => setState(() {
+                  _foreignOn[k] = v;
+                  if (v && _cForeign[k]!.text.isEmpty) _cForeign[k]!.text = _c[k]!.text;
+                }),
+              ),
+            ],
+          ),
+          if (!on)
+            TextFormField(
+              controller: _c[k],
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              decoration: const InputDecoration(isDense: true, border: OutlineInputBorder()),
+            )
+          else
+            Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      const Text('Έλληνας', style: TextStyle(fontSize: 11, color: Colors.grey)),
+                      const SizedBox(height: 4),
+                      TextFormField(
+                        controller: _c[k],
+                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                        decoration: const InputDecoration(isDense: true, border: OutlineInputBorder()),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      const Text('Ξένος', style: TextStyle(fontSize: 11, color: Colors.grey)),
+                      const SizedBox(height: 4),
+                      TextFormField(
+                        controller: _cForeign[k],
+                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                        decoration: const InputDecoration(isDense: true, border: OutlineInputBorder()),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _save() async {
     setState(() => _saving = true);
     final data = <String, dynamic>{
       for (final k in _keys)
         k: double.tryParse(_c[k]!.text.replaceAll(',', '.')) ?? _defaults[k],
+      for (final k in _keys)
+        '${k}Foreign': (_foreignOn[k] ?? false)
+            ? (double.tryParse(_cForeign[k]!.text.replaceAll(',', '.')) ?? _defaults[k])
+            : null,
       'nightAppliesToZones': _nightAppliesToZones,
       // Ο μαθηματικός τύπος αφαιρέθηκε — καθαρίζουμε τυχόν παλιά τιμή ώστε ο
       // server να χρησιμοποιεί πάντα τον ενσωματωμένο υπολογισμό.
