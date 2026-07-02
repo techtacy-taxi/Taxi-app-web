@@ -108,11 +108,18 @@ class _PricingZonesPageState extends State<PricingZonesPage> {
   String? _selectedZoneId;
   bool _didFitBounds = false;
 
-  // Κατά τη μετακίνηση ζώνης: η τρέχουσα (συρόμενη) θέση του κέντρου.
-  LatLng? _dragPosition;
-  double _dragRadius = 3000;
-  // Τρέχον κέντρο κάμερας — για να μπαίνει η νέα ζώνη στο κέντρο του χάρτη.
+  // Επεξεργασία επιλεγμένης/νέας ζώνης — ΧΩΡΙΣ popup:
+  //  • όνομα: πεδίο στην πάνω κίτρινη μπάρα (AppBar)
+  //  • ακτίνα: slider σε μπάρα τέρμα κάτω (πάνω από το navigation bar)
+  //  • Αποθήκευση: κουμπί τέρμα δεξιά στην πάνω μπάρα
+  final _nameCtrl = TextEditingController();
+  double _editRadius = 3000;
+  LatLng? _dragPosition;      // θέση κατά τη μετακίνηση / νέα ζώνη
   LatLng _cameraCenter = const LatLng(37.9838, 23.7275);
+  bool _saving = false;
+
+  bool get _isEditing =>
+      _mode == _MapMode.placeZone || _selectedZoneId != null;
 
   static const CameraPosition _initialCamera = CameraPosition(
     target: LatLng(37.9838, 23.7275), // Αθήνα
@@ -120,16 +127,70 @@ class _PricingZonesPageState extends State<PricingZonesPage> {
   );
 
   @override
+  void dispose() {
+    _nameCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final isDesktop = MediaQuery.of(context).size.width >= 900;
 
+    // Η πάνω κίτρινη μπάρα: σε λειτουργία επεξεργασίας δείχνει το πεδίο
+    // ονόματος + Αποθήκευση (τέρμα δεξιά). Αλλιώς τον κανονικό τίτλο.
+    final appBar = AppBar(
+      backgroundColor: _kAmber,
+      foregroundColor: Colors.black87,
+      title: _isEditing
+          ? TextField(
+              controller: _nameCtrl,
+              autofocus: _mode == _MapMode.placeZone && _nameCtrl.text.isEmpty,
+              decoration: const InputDecoration(
+                hintText: 'Όνομα ζώνης (π.χ. Λαύριο)',
+                border: InputBorder.none,
+                hintStyle: TextStyle(color: Colors.black45),
+              ),
+              style: const TextStyle(
+                  color: Colors.black87, fontWeight: FontWeight.w600),
+            )
+          : const Text('Ζώνες & Τιμές'),
+      actions: [
+        if (_isEditing) ...[
+          TextButton(
+            onPressed: _saving ? null : _cancelEdit,
+            child: const Text('Άκυρο', style: TextStyle(color: Colors.black54)),
+          ),
+          Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.green.shade700,
+                foregroundColor: Colors.white,
+              ),
+              icon: const Icon(Icons.check_rounded, size: 18),
+              label: Text(_saving ? '...' : 'Αποθήκευση'),
+              onPressed: _saving ? null : _saveZone,
+            ),
+          ),
+        ],
+      ],
+      bottom: isDesktop
+          ? null
+          : const TabBar(
+              labelColor: Colors.black87,
+              unselectedLabelColor: Colors.black54,
+              indicatorColor: Colors.black87,
+              tabs: [
+                Tab(text: 'Χάρτης'),
+                Tab(text: 'Διαδρομές'),
+                Tab(text: 'Δυναμικός τύπος'),
+              ],
+            ),
+    );
+
     if (isDesktop) {
       return Scaffold(
-        appBar: AppBar(
-          title: const Text('Ζώνες & Τιμές'),
-          backgroundColor: _kAmber,
-          foregroundColor: Colors.black87,
-        ),
+        appBar: appBar,
         body: Row(
           children: [
             Expanded(flex: 3, child: _buildMap()),
@@ -140,28 +201,12 @@ class _PricingZonesPageState extends State<PricingZonesPage> {
       );
     }
 
-    // Κινητό: 3 ξεχωριστά tabs — ο χάρτης παίρνει όλη την οθόνη στο δικό του
-    // tab (αντί να μοιράζεται ύψος με τη λίστα), και το SafeArea εμποδίζει
-    // το κουμπί «Νέα διαδρομή» / «Αποθήκευση» να κρύβεται πίσω από τη μπάρα
-    // πλοήγησης του Android (gesture bar).
+    // Κινητό: 3 tabs, με SafeArea ώστε τίποτα να μην κρύβεται πίσω από τη
+    // μπάρα πλοήγησης του Android.
     return DefaultTabController(
       length: 3,
       child: Scaffold(
-        appBar: AppBar(
-          title: const Text('Ζώνες & Τιμές'),
-          backgroundColor: _kAmber,
-          foregroundColor: Colors.black87,
-          bottom: const TabBar(
-            labelColor: Colors.black87,
-            unselectedLabelColor: Colors.black54,
-            indicatorColor: Colors.black87,
-            tabs: [
-              Tab(text: 'Χάρτης'),
-              Tab(text: 'Διαδρομές'),
-              Tab(text: 'Δυναμικός τύπος'),
-            ],
-          ),
-        ),
+        appBar: appBar,
         body: SafeArea(
           child: TabBarView(
             children: [
@@ -174,6 +219,135 @@ class _PricingZonesPageState extends State<PricingZonesPage> {
       ),
     );
   }
+
+  // ── Έναρξη/ακύρωση/αποθήκευση επεξεργασίας ──────────────────────────────
+
+  void _startNewZone() {
+    setState(() {
+      _mode = _MapMode.placeZone;
+      _selectedZoneId = null;
+      _nameCtrl.text = '';
+      _editRadius = 3000;
+      _dragPosition = _cameraCenter; // ξεκινά στο κέντρο του χάρτη
+    });
+  }
+
+  void _selectZone(PricingZone z) {
+    setState(() {
+      _mode = _MapMode.view;
+      _selectedZoneId = z.id;
+      _nameCtrl.text = z.name;
+      _editRadius = z.radius;
+      _dragPosition = null;
+    });
+  }
+
+  void _startMove(PricingZone z) {
+    setState(() {
+      _mode = _MapMode.moveZone;
+      _selectedZoneId = z.id;
+      _dragPosition = LatLng(z.lat, z.lng);
+    });
+  }
+
+  void _cancelEdit() {
+    setState(() {
+      _mode = _MapMode.view;
+      _selectedZoneId = null;
+      _dragPosition = null;
+      _nameCtrl.text = '';
+    });
+  }
+
+  Future<void> _saveZone() async {
+    final name = _nameCtrl.text.trim();
+    if (name.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Δώστε όνομα στη ζώνη')),
+      );
+      return;
+    }
+    setState(() => _saving = true);
+    try {
+      if (_mode == _MapMode.placeZone) {
+        final pos = _dragPosition ?? _cameraCenter;
+        final ref = await _db.collection('pricing_zones').add({
+          'name': name,
+          'lat': pos.latitude,
+          'lng': pos.longitude,
+          'radius': _editRadius,
+        });
+        if (mounted) {
+          setState(() {
+            _mode = _MapMode.view;
+            _selectedZoneId = ref.id; // η νέα ζώνη μένει επιλεγμένη (μωβ)
+            _dragPosition = null;
+          });
+        }
+      } else if (_selectedZoneId != null) {
+        final data = <String, dynamic>{
+          'name': name,
+          'radius': _editRadius,
+        };
+        // Αν έγινε μετακίνηση, αποθηκεύουμε και τη νέα θέση.
+        if (_mode == _MapMode.moveZone && _dragPosition != null) {
+          data['lat'] = _dragPosition!.latitude;
+          data['lng'] = _dragPosition!.longitude;
+        }
+        await _db.collection('pricing_zones').doc(_selectedZoneId).update(data);
+        if (mounted) {
+          setState(() {
+            _mode = _MapMode.view;
+            _dragPosition = null;
+          });
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          backgroundColor: Colors.red,
+          content: Text('Απέτυχε η αποθήκευση: $e'),
+          duration: const Duration(seconds: 6),
+        ));
+      }
+    }
+    if (mounted) setState(() => _saving = false);
+  }
+
+  Future<void> _deleteSelected(List<PricingZone> zones) async {
+    final z = zones.where((x) => x.id == _selectedZoneId).cast<PricingZone?>().firstOrNull;
+    if (z == null) return;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        title: const Text('Διαγραφή ζώνης;'),
+        content: Text(
+            'Η ζώνη «${z.name}» θα διαγραφεί. Οι διαδρομές που τη χρησιμοποιούν δεν θα ταιριάζουν πια σε καμία ζώνη.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(c).pop(false), child: const Text('Άκυρο')),
+          TextButton(
+            onPressed: () => Navigator.of(c).pop(true),
+            child: const Text('Διαγραφή', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+    if (ok == true) {
+      try {
+        await _db.collection('pricing_zones').doc(z.id).delete();
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            backgroundColor: Colors.red,
+            content: Text('Απέτυχε η διαγραφή: $e'),
+          ));
+        }
+      }
+      if (mounted) _cancelEdit();
+    }
+  }
+
+  // ── Χάρτης ────────────────────────────────────────────────────────────────
 
   void _fitBoundsToZones(List<PricingZone> zones) {
     if (_mapCtrl == null || zones.isEmpty) return;
@@ -220,42 +394,44 @@ class _PricingZonesPageState extends State<PricingZonesPage> {
           _didFitBounds = true;
           WidgetsBinding.instance.addPostFrameCallback((_) => _fitBoundsToZones(zones));
         }
-        final movingZone = _mode == _MapMode.moveZone && _selectedZoneId != null
+
+        final selected = _selectedZoneId != null
             ? zones.where((z) => z.id == _selectedZoneId).cast<PricingZone?>().firstOrNull
             : null;
+
         final circles = <Circle>{
           for (final z in zones)
             Circle(
               circleId: CircleId(z.id),
-              // Κατά τη μετακίνηση, ο κύκλος αυτής της ζώνης ακολουθεί τον marker.
-              center: (movingZone != null && z.id == movingZone.id && _dragPosition != null)
+              // Η επιλεγμένη ζώνη ακολουθεί το drag & τη live ακτίνα.
+              center: (z.id == _selectedZoneId && _dragPosition != null)
                   ? _dragPosition!
                   : LatLng(z.lat, z.lng),
-              radius: z.radius,
+              radius: z.id == _selectedZoneId ? _editRadius : z.radius,
               consumeTapEvents: true,
               strokeWidth: z.id == _selectedZoneId ? 3 : 1,
               strokeColor: z.id == _selectedZoneId ? Colors.deepPurple : _kAmber,
               fillColor: (z.id == _selectedZoneId ? Colors.deepPurple : _kAmber)
                   .withValues(alpha: 0.18),
-              onTap: () => _onZoneTap(z),
+              onTap: () => _selectZone(z),
             ),
           // Νέα ζώνη υπό τοποθέτηση — κόκκινος κύκλος.
           if (_mode == _MapMode.placeZone && _dragPosition != null)
             Circle(
               circleId: const CircleId('_newZone'),
               center: _dragPosition!,
-              radius: _dragRadius,
+              radius: _editRadius,
               strokeWidth: 3,
               strokeColor: Colors.red,
               fillColor: Colors.red.withValues(alpha: 0.18),
             ),
         };
+
         final markers = <Marker>{};
-        if (movingZone != null) {
-          final pos = _dragPosition ?? LatLng(movingZone.lat, movingZone.lng);
+        if (_mode == _MapMode.moveZone && selected != null) {
           markers.add(Marker(
             markerId: const MarkerId('_dragMarker'),
-            position: pos,
+            position: _dragPosition ?? LatLng(selected.lat, selected.lng),
             draggable: true,
             onDrag: (p) => setState(() => _dragPosition = p),
             onDragEnd: (p) => setState(() => _dragPosition = p),
@@ -271,6 +447,7 @@ class _PricingZonesPageState extends State<PricingZonesPage> {
             onDragEnd: (p) => setState(() => _dragPosition = p),
           ));
         }
+
         return Stack(
           children: [
             GoogleMap(
@@ -284,7 +461,6 @@ class _PricingZonesPageState extends State<PricingZonesPage> {
                   WidgetsBinding.instance.addPostFrameCallback((_) => _fitBoundsToZones(zones));
                 }
               },
-              onTap: (latLng) => _onMapTap(latLng),
               myLocationButtonEnabled: false,
               zoomControlsEnabled: true,
             ),
@@ -305,339 +481,86 @@ class _PricingZonesPageState extends State<PricingZonesPage> {
                   ),
                 ),
               ),
+            // Πάνω σειρά κουμπιών: Νέα ζώνη + (αν υπάρχει επιλογή) Μετακίνηση/Διαγραφή
             Positioned(
-              right: 12, bottom: 70,
-              child: FloatingActionButton.small(
-                heroTag: 'fitBounds',
-                backgroundColor: Colors.white,
-                onPressed: () => _fitBoundsToZones(zones),
-                child: const Icon(Icons.center_focus_strong_rounded, color: Colors.black87),
+              left: 0, right: 0, top: 12,
+              child: Center(
+                child: Wrap(
+                  spacing: 8,
+                  children: [
+                    ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: _kAmber,
+                        foregroundColor: Colors.black87,
+                        textStyle: const TextStyle(fontWeight: FontWeight.bold),
+                        elevation: 4,
+                      ),
+                      icon: const Icon(Icons.add_location_alt_rounded, size: 18),
+                      label: const Text('Νέα ζώνη'),
+                      onPressed: _mode == _MapMode.placeZone ? null : _startNewZone,
+                    ),
+                    if (selected != null && _mode != _MapMode.placeZone) ...[
+                      ElevatedButton.icon(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.deepPurple,
+                          foregroundColor: Colors.white,
+                          elevation: 4,
+                        ),
+                        icon: const Icon(Icons.open_with_rounded, size: 18),
+                        label: Text(_mode == _MapMode.moveZone ? 'Σύρετε…' : 'Μετακίνηση'),
+                        onPressed: _mode == _MapMode.moveZone ? null : () => _startMove(selected),
+                      ),
+                      ElevatedButton.icon(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.red.shade700,
+                          foregroundColor: Colors.white,
+                          elevation: 4,
+                        ),
+                        icon: const Icon(Icons.delete_outline_rounded, size: 18),
+                        label: const Text('Διαγραφή'),
+                        onPressed: () => _deleteSelected(zones),
+                      ),
+                    ],
+                  ],
+                ),
               ),
             ),
-            Positioned(left: 0, right: 0, top: 0, child: _buildModeBar()),
+            // Μπάρα ακτίνας — τέρμα κάτω, ΠΑΝΩ από τη μπάρα πλοήγησης (SafeArea).
+            if (_isEditing)
+              Positioned(
+                left: 0, right: 0, bottom: 0,
+                child: SafeArea(
+                  top: false,
+                  child: Container(
+                    margin: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(14),
+                      boxShadow: const [BoxShadow(blurRadius: 10, color: Colors.black38)],
+                    ),
+                    child: Row(
+                      children: [
+                        Text('Ακτίνα: ${(_editRadius / 1000).toStringAsFixed(1)} χλμ',
+                            style: const TextStyle(fontWeight: FontWeight.w600)),
+                        Expanded(
+                          child: Slider(
+                            min: 500, max: 20000, divisions: 39,
+                            value: _editRadius.clamp(500, 20000),
+                            activeColor: _mode == _MapMode.placeZone ? Colors.red : Colors.deepPurple,
+                            label: '${(_editRadius / 1000).toStringAsFixed(1)} χλμ',
+                            onChanged: (v) => setState(() => _editRadius = v),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
           ],
         );
       },
     );
-  }
-
-  Widget _buildModeBar() {
-    if (_mode == _MapMode.view) {
-      return Align(
-        alignment: Alignment.topCenter,
-        child: Padding(
-          padding: const EdgeInsets.only(top: 12),
-          child: ElevatedButton.icon(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: _kAmber,
-              foregroundColor: Colors.black87,
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
-              textStyle: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
-              elevation: 4,
-            ),
-            icon: const Icon(Icons.add_location_alt_rounded),
-            label: const Text('Νέα ζώνη'),
-            onPressed: () => setState(() {
-              _mode = _MapMode.placeZone;
-              _selectedZoneId = null;
-              _dragPosition = _cameraCenter; // ξεκινά στο κέντρο του χάρτη
-              _dragRadius = 3000;
-            }),
-          ),
-        ),
-      );
-    }
-    if (_mode == _MapMode.placeZone) {
-      return Align(
-        alignment: Alignment.topCenter,
-        child: Container(
-          margin: const EdgeInsets.only(top: 12, left: 12, right: 12),
-          padding: const EdgeInsets.fromLTRB(16, 8, 8, 8),
-          decoration: BoxDecoration(
-            color: Colors.red.shade700,
-            borderRadius: BorderRadius.circular(12),
-            boxShadow: const [BoxShadow(blurRadius: 8, color: Colors.black38)],
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Flexible(
-                child: Text('✋ Σύρετε την κόκκινη πινέζα στη θέση της ζώνης',
-                    style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
-              ),
-              const SizedBox(width: 8),
-              TextButton(
-                onPressed: () => setState(() {
-                  _mode = _MapMode.view;
-                  _dragPosition = null;
-                }),
-                child: const Text('Άκυρο', style: TextStyle(color: Colors.white70)),
-              ),
-              ElevatedButton.icon(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: _kAmber,
-                  foregroundColor: Colors.black87,
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                  textStyle: const TextStyle(fontWeight: FontWeight.bold),
-                ),
-                icon: const Icon(Icons.check_rounded),
-                label: const Text('ΟΚ'),
-                onPressed: () {
-                  final pos = _dragPosition;
-                  if (pos == null) return;
-                  setState(() => _mode = _MapMode.view);
-                  _openZoneDialog(newPosition: pos);
-                },
-              ),
-            ],
-          ),
-        ),
-      );
-    }
-    // moveZone
-    return Align(
-      alignment: Alignment.topCenter,
-      child: Container(
-        margin: const EdgeInsets.only(top: 12, left: 12, right: 12),
-        padding: const EdgeInsets.fromLTRB(16, 8, 8, 8),
-        decoration: BoxDecoration(
-          color: Colors.deepPurple,
-          borderRadius: BorderRadius.circular(12),
-          boxShadow: const [BoxShadow(blurRadius: 8, color: Colors.black38)],
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Flexible(
-              child: Text('✋ Σύρετε τη ζώνη στη νέα θέση',
-                  style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
-            ),
-            const SizedBox(width: 8),
-            TextButton(
-              onPressed: () => setState(() {
-                _mode = _MapMode.view;
-                _dragPosition = null;
-              }),
-              child: const Text('Άκυρο', style: TextStyle(color: Colors.white70)),
-            ),
-            ElevatedButton.icon(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: _kAmber,
-                foregroundColor: Colors.black87,
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                textStyle: const TextStyle(fontWeight: FontWeight.bold),
-              ),
-              icon: const Icon(Icons.check_rounded),
-              label: const Text('ΟΚ'),
-              onPressed: _saveDraggedZone,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Future<void> _saveDraggedZone() async {
-    if (_selectedZoneId == null || _dragPosition == null) {
-      setState(() => _mode = _MapMode.view);
-      return;
-    }
-    try {
-      await _db.collection('pricing_zones').doc(_selectedZoneId).update({
-        'lat': _dragPosition!.latitude,
-        'lng': _dragPosition!.longitude,
-      });
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          backgroundColor: Colors.red,
-          content: Text('Απέτυχε η μετακίνηση: $e'),
-          duration: const Duration(seconds: 6),
-        ));
-      }
-    }
-    if (mounted) {
-      setState(() {
-      _mode = _MapMode.view;
-      _dragPosition = null;
-    });
-    }
-  }
-
-  void _onZoneTap(PricingZone z) {
-    if (_mode == _MapMode.moveZone) return; // περιμένουμε tap στον χάρτη, όχι σε ζώνη
-    setState(() => _selectedZoneId = z.id);
-    _openZoneDialog(existing: z);
-  }
-
-  Future<void> _onMapTap(LatLng pos) async {
-    // Τοποθέτηση & μετακίνηση γίνονται πλέον με drag & drop + κουμπί ΟΚ.
-    // Το tap στον χάρτη δεν κάνει κάτι.
-  }
-
-  Future<void> _openZoneDialog({PricingZone? existing, LatLng? newPosition}) async {
-    final nameCtrl = TextEditingController(text: existing?.name ?? '');
-    double radius = existing?.radius ?? 3000;
-
-    await showDialog<void>(
-      context: context,
-      builder: (dctx) => StatefulBuilder(
-        builder: (c, setLocal) {
-          return Align(
-            alignment: Alignment.topCenter,
-            child: Padding(
-              padding: const EdgeInsets.only(top: 12, left: 12, right: 12),
-              child: Material(
-                type: MaterialType.transparency,
-                child: Dialog(
-                  insetPadding: EdgeInsets.zero,
-                  clipBehavior: Clip.antiAlias,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                Container(
-                  width: double.infinity,
-                  color: _kAmber,
-                  padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
-                  child: Text(
-                    existing == null ? 'Νέα ζώνη' : 'Επεξεργασία ζώνης',
-                    style: const TextStyle(
-                        color: _kAmberDark, fontSize: 17, fontWeight: FontWeight.w900),
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 18, 20, 14),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      TextField(
-                        controller: nameCtrl,
-                        decoration: const InputDecoration(labelText: 'Όνομα ζώνης (π.χ. Λαύριο)'),
-                      ),
-                      const SizedBox(height: 18),
-                      Text('Ακτίνα: ${(radius / 1000).toStringAsFixed(1)} χλμ'),
-                      Slider(
-                        min: 500, max: 20000, divisions: 39,
-                        value: radius,
-                        label: '${(radius / 1000).toStringAsFixed(1)} χλμ',
-                        onChanged: (v) {
-                          setLocal(() => radius = v);
-                          // Ζωντανή ενημέρωση του κόκκινου κύκλου (νέα ζώνη).
-                          if (existing == null) setState(() => _dragRadius = v);
-                        },
-                      ),
-                      const SizedBox(height: 10),
-                      if (existing != null)
-                        Row(
-                          children: [
-                            Expanded(
-                              child: AppButtonTonal(
-                                label: 'Μετακίνηση',
-                                icon: Icons.open_with_rounded,
-                                onPressed: () {
-                                  Navigator.of(dctx).pop();
-                                  setState(() {
-                                    _mode = _MapMode.moveZone;
-                                    _selectedZoneId = existing.id;
-                                    _dragPosition = LatLng(existing.lat, existing.lng);
-                                  });
-                                },
-                              ),
-                            ),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: AppButtonTonal(
-                                label: 'Διαγραφή',
-                                icon: Icons.delete_outline_rounded,
-                                fg: Colors.red,
-                                onPressed: () async {
-                                  Navigator.of(dctx).pop();
-                                  await _confirmDeleteZone(existing);
-                                },
-                              ),
-                            ),
-                          ],
-                        ),
-                      const SizedBox(height: 10),
-                      AppButton(
-                        label: 'Αποθήκευση',
-                        icon: Icons.check_rounded,
-                        onPressed: () async {
-                          final name = nameCtrl.text.trim();
-                          if (name.isEmpty) {
-                            ScaffoldMessenger.of(dctx).showSnackBar(const SnackBar(
-                              content: Text('Δώστε όνομα στη ζώνη'),
-                            ));
-                            return;
-                          }
-                          final navigator = Navigator.of(dctx);
-                          final messenger = ScaffoldMessenger.of(dctx);
-                          try {
-                            if (existing == null && newPosition != null) {
-                              final ref = await _db.collection('pricing_zones').add({
-                                'name':   name,
-                                'lat':    newPosition.latitude,
-                                'lng':    newPosition.longitude,
-                                'radius': radius,
-                              });
-                              navigator.pop();
-                              // Η νέα ζώνη γίνεται επιλεγμένη (μωβ).
-                              if (mounted) setState(() => _selectedZoneId = ref.id);
-                            } else if (existing != null) {
-                              await _db.collection('pricing_zones').doc(existing.id).update({
-                                'name':   name,
-                                'radius': radius,
-                              });
-                              navigator.pop();
-                              if (mounted) setState(() => _selectedZoneId = existing.id);
-                            } else {
-                              navigator.pop();
-                            }
-                          } catch (e) {
-                            messenger.showSnackBar(SnackBar(
-                              backgroundColor: Colors.red,
-                              content: Text('Απέτυχε η αποθήκευση: $e'),
-                              duration: const Duration(seconds: 6),
-                            ));
-                          }
-                        },
-                      ),
-                    ],
-                  ),
-                ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          );
-        },
-      ),
-    );
-  }
-
-  Future<void> _confirmDeleteZone(PricingZone z) async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (c) => AlertDialog(
-        title: const Text('Διαγραφή ζώνης;'),
-        content: Text(
-            'Η ζώνη «${z.name}» θα διαγραφεί. Οι διαδρομές που τη χρησιμοποιούν δεν θα ταιριάζουν πια σε καμία ζώνη.'),
-        actions: [
-          TextButton(onPressed: () => Navigator.of(c).pop(false), child: const Text('Άκυρο')),
-          TextButton(
-            onPressed: () => Navigator.of(c).pop(true),
-            child: const Text('Διαγραφή', style: TextStyle(color: Colors.red)),
-          ),
-        ],
-      ),
-    );
-    if (ok == true) {
-      await _db.collection('pricing_zones').doc(z.id).delete();
-      if (_selectedZoneId == z.id) setState(() => _selectedZoneId = null);
-    }
   }
 
   Widget _buildPanel() {
@@ -872,12 +795,9 @@ class _PricingConfigTabState extends State<_PricingConfigTab> {
     'seatPrice':      '€ ανά παιδικό κάθισμα',
   };
 
-  static const _defaultFormula = 'base + km*perKm + min*perMin';
-
   final Map<String, TextEditingController> _c = {
     for (final k in _keys) k: TextEditingController(),
   };
-  final _formulaCtrl = TextEditingController();
   bool _nightAppliesToZones = true;
   bool _loaded = false;
   bool _saving = false;
@@ -887,7 +807,6 @@ class _PricingConfigTabState extends State<_PricingConfigTab> {
     for (final ctrl in _c.values) {
       ctrl.dispose();
     }
-    _formulaCtrl.dispose();
     super.dispose();
   }
 
@@ -913,8 +832,6 @@ class _PricingConfigTabState extends State<_PricingConfigTab> {
             _c[k]!.text = (v == v.roundToDouble()) ? v.toStringAsFixed(0) : v.toString();
           }
           _nightAppliesToZones = data['nightAppliesToZones'] as bool? ?? true;
-          final f = (data['customFormula'] as String?)?.trim() ?? '';
-          _formulaCtrl.text = f.isEmpty ? _defaultFormula : f;
           _loaded = true;
         }
         return SingleChildScrollView(
@@ -938,9 +855,6 @@ class _PricingConfigTabState extends State<_PricingConfigTab> {
                 ),
                 const SizedBox(height: 10),
               ],
-              const SizedBox(height: 8),
-              _buildFormulaEditor(),
-              const SizedBox(height: 8),
               SwitchListTile(
                 contentPadding: EdgeInsets.zero,
                 title: const Text('Νυχτερινή προσαύξηση και στις σταθερές τιμές ζωνών'),
@@ -960,147 +874,15 @@ class _PricingConfigTabState extends State<_PricingConfigTab> {
     );
   }
 
-  static const _varLegend = [
-    ['km', 'χιλιόμετρα διαδρομής'],
-    ['min', 'λεπτά διαδρομής'],
-    ['base', 'βάση εκκίνησης (€)'],
-    ['perKm', '€/χλμ (εντός ή εκτός Αττικής, το κατάλληλο)'],
-    ['perMin', '€/λεπτό'],
-    ['minDay', 'ελάχιστο ημέρας (€)'],
-    ['minNight', 'ελάχιστο νύχτας (€)'],
-    ['nightTaxi', 'νυχτ. προσαύξηση ταξί (%)'],
-    ['nightVan', 'νυχτ. προσαύξηση βαν (%)'],
-    ['vanPct', 'ποσοστό βαν επί ταξί (%)'],
-    ['luggagePer', '€/βαλίτσα'],
-    ['seatPrice', '€/παιδικό κάθισμα'],
-    ['luggage', 'πλήθος βαλιτσών'],
-    ['seats', 'πλήθος παιδικών καθισμάτων'],
-  ];
-
-  Widget _buildFormulaEditor() {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.deepPurple.withValues(alpha: 0.05),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: Colors.deepPurple.withValues(alpha: 0.3)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(
-            children: [
-              const Expanded(
-                child: Text('Μαθηματικός τύπος (προχωρημένο)',
-                    style: TextStyle(fontWeight: FontWeight.bold)),
-              ),
-              TextButton.icon(
-                icon: const Icon(Icons.restore_rounded, size: 18),
-                label: const Text('Επαναφορά'),
-                onPressed: () => setState(() => _formulaCtrl.text = _defaultFormula),
-              ),
-            ],
-          ),
-          const SizedBox(height: 4),
-          const Text(
-            'Ο τύπος υπολογίζει την τιμή Ταξί για διαδρομές εκτός ζωνών. Το Βαν και το '
-            'νυχτερινό εφαρμόζονται αυτόματα μετά. Πράξεις: + − * / ( ).',
-            style: TextStyle(color: Colors.grey, fontSize: 11),
-          ),
-          const SizedBox(height: 10),
-          TextFormField(
-            controller: _formulaCtrl,
-            maxLines: null,
-            decoration: const InputDecoration(
-              labelText: 'Τύπος',
-              hintText: 'base + km*perKm + min*perMin',
-              border: OutlineInputBorder(),
-            ),
-            style: const TextStyle(fontFamily: 'monospace', fontSize: 15),
-          ),
-          const SizedBox(height: 12),
-          const Text('Διαθέσιμες μεταβλητές (γράψε το όνομα μέσα στον τύπο):',
-              style: TextStyle(fontWeight: FontWeight.w600, fontSize: 12)),
-          const SizedBox(height: 6),
-          // Υπόμνημα: όνομα → επεξήγηση. Πάτησε ένα για να μπει στον τύπο.
-          Wrap(
-            spacing: 6,
-            runSpacing: 6,
-            children: [
-              for (final v in _varLegend)
-                Tooltip(
-                  message: v[1],
-                  child: ActionChip(
-                    label: Text(v[0], style: const TextStyle(fontFamily: 'monospace', fontSize: 12)),
-                    backgroundColor: Colors.deepPurple.withValues(alpha: 0.08),
-                    onPressed: () {
-                      // Εισαγωγή του ονόματος στη θέση του δρομέα.
-                      final t = _formulaCtrl.text;
-                      final sel = _formulaCtrl.selection;
-                      final at = (sel.start >= 0) ? sel.start : t.length;
-                      final newText = t.replaceRange(at, sel.end >= 0 ? sel.end : at, v[0]);
-                      _formulaCtrl.text = newText;
-                      _formulaCtrl.selection =
-                          TextSelection.collapsed(offset: at + v[0].length);
-                    },
-                  ),
-                ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          const Text(
-            'Παράδειγμα: για «το βράδυ +1€/χλμ πάνω από το ελάχιστο νύχτας» θα μπορούσες '
-            'να γράψεις: minNight + km*(perKm+1)',
-            style: TextStyle(color: Colors.grey, fontSize: 11, fontStyle: FontStyle.italic),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // Έλεγχος εγκυρότητας τύπου (ίδια λογική με τον server): επιτρέπονται μόνο
-  // αριθμοί, οι γνωστές μεταβλητές, και οι πράξεις + − * / ( ).
-  bool _isFormulaValid(String formula) {
-    final f = formula.trim();
-    if (f.isEmpty) return true; // κενό = προεπιλεγμένος, επιτρεπτό
-    const allowed = [
-      'luggagePer', 'seatPrice', 'minNight', 'minDay', 'nightTaxi', 'nightVan',
-      'vanPct', 'perKm', 'perMin', 'luggage', 'seats', 'base', 'km', 'min',
-    ]; // ταξινομημένα από τα μεγαλύτερα ονόματα προς τα μικρότερα
-    var expr = f;
-    for (final name in allowed) {
-      expr = expr.replaceAll(RegExp('\\b$name\\b'), '(1)');
-    }
-    if (!RegExp(r'^[0-9.+\-*/()\s]+$').hasMatch(expr)) return false;
-    var depth = 0;
-    for (final ch in expr.split('')) {
-      if (ch == '(') depth++;
-      if (ch == ')') depth--;
-      if (depth < 0) return false;
-    }
-    return depth == 0;
-  }
-
   Future<void> _save() async {
-    // Έλεγχος τύπου πριν την αποθήκευση.
-    final formula = _formulaCtrl.text.trim();
-    if (!_isFormulaValid(formula)) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        backgroundColor: Colors.red,
-        content: Text('Ο τύπος δεν είναι έγκυρος. Χρησιμοποίησε μόνο τις γνωστές '
-            'μεταβλητές και τις πράξεις + − * / ( ), ή πάτα «Επαναφορά».'),
-        duration: Duration(seconds: 6),
-      ));
-      return;
-    }
     setState(() => _saving = true);
-    // Αν ο τύπος είναι ίδιος με τον προεπιλεγμένο, αποθηκεύουμε κενό (=default).
-    final formulaToSave = (formula == _defaultFormula) ? '' : formula;
     final data = <String, dynamic>{
       for (final k in _keys)
         k: double.tryParse(_c[k]!.text.replaceAll(',', '.')) ?? _defaults[k],
       'nightAppliesToZones': _nightAppliesToZones,
-      'customFormula': formulaToSave,
+      // Ο μαθηματικός τύπος αφαιρέθηκε — καθαρίζουμε τυχόν παλιά τιμή ώστε ο
+      // server να χρησιμοποιεί πάντα τον ενσωματωμένο υπολογισμό.
+      'customFormula': '',
     };
     try {
       await widget.db.collection('app_settings').doc('pricing').set(data, SetOptions(merge: true));

@@ -2070,52 +2070,6 @@ function haversineKm(a, b) {
   return R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
 }
 
-// ── Ασφαλής υπολογιστής προσαρμοσμένου τύπου ────────────────────────────────
-// Επιτρέπονται ΜΟΝΟ: αριθμοί, οι παρακάτω ονομασμένες μεταβλητές, οι πράξεις
-// + - * / ( ) και κενά. Οτιδήποτε άλλο απορρίπτεται — έτσι κανείς δεν μπορεί
-// να «τρέξει» επικίνδυνο κώδικα μέσω του τύπου.
-//
-// Διαθέσιμες μεταβλητές (ίδια ονόματα στη σελίδα admin):
-//   km        = χιλιόμετρα διαδρομής
-//   min       = λεπτά διαδρομής
-//   luggage   = πλήθος βαλιτσών
-//   seats     = πλήθος παιδικών καθισμάτων
-//   base      = βάση εκκίνησης (€)
-//   perKm     = €/χλμ (το κατάλληλο, εντός ή εκτός Αττικής)
-//   perMin    = €/λεπτό
-//   minDay    = ελάχιστη χρέωση ημέρας (€)
-//   minNight  = ελάχιστη χρέωση νύχτας (€)
-//   nightTaxi = νυχτερινή προσαύξηση ταξί (%)
-//   nightVan  = νυχτερινή προσαύξηση βαν (%)
-//   vanPct    = ποσοστό βαν επί του ταξί (%)
-//   luggagePer= €/βαλίτσα
-//   seatPrice = €/παιδικό κάθισμα
-const FORMULA_VARS = [
-  "km", "min", "luggage", "seats", "base", "perKm", "perMin",
-  "minDay", "minNight", "nightTaxi", "nightVan", "vanPct", "luggagePer", "seatPrice",
-];
-function evalCustomFormula(formula, vars) {
-  if (!formula || typeof formula !== "string" || formula.trim() === "") return null;
-  let expr = formula;
-  // Μεγαλύτερα ονόματα πρώτα, ώστε το "min" να μη «σπάει» το "minDay"/"minNight".
-  const names = [...FORMULA_VARS].sort((a, b) => b.length - a.length);
-  for (const name of names) {
-    expr = expr.replace(new RegExp("\\b" + name + "\\b", "g"), "(" + Number(vars[name] || 0) + ")");
-  }
-  if (!/^[0-9.+\-*/()\s]+$/.test(expr)) {
-    console.warn("evalCustomFormula: rejected unsafe formula:", formula);
-    return null;
-  }
-  try {
-    // eslint-disable-next-line no-new-func
-    const result = Function('"use strict"; return (' + expr + ");")();
-    return (typeof result === "number" && isFinite(result)) ? result : null;
-  } catch (e) {
-    console.warn("evalCustomFormula: eval error:", e);
-    return null;
-  }
-}
-
 // ── Πραγματική απόσταση/διάρκεια μέσω Routes API (κλειδί ΜΟΝΟ server-side) ──
 async function routesDistanceDuration(origin, dest, apiKey) {
   if (!apiKey) return null;
@@ -2192,7 +2146,6 @@ async function getPricingData() {
       nightPctTaxi: 30, nightPctVan: 25, vanPct: 90,
       luggagePer: 0, seatPrice: 5,
       nightAppliesToZones: true,
-      customFormula: "", // κενό = προεπιλεγμένος τύπος
     },
     cfgDoc.exists ? cfgDoc.data() : {}
   );
@@ -2258,21 +2211,7 @@ async function computeEstimate({
     outsideAttica = isOutsideAttica(fromLat, fromLng) || isOutsideAttica(toLat, toLng);
     const perKmNow = outsideAttica ? (cfg.perKmOutside ?? 2.0) : cfg.perKm;
 
-    let p;
-    // Αν έχει οριστεί προσαρμοσμένος τύπος και είναι έγκυρος, τον χρησιμοποιούμε.
-    const isNightForFormula = !!scheduledNaive && isNightWindow(scheduledNaive);
-    const custom = evalCustomFormula(cfg.customFormula, {
-      km: distanceKm, min: durationMin, luggage, seats: childSeatCount,
-      base: cfg.base, perKm: perKmNow, perMin: cfg.perMin,
-      minDay: cfg.minCharge, minNight: cfg.minChargeNight,
-      nightTaxi: cfg.nightPctTaxi, nightVan: cfg.nightPctVan,
-      vanPct: cfg.vanPct, luggagePer: (cfg.luggagePer ?? 0), seatPrice: cfg.seatPrice,
-    });
-    if (custom != null) {
-      p = custom;
-    } else {
-      p = cfg.base + distanceKm * perKmNow + durationMin * cfg.perMin;
-    }
+    let p = cfg.base + distanceKm * perKmNow + durationMin * cfg.perMin;
     const luggageExtra = luggage * (cfg.luggagePer ?? 0); // επεξεργάσιμη χρέωση βαλίτσας (default 0)
     const seatsExtra = childSeatCount * cfg.seatPrice;
     p += luggageExtra + seatsExtra;
