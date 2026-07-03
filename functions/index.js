@@ -2137,12 +2137,30 @@ function isOutsideAttica(lat, lng) {
 }
 
 // ── Έλεγχος αν ένα σημείο είναι μέσα σε μια ζώνη ────────────────────────────
-// Υποστηρίζει ΚΑΙ το νέο μοντέλο (ορθογώνιο north/south/east/west, από τις
-// λαβές αλλαγής μεγέθους στο web) ΚΑΙ το παλιό (κύκλος lat/lng/radius, για
-// ζώνες που δεν έχουν ακόμα ξανααποθηκευτεί με το νέο UI).
+// Υποστηρίζει: νέο μοντέλο ορθογωνίου (north/south/east/west) με προαιρετική
+// περιστροφή rotationDeg γύρω από το κέντρο, ΚΑΙ το παλιό μοντέλο κύκλου
+// (lat/lng/radius) για ζώνες που δεν έχουν ξανααποθηκευτεί με το νέο UI.
 function pointInZone(lat, lng, z) {
   if (z.north != null && z.south != null && z.east != null && z.west != null) {
-    return lat <= z.north && lat >= z.south && lng <= z.east && lng >= z.west;
+    const rot = Number(z.rotationDeg || 0);
+    if (!rot) {
+      return lat <= z.north && lat >= z.south && lng <= z.east && lng >= z.west;
+    }
+    // Περιστραμμένο ορθογώνιο: φέρνουμε το σημείο στο «τοπικό» σύστημα του
+    // ορθογωνίου (αντίστροφη περιστροφή γύρω από το κέντρο, σε μέτρα) και
+    // συγκρίνουμε με το μισό πλάτος/ύψος.
+    const cLat = (z.north + z.south) / 2;
+    const cLng = (z.east + z.west) / 2;
+    const mPerDegLat = 111320;
+    const cosLat = Math.max(0.01, Math.abs(Math.cos(cLat * Math.PI / 180)));
+    const halfH = (z.north - z.south) / 2 * mPerDegLat;
+    const halfW = (z.east - z.west) / 2 * mPerDegLat * cosLat;
+    const dyM = (lat - cLat) * mPerDegLat;
+    const dxM = (lng - cLng) * mPerDegLat * cosLat;
+    const rad = -rot * Math.PI / 180;
+    const lx = dxM * Math.cos(rad) - dyM * Math.sin(rad);
+    const ly = dxM * Math.sin(rad) + dyM * Math.cos(rad);
+    return Math.abs(lx) <= halfW && Math.abs(ly) <= halfH;
   }
   if (z.lat == null || z.lng == null) return false;
   const dKm = haversineKm({ lat, lng }, { lat: z.lat, lng: z.lng });

@@ -66,6 +66,7 @@ class PricingZone {
   final double lng;
   final double radius; // μέτρα — ΠΑΛΙΟ μοντέλο (κύκλος), κρατιέται για fallback
   final double? north, south, east, west; // ΝΕΟ μοντέλο (ορθογώνιο)
+  final double rotationDeg; // περιστροφή ορθογωνίου γύρω από το κέντρο (μοίρες)
 
   PricingZone({
     required this.id,
@@ -77,6 +78,7 @@ class PricingZone {
     this.south,
     this.east,
     this.west,
+    this.rotationDeg = 0,
   });
 
   bool get hasBounds => north != null && south != null && east != null && west != null;
@@ -102,6 +104,7 @@ class PricingZone {
       south:  (m['south'] as num?)?.toDouble(),
       east:   (m['east'] as num?)?.toDouble(),
       west:   (m['west'] as num?)?.toDouble(),
+      rotationDeg: (m['rotationDeg'] as num?)?.toDouble() ?? 0,
     );
   }
 }
@@ -158,6 +161,7 @@ class _PricingZonesPageState extends State<PricingZonesPage> {
 
   // Ορθογώνιο υπό επεξεργασία (νέα ζώνη ή επιλεγμένη υπάρχουσα).
   double? _editNorth, _editSouth, _editEast, _editWest;
+  double _editRotation = 0; // μοίρες
   LatLng _cameraCenter = const LatLng(37.9838, 23.7275);
   bool _saving = false;
 
@@ -272,6 +276,7 @@ class _PricingZonesPageState extends State<PricingZonesPage> {
       _editSouth = _cameraCenter.latitude - dLat;
       _editEast  = _cameraCenter.longitude + dLng;
       _editWest  = _cameraCenter.longitude - dLng;
+      _editRotation = 0;
     });
   }
 
@@ -285,6 +290,7 @@ class _PricingZonesPageState extends State<PricingZonesPage> {
       _editSouth = b.south;
       _editEast  = b.east;
       _editWest  = b.west;
+      _editRotation = z.rotationDeg;
     });
   }
 
@@ -311,20 +317,36 @@ class _PricingZonesPageState extends State<PricingZonesPage> {
   }
 
   // Αλλαγή μεγέθους τραβώντας μια γωνία (μόνο web) — ελεύθερο σχήμα.
-  void _resizeCorner({required bool isNorth, required bool isEast, required LatLng p}) {
-    const minSizeDeg = 0.003; // ελάχιστο μέγεθος ώστε να μη «σπάει» το ορθογώνιο
+  // Λειτουργεί και με περιστροφή: μεταφράζουμε το σημείο στο «τοπικό» σύστημα
+  // του ορθογωνίου (αντίστροφη περιστροφή), και το μισό πλάτος/ύψος γίνεται η
+  // απόστασή του από το κέντρο. Το κέντρο μένει σταθερό.
+  void _resizeToPoint(_Bounds b, LatLng p) {
+    final c = b.center;
+    final dxM = _degLngToM(p.longitude - c.longitude, c.latitude);
+    final dyM = _degLatToM(p.latitude - c.latitude);
+    final rad = -_editRotation * math.pi / 180; // αντίστροφη περιστροφή
+    final lx = (dxM * math.cos(rad) - dyM * math.sin(rad)).abs();
+    final ly = (dxM * math.sin(rad) + dyM * math.cos(rad)).abs();
+    final hw = lx.clamp(200.0, 60000.0);
+    final hh = ly.clamp(200.0, 60000.0);
+    final dLat = _mToDegLat(hh);
+    final dLng = _mToDegLng(hw, c.latitude);
     setState(() {
-      if (isNorth) {
-        _editNorth = p.latitude > _editSouth! + minSizeDeg ? p.latitude : _editSouth! + minSizeDeg;
-      } else {
-        _editSouth = p.latitude < _editNorth! - minSizeDeg ? p.latitude : _editNorth! - minSizeDeg;
-      }
-      if (isEast) {
-        _editEast = p.longitude > _editWest! + minSizeDeg ? p.longitude : _editWest! + minSizeDeg;
-      } else {
-        _editWest = p.longitude < _editEast! - minSizeDeg ? p.longitude : _editEast! - minSizeDeg;
-      }
+      _editNorth = c.latitude + dLat;
+      _editSouth = c.latitude - dLat;
+      _editEast  = c.longitude + dLng;
+      _editWest  = c.longitude - dLng;
     });
+  }
+
+  // Περιστροφή: η γωνία ορίζεται από τη θέση της πράσινης λαβής ως προς το
+  // κέντρο (atan2 σε μέτρα). 0° = η λαβή ακριβώς βόρεια.
+  void _rotateTo(_Bounds b, LatLng p) {
+    final c = b.center;
+    final dxM = _degLngToM(p.longitude - c.longitude, c.latitude);
+    final dyM = _degLatToM(p.latitude - c.latitude);
+    final deg = math.atan2(dxM, dyM) * 180 / math.pi;
+    setState(() => _editRotation = deg);
   }
 
   // Αναλογική μεγέθυνση/σμίκρυνση (κινητό) — κρατά το ΥΠΑΡΧΟΝ σχήμα (π.χ.
@@ -371,20 +393,18 @@ class _PricingZonesPageState extends State<PricingZonesPage> {
       'south':  b.south,
       'east':   b.east,
       'west':   b.west,
+      'rotationDeg': _editRotation,
     };
     try {
       if (_placingNew) {
-        final ref = await _db.collection('pricing_zones').add(data);
-        if (mounted) {
-          setState(() {
-            _placingNew = false;
-            _selectedZoneId = ref.id; // η νέα ζώνη μένει επιλεγμένη (μωβ)
-          });
-        }
+        await _db.collection('pricing_zones').add(data);
       } else if (_selectedZoneId != null) {
         await _db.collection('pricing_zones').doc(_selectedZoneId).update(data);
-        if (mounted) setState(() {});
       }
+      // Μετά την αποθήκευση βγαίνουμε από τη λειτουργία επεξεργασίας —
+      // τα κουμπιά Αποθήκευση/Άκυρο φεύγουν και ο τίτλος επανέρχεται.
+      // Για νέα αλλαγή (και ονόματος), απλώς ξαναπατάς πάνω στη ζώνη.
+      if (mounted) _cancelEdit();
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -490,7 +510,7 @@ class _PricingZonesPageState extends State<PricingZonesPage> {
             if (!(z.id == _selectedZoneId && editingBounds != null))
               Polygon(
                 polygonId: PolygonId(z.id),
-                points: _rectPoints(z.bounds),
+                points: _rectPoints(z.bounds, z.rotationDeg),
                 consumeTapEvents: true,
                 strokeWidth: 1,
                 strokeColor: _kAmber,
@@ -500,7 +520,7 @@ class _PricingZonesPageState extends State<PricingZonesPage> {
           if (editingBounds != null)
             Polygon(
               polygonId: PolygonId(_placingNew ? '_newZone' : _selectedZoneId!),
-              points: _rectPoints(editingBounds),
+              points: _rectPoints(editingBounds, _editRotation),
               strokeWidth: 3,
               strokeColor: _placingNew ? Colors.red : Colors.deepPurple,
               fillColor: (_placingNew ? Colors.red : Colors.deepPurple).withValues(alpha: 0.18),
@@ -519,42 +539,32 @@ class _PricingZonesPageState extends State<PricingZonesPage> {
             onDrag: _translateTo,
             onDragEnd: _translateTo,
           ));
+          // Λαβή ΠΕΡΙΣΤΡΟΦΗΣ — πράσινη πινέζα πάνω από την (περιστραμμένη)
+          // πάνω πλευρά. Τη σέρνεις γύρω-γύρω και το ορθογώνιο γυρίζει.
+          final rotHandle = _offsetRotated(editingBounds.center, 0,
+              editingBounds.halfHeightM * 1.45, _editRotation);
+          markers.add(Marker(
+            markerId: const MarkerId('_rot'),
+            position: rotHandle,
+            draggable: true,
+            icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen),
+            onDrag: (p) => _rotateTo(editingBounds, p),
+            onDragEnd: (p) => _rotateTo(editingBounds, p),
+          ));
           // Γωνίες — ΜΟΝΟ web: ελεύθερη αλλαγή μεγέθους/σχήματος, σαν crop tool.
           if (isDesktop) {
-            markers.addAll([
-              Marker(
-                markerId: const MarkerId('_ne'),
-                position: LatLng(editingBounds.north, editingBounds.east),
+            final corners = _rectPoints(editingBounds, _editRotation);
+            final ids = ['_nw', '_ne', '_se', '_sw'];
+            for (int i = 0; i < 4; i++) {
+              markers.add(Marker(
+                markerId: MarkerId(ids[i]),
+                position: corners[i],
                 draggable: true,
                 icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueOrange),
-                onDrag: (p) => _resizeCorner(isNorth: true, isEast: true, p: p),
-                onDragEnd: (p) => _resizeCorner(isNorth: true, isEast: true, p: p),
-              ),
-              Marker(
-                markerId: const MarkerId('_nw'),
-                position: LatLng(editingBounds.north, editingBounds.west),
-                draggable: true,
-                icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueOrange),
-                onDrag: (p) => _resizeCorner(isNorth: true, isEast: false, p: p),
-                onDragEnd: (p) => _resizeCorner(isNorth: true, isEast: false, p: p),
-              ),
-              Marker(
-                markerId: const MarkerId('_se'),
-                position: LatLng(editingBounds.south, editingBounds.east),
-                draggable: true,
-                icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueOrange),
-                onDrag: (p) => _resizeCorner(isNorth: false, isEast: true, p: p),
-                onDragEnd: (p) => _resizeCorner(isNorth: false, isEast: true, p: p),
-              ),
-              Marker(
-                markerId: const MarkerId('_sw'),
-                position: LatLng(editingBounds.south, editingBounds.west),
-                draggable: true,
-                icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueOrange),
-                onDrag: (p) => _resizeCorner(isNorth: false, isEast: false, p: p),
-                onDragEnd: (p) => _resizeCorner(isNorth: false, isEast: false, p: p),
-              ),
-            ]);
+                onDrag: (p) => _resizeToPoint(editingBounds, p),
+                onDragEnd: (p) => _resizeToPoint(editingBounds, p),
+              ));
+            }
           }
         }
 
@@ -666,7 +676,7 @@ class _PricingZonesPageState extends State<PricingZonesPage> {
                     borderRadius: BorderRadius.circular(10),
                   ),
                   child: const Text(
-                    'Σύρε τις πορτοκαλί γωνίες για μέγεθος/σχήμα · σύρε το κέντρο για μετακίνηση',
+                    'Πορτοκαλί γωνίες: μέγεθος/σχήμα · πράσινη λαβή: περιστροφή · κέντρο: μετακίνηση',
                     style: TextStyle(color: Colors.white, fontSize: 12),
                   ),
                 ),
@@ -677,12 +687,28 @@ class _PricingZonesPageState extends State<PricingZonesPage> {
     );
   }
 
-  List<LatLng> _rectPoints(_Bounds b) => [
-        LatLng(b.north, b.west),
-        LatLng(b.north, b.east),
-        LatLng(b.south, b.east),
-        LatLng(b.south, b.west),
-      ];
+  // Σημείο σε απόσταση (dxM ανατολικά, dyM βόρεια) από το κέντρο, ΜΕΤΑ από
+  // περιστροφή κατά deg μοίρες (δεξιόστροφα).
+  LatLng _offsetRotated(LatLng center, double dxM, double dyM, double deg) {
+    final rad = deg * math.pi / 180;
+    final rx = dxM * math.cos(rad) - dyM * math.sin(rad);
+    final ry = dxM * math.sin(rad) + dyM * math.cos(rad);
+    return LatLng(
+      center.latitude + _mToDegLat(ry),
+      center.longitude + _mToDegLng(rx, center.latitude),
+    );
+  }
+
+  List<LatLng> _rectPoints(_Bounds b, double rotationDeg) {
+    final c = b.center;
+    final hw = b.halfWidthM, hh = b.halfHeightM;
+    return [
+      _offsetRotated(c, -hw,  hh, rotationDeg), // ΒΔ
+      _offsetRotated(c,  hw,  hh, rotationDeg), // ΒΑ
+      _offsetRotated(c,  hw, -hh, rotationDeg), // ΝΑ
+      _offsetRotated(c, -hw, -hh, rotationDeg), // ΝΔ
+    ];
+  }
 
   Widget _buildPanel() {
     return DefaultTabController(
