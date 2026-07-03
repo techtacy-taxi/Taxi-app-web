@@ -2632,3 +2632,166 @@ exports.submitPublicBooking = onRequest(
     }
   }
 );
+
+// ════════════════════════════════════════════════════════════════════════════
+// PLACES / ROUTES / GEOCODING PROXY  (για την εφαρμογή — Android & Web admin)
+// ────────────────────────────────────────────────────────────────────────────
+// Η εφαρμογή (places_service.dart) ΔΕΝ καλεί πλέον τη Google απευθείας από
+// τον client. Λόγος: το Places API (New) καλείται με απλή HTTP/REST κλήση
+// (όχι μέσω του native Android SDK), και η Google ΔΕΝ μπορεί να επαληθεύσει
+// "Android apps" restriction (package+SHA-1) σε τέτοιες κλήσεις — άρα ένα
+// Android-restricted κλειδί απορρίπτει ΠΑΝΤΑ με 403, ενώ ένα unrestricted
+// κλειδί θα ήταν εκτεθειμένο στο APK.
+//
+// Λύση: οι 4 συναρτήσεις εδώ κάνουν proxy προς τη Google με το ΥΠΑΡΧΟΝ
+// server-side secret ROUTES_API_KEY (ίδιο με του estimatePrice). Το κλειδί
+// ΔΕΝ φεύγει ποτέ από τον server. Απαιτείται σύνδεση (Firebase Auth) — μόνο
+// οι χρήστες της εφαρμογής (οδηγοί/admin/master) μπορούν να τις καλέσουν.
+//
+// ⚠️ ΑΠΑΙΤΕΙΤΑΙ: στο GCP κλειδί που αντιστοιχεί στο secret ROUTES_API_KEY,
+// πρόσθεσε στα API restrictions και: "Places API (New)" + "Geocoding API"
+// (το "Routes API" μάλλον είναι ήδη ενεργό αφού το χρησιμοποιεί ήδη το
+// estimatePrice). Το κλειδί αυτό είναι ήδη server-side only, οπότε είναι
+// ασφαλές να έχει App restriction "None" — δεν εκτίθεται ποτέ σε client.
+// ════════════════════════════════════════════════════════════════════════════
+
+function requireSignedIn(request) {
+  const uid = request.auth && request.auth.uid;
+  if (!uid) throw new HttpsError("unauthenticated", "Απαιτείται σύνδεση.");
+  return uid;
+}
+
+// ── Αναζήτηση σημείων/οδών — Places API (New) :autocomplete ─────────────────
+exports.placesAutocomplete = onCall(
+  { secrets: [ROUTES_API_KEY] },
+  async (request) => {
+    requireSignedIn(request);
+    const input = s(request.data && request.data.input);
+    const sessionToken = request.data && request.data.sessionToken
+      ? String(request.data.sessionToken) : undefined;
+    if (input.length < 2) return { suggestions: [] };
+
+    const resp = await fetch("https://places.googleapis.com/v1/places:autocomplete", {
+      method: "POST",
+      headers: {
+        "Content-Type":   "application/json",
+        "X-Goog-Api-Key": ROUTES_API_KEY.value(),
+      },
+      body: JSON.stringify({
+        input,
+        languageCode: "el",
+        regionCode:   "gr",
+        includedRegionCodes: ["gr"],
+        ...(sessionToken ? { sessionToken } : {}),
+      }),
+    });
+    if (!resp.ok) {
+      console.error("placesAutocomplete error:", resp.status, await resp.text());
+      throw new HttpsError("internal", "Places autocomplete failed (" + resp.status + ")");
+    }
+    return await resp.json();
+  }
+);
+
+// ── Λεπτομέρειες σημείου → συντεταγμένες — Places API (New) GET /v1/places/{id}
+exports.placesDetails = onCall(
+  { secrets: [ROUTES_API_KEY] },
+  async (request) => {
+    requireSignedIn(request);
+    const placeId = s(request.data && request.data.placeId);
+    const sessionToken = request.data && request.data.sessionToken
+      ? String(request.data.sessionToken) : undefined;
+    if (!placeId) throw new HttpsError("invalid-argument", "Λείπει placeId.");
+
+    const qs = new URLSearchParams({ languageCode: "el" });
+    if (sessionToken) qs.set("sessionToken", sessionToken);
+
+    const resp = await fetch(
+      "https://places.googleapis.com/v1/places/" + encodeURIComponent(placeId) + "?" + qs.toString(),
+      {
+        headers: {
+          "X-Goog-Api-Key":   ROUTES_API_KEY.value(),
+          "X-Goog-FieldMask": "location,formattedAddress,displayName",
+        },
+      }
+    );
+    if (!resp.ok) {
+      console.error("placesDetails error:", resp.status, await resp.text());
+      throw new HttpsError("internal", "Place details failed (" + resp.status + ")");
+    }
+    return await resp.json();
+  }
+);
+
+// ── Διαδρομή οδήγησης (χλμ + λεπτά + polyline) — Routes API computeRoutes ───
+exports.placesRoute = onCall(
+  { secrets: [ROUTES_API_KEY] },
+  async (request) => {
+    requireSignedIn(request);
+    const d = request.data || {};
+    const fromLat = Number(d.fromLat), fromLng = Number(d.fromLng);
+    const toLat   = Number(d.toLat),   toLng   = Number(d.toLng);
+    if ([fromLat, fromLng, toLat, toLng].some((v) => !isFinite(v))) {
+      throw new HttpsError("invalid-argument", "Λείπουν συντεταγμένες.");
+    }
+    // departureTime: ISO string, ΜΟΝΟ αν είναι στο μέλλον (όπως στο Dart).
+    let useDeparture = false;
+    let departureIso = null;
+    if (d.departureTimeIso) {
+      const dep = new Date(d.departureTimeIso);
+      if (!isNaN(dep.getTime()) && dep.getTime() > Date.now()) {
+        useDeparture = true;
+        departureIso = dep.toISOString();
+      }
+    }
+
+    const resp = await fetch("https://routes.googleapis.com/directions/v2:computeRoutes", {
+      method: "POST",
+      headers: {
+        "Content-Type":     "application/json",
+        "X-Goog-Api-Key":   ROUTES_API_KEY.value(),
+        "X-Goog-FieldMask":
+          "routes.distanceMeters,routes.duration,routes.polyline.encodedPolyline",
+      },
+      body: JSON.stringify({
+        origin:      { location: { latLng: { latitude: fromLat, longitude: fromLng } } },
+        destination: { location: { latLng: { latitude: toLat,   longitude: toLng   } } },
+        travelMode:        "DRIVE",
+        routingPreference: useDeparture ? "TRAFFIC_AWARE_OPTIMAL" : "TRAFFIC_AWARE",
+        languageCode:      "el",
+        units:             "METRIC",
+        ...(useDeparture ? { departureTime: departureIso } : {}),
+      }),
+    });
+    if (!resp.ok) {
+      console.error("placesRoute error:", resp.status, await resp.text());
+      throw new HttpsError("internal", "Route calculation failed (" + resp.status + ")");
+    }
+    return await resp.json();
+  }
+);
+
+// ── Αντίστροφη γεωκωδικοποίηση: συντεταγμένες → διεύθυνση (Geocoding API) ───
+exports.placesReverseGeocode = onCall(
+  { secrets: [ROUTES_API_KEY] },
+  async (request) => {
+    requireSignedIn(request);
+    const lat = Number(request.data && request.data.lat);
+    const lng = Number(request.data && request.data.lng);
+    if (!isFinite(lat) || !isFinite(lng)) {
+      throw new HttpsError("invalid-argument", "Λείπουν συντεταγμένες.");
+    }
+    const qs = new URLSearchParams({
+      latlng: lat + "," + lng,
+      key:    ROUTES_API_KEY.value(),
+      language: "el",
+      region:   "gr",
+    });
+    const resp = await fetch("https://maps.googleapis.com/maps/api/geocode/json?" + qs.toString());
+    if (!resp.ok) {
+      console.error("placesReverseGeocode error:", resp.status, await resp.text());
+      throw new HttpsError("internal", "Reverse geocode failed (" + resp.status + ")");
+    }
+    return await resp.json();
+  }
+);

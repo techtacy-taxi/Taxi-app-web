@@ -9,75 +9,37 @@
 //  • Υπολογισμός απόστασης (ευθεία) με Haversine
 //  • Widget PlaceField — πεδίο "Από / Προς" με αναζήτηση Google
 //
-// ⚠️  ΠΡΟΣΟΧΗ — API KEY
-//  Δύο ΞΕΧΩΡΙΣΤΑ κλειδιά — ένα για κάθε πλατφόρμα, ώστε το καθένα να μπορεί
-//  να έχει το δικό του restriction στο Google Cloud Console:
-//    • Android app  → restriction "Android apps" (package name + SHA-1)
-//    • Web admin    → restriction "HTTP referrers" (τα domains σου)
-//  Χρειάζονται ενεργά: "Places API (New)" και "Directions API" (ή Routes API).
-//  Το ΠΑΛΙΟ κοινό/unrestricted κλειδί ΔΕΝ πρέπει να ξαναμπεί εδώ — μένει
-//  ΜΟΝΟ ως server-side secret (ROUTES_API_KEY στο Cloud Functions), ποτέ σε
-//  client κώδικα.
+// ⚠️  API KEY — ΠΩΣ ΔΟΥΛΕΥΕΙ ΤΩΡΑ (ΑΛΛΑΓΗ ΑΣΦΑΛΕΙΑΣ)
+//  Ο client (Android + web admin) ΔΕΝ καλεί πλέον τη Google απευθείας και
+//  ΔΕΝ κρατάει κανένα API key. Λόγος: το Places API (New) καλείται με απλή
+//  HTTP/REST κλήση (όχι μέσω του native Android SDK), και η Google ΔΕΝ
+//  μπορεί να επαληθεύσει "Android apps" restriction (package+SHA-1) σε
+//  τέτοιες κλήσεις — ένα Android-restricted κλειδί απορρίπτει πάντα με 403,
+//  ενώ ένα unrestricted κλειδί θα ήταν εκτεθειμένο μέσα στο APK.
+//
+//  Αντ' αυτού, όλες οι κλήσεις (autocomplete / place details / route /
+//  reverse geocode) περνάνε από 4 Cloud Functions — proxy προς τη Google με
+//  το κλειδί ΜΟΝΟ server-side (secret ROUTES_API_KEY, ίδιο με του
+//  estimatePrice). Απαιτείται σύνδεση (Firebase Auth) — δουλεύει ίδια σε
+//  Android ΚΑΙ web admin, αφού είναι το ίδιο κοινό αρχείο.
+//
+//  Cloud Functions (functions/index.js): placesAutocomplete, placesDetails,
+//  placesRoute, placesReverseGeocode.
 
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math' as math;
 
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
 
 import 'client_model.dart';
 import 'job_shared_widgets.dart';
 
-// Διαστρωματικά βοηθητικά (επιλέγονται αυτόματα ανά platform):
-//  • _platform_http : HTTP layer (dart:io σε κινητό, package:http σε web)
+// Διαστρωματικό βοηθητικό (επιλέγεται αυτόματα ανά platform):
 //  • _map_picker    : επιλογή σημείου στον χάρτη (GoogleMap σε κινητό,
 //                     μη διαθέσιμο σε web)
-import '../web/_platform_http.dart';
 import '../web/_map_picker.dart';
-
-// ─────────────────────────────────────────────────────────────────────────────
-// API KEY
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Κλειδί ΜΟΝΟ για την Android εφαρμογή — restriction "Android apps":
-/// package name com.example.my_taxi_app + SHA-1 του debug.keystore
-/// (89:ED:34:13:AF:7B:72:57:76:16:6C:9A:EB:25:AA:FC:1E:39:75:AC — το ίδιο
-/// keystore υπογράφει προς το παρόν και τα release APK, βλ. build.gradle.kts).
-///
-/// ΤΑ ΚΛΕΙΔΙΑ ΕΙΝΑΙ RESTRICTED (Android: package+SHA / Web: HTTP referrers),
-/// οπότε είναι ΑΣΦΑΛΕΣ να υπάρχουν εδώ — ακόμη κι αν φανούν, δεν χρησιμοποιούνται
-/// από αλλού. Μπορείς προαιρετικά να τα περάσεις και build-time χωρίς να
-/// αγγίξεις τον κώδικα, με:
-///   flutter build apk   --dart-define=ANDROID_MAPS_KEY=AIza...
-///   flutter build web   --dart-define=WEB_MAPS_KEY=AIza...
-/// Αν δεν δοθεί define, χρησιμοποιείται το προεπιλεγμένο (fallback) πιο κάτω.
-
-/// Κλειδί ΜΟΝΟ για την Android εφαρμογή — restriction "Android apps"
-/// (package name com.example.my_taxi_app + SHA-1). Places API (New) + Routes.
-/// 👉 ΒΑΛΕ ΕΔΩ το ΝΕΟ Android-restricted κλειδί (με Places+Routes+Geocoding).
-///    Το παρακάτω είναι το ήδη υπάρχον Android Maps-SDK κλειδί ως προσωρινό
-///    fallback — αν δεν έχει ενεργό Places/Routes, το autocomplete θα αποτύχει,
-///    γι' αυτό αντικατέστησέ το με το νέο κλειδί.
-const String _kGooglePlacesKeyAndroid = String.fromEnvironment(
-  'ANDROID_MAPS_KEY',
-  defaultValue: 'AIzaSyBkey_LttIk4F512hI66q5YcYzzOoTmBO4',
-);
-
-/// Κλειδί ΜΟΝΟ για το web admin — restriction "HTTP referrers"
-/// (taxi-app-web.pages.dev/* + taxiathenstransfers.com/*).
-const String _kGooglePlacesKeyWeb = String.fromEnvironment(
-  'WEB_MAPS_KEY',
-  defaultValue: 'AIzaSyBW2YdAX_5beQrjkKmNyykTMqRixc-K88Y',
-);
-
-/// Κλειδί για τις web υπηρεσίες (Places / Directions) — διαλέγεται αυτόματα
-/// ανά platform ώστε καθένα να δουλεύει ΜΟΝΟ από εκεί που πρέπει.
-const String kGoogleWebApiKey =
-    kIsWeb ? _kGooglePlacesKeyWeb : _kGooglePlacesKeyAndroid;
-
-/// Χώρα + γλώσσα για τα αποτελέσματα αναζήτησης.
-const String _kCountry  = 'gr';
-const String _kLanguage = 'el';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Μοντέλα
@@ -129,32 +91,32 @@ class RouteResult {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// PlacesService — κλήσεις προς Google (Places API New + Routes API)
+// PlacesService — κλήσεις προς τις Cloud Functions (proxy Places/Routes/Geocoding)
 // ─────────────────────────────────────────────────────────────────────────────
 
 class PlacesService {
   PlacesService._();
 
-  static Future<Map<String, dynamic>?> _request(
-    Uri uri, {
-    String method = 'GET',
-    Map<String, String> headers = const {},
-    Object? body,
-  }) async {
+  /// Καλεί μια callable Cloud Function και επιστρέφει το αποτέλεσμα ως
+  /// Map<String, dynamic> — με round-trip μέσω JSON ώστε να δουλεύει ομοιόμορφα
+  /// σε Android/iOS/web (το raw data ενός callable μπορεί να έρθει ως
+  /// Map<Object?, Object?> ανά platform).
+  static Future<Map<String, dynamic>> _call(
+    String name,
+    Map<String, dynamic> payload,
+  ) async {
     try {
-      return await platformJsonRequest(
-        uri,
-        method: method,
-        headers: headers,
-        body: body,
-      );
-    } on PlatformHttpException catch (e) {
-      // Διατηρούμε το ίδιο PlacesException interface για τον υπόλοιπο κώδικα.
-      throw PlacesException(e.status, e.message);
+      final callable = FirebaseFunctions.instanceFor(region: 'us-central1')
+          .httpsCallable(name);
+      final result = await callable.call(payload);
+      final decoded = jsonDecode(jsonEncode(result.data));
+      return (decoded as Map).cast<String, dynamic>();
+    } on FirebaseFunctionsException catch (e) {
+      throw PlacesException(e.code, e.message);
     }
   }
 
-  /// Αναζήτηση σημείων / οδών — Places API (New) :autocomplete.
+  /// Αναζήτηση σημείων / οδών — proxy Places API (New) :autocomplete.
   static Future<List<PlacePrediction>> autocomplete(
     String input, {
     String? sessionToken,
@@ -162,20 +124,10 @@ class PlacesService {
     final q = input.trim();
     if (q.length < 2) return [];
 
-    final uri = Uri.https('places.googleapis.com', '/v1/places:autocomplete');
-    final data = await _request(
-      uri,
-      method: 'POST',
-      headers: {'X-Goog-Api-Key': kGoogleWebApiKey},
-      body: {
-        'input':                q,
-        'languageCode':         _kLanguage,
-        'regionCode':           _kCountry,
-        'includedRegionCodes':  [_kCountry],
-        'sessionToken': ?sessionToken,
-      },
-    );
-    if (data == null) return [];
+    final data = await _call('placesAutocomplete', {
+      'input': q,
+      if (sessionToken != null) 'sessionToken': sessionToken,
+    });
 
     final suggestions = (data['suggestions'] as List? ?? []);
     final out = <PlacePrediction>[];
@@ -197,28 +149,16 @@ class PlacesService {
     return out;
   }
 
-  /// Λεπτομέρειες σημείου → συντεταγμένες — Places API (New) GET /v1/places/{id}.
+  /// Λεπτομέρειες σημείου → συντεταγμένες — proxy Places API (New) place details.
   static Future<PlacePick?> details(
     String placeId,
     String fallbackDescription, {
     String? sessionToken,
   }) async {
-    final uri = Uri.https(
-      'places.googleapis.com',
-      '/v1/places/$placeId',
-      {
-        'languageCode': _kLanguage,
-        'sessionToken': ?sessionToken,
-      },
-    );
-    final data = await _request(
-      uri,
-      headers: {
-        'X-Goog-Api-Key':   kGoogleWebApiKey,
-        'X-Goog-FieldMask': 'location,formattedAddress,displayName',
-      },
-    );
-    if (data == null) return null;
+    final data = await _call('placesDetails', {
+      'placeId': placeId,
+      if (sessionToken != null) 'sessionToken': sessionToken,
+    });
 
     final loc = data['location'] as Map<String, dynamic>?;
     if (loc == null) return null;
@@ -241,7 +181,7 @@ class PlacesService {
     );
   }
 
-  /// Διαδρομή οδήγησης μεταξύ δύο σημείων — Routes API computeRoutes.
+  /// Διαδρομή οδήγησης μεταξύ δύο σημείων — proxy Routes API computeRoutes.
   /// Επιστρέφει null αν αποτύχει — ο καλών κάνει fallback σε ευθεία.
   ///
   /// [departureTime] : αν δοθεί (π.χ. η ώρα ενός ραντεβού στο μέλλον), ο χρόνος
@@ -254,53 +194,19 @@ class PlacesService {
     required double toLng,
     DateTime? departureTime,
   }) async {
-    final uri =
-        Uri.https('routes.googleapis.com', '/directions/v2:computeRoutes');
     try {
-      // Το Routes API δέχεται departureTime μόνο για ΜΕΛΛΟΝΤΙΚΗ ώρα.
-      final now = DateTime.now();
-      final useDeparture =
-          departureTime != null && departureTime.isAfter(now);
-
-      final body = <String, dynamic>{
-        'origin': {
-          'location': {
-            'latLng': {'latitude': fromLat, 'longitude': fromLng},
-          },
-        },
-        'destination': {
-          'location': {
-            'latLng': {'latitude': toLat, 'longitude': toLng},
-          },
-        },
-        'travelMode':         'DRIVE',
-        // TRAFFIC_AWARE_OPTIMAL για ραντεβού (πρόβλεψη), TRAFFIC_AWARE για τώρα.
-        'routingPreference':
-            useDeparture ? 'TRAFFIC_AWARE_OPTIMAL' : 'TRAFFIC_AWARE',
-        'languageCode':       _kLanguage,
-        'units':              'METRIC',
-        if (useDeparture)
-          'departureTime': departureTime.toUtc().toIso8601String(),
-      };
-
-      final data = await _request(
-        uri,
-        method: 'POST',
-        headers: {
-          'X-Goog-Api-Key':   kGoogleWebApiKey,
-          'X-Goog-FieldMask':
-              'routes.distanceMeters,routes.duration,routes.polyline.encodedPolyline',
-        },
-        body: body,
-      );
-      if (data == null) return null;
+      final data = await _call('placesRoute', {
+        'fromLat': fromLat, 'fromLng': fromLng,
+        'toLat':   toLat,   'toLng':   toLng,
+        if (departureTime != null)
+          'departureTimeIso': departureTime.toUtc().toIso8601String(),
+      });
       final routes = data['routes'] as List? ?? [];
       if (routes.isEmpty) return null;
       final r0 = routes.first as Map<String, dynamic>;
       final meters = (r0['distanceMeters'] as num?)?.toDouble() ?? 0;
       if (meters <= 0) return null;
       final poly = r0['polyline']?['encodedPolyline'] as String?;
-      // duration έρχεται ως string δευτερολέπτων, π.χ. "1234s".
       final minutes = _parseDurationMinutes(r0['duration']);
       return RouteResult(
           km: meters / 1000.0, minutes: minutes, polyline: poly);
@@ -319,18 +225,11 @@ class PlacesService {
     return (secs / 60).round();
   }
 
-  /// Αντίστροφη γεωκωδικοποίηση: συντεταγμένες → διεύθυνση (Geocoding API).
+  /// Αντίστροφη γεωκωδικοποίηση: συντεταγμένες → διεύθυνση (proxy Geocoding API).
   /// Επιστρέφει null σε αποτυχία — ο καλών βάζει fallback περιγραφή.
   static Future<String?> reverseGeocode(double lat, double lng) async {
     try {
-      final uri = Uri.https('maps.googleapis.com', '/maps/api/geocode/json', {
-        'latlng':   '$lat,$lng',
-        'key':      kGoogleWebApiKey,
-        'language': _kLanguage,
-        'region':   _kCountry,
-      });
-      final data = await _request(uri);
-      if (data == null) return null;
+      final data = await _call('placesReverseGeocode', {'lat': lat, 'lng': lng});
       final results = data['results'] as List? ?? [];
       if (results.isEmpty) return null;
       final addr =
@@ -639,31 +538,21 @@ class _PlaceSearchSheetState extends State<_PlaceSearchSheet> {
     }
   }
 
-  // Μετατρέπει το σφάλμα του Google σε κατανοητό μήνυμα.
+  // Μετατρέπει το σφάλμα σε κατανοητό μήνυμα. Οι κλήσεις πλέον περνάνε από
+  // Cloud Function (proxy) — τα πιθανά σφάλματα είναι κυρίως σύνδεση/auth,
+  // όχι πια θέμα κλειδιού/restriction στη συσκευή.
   String _friendlyError(PlacesException e) {
-    final msg = (e.message ?? '').toLowerCase();
-    if (e.status.contains('403') ||
-        e.status == 'REQUEST_DENIED' ||
-        msg.contains('blocked') ||
-        msg.contains('referer') ||
-        msg.contains('not authorized') ||
-        msg.contains('permission')) {
-      return 'Το Google απέρριψε την αναζήτηση (403).\n\n'
-          'Το API key είναι κλειδωμένο. Στο Google Cloud Console:\n'
-          '• Application restrictions → "None" (ή χωρίς περιορισμό Android)\n'
-          '• API restrictions → να επιτρέπει "Places API (New)"\n'
-          '• Να υπάρχει ενεργή χρέωση (Billing) στο project.';
+    final code = e.status.toLowerCase();
+    if (code.contains('unauthenticated')) {
+      return 'Χρειάζεται ξανά σύνδεση στην εφαρμογή για αναζήτηση.';
     }
-    if (msg.contains('billing')) {
-      return 'Δεν είναι ενεργή η χρέωση (Billing) στο Google Cloud project.';
-    }
-    if (e.status == 'NETWORK') {
+    if (code.contains('unavailable') || code == 'network') {
       return 'Δεν υπάρχει σύνδεση για αναζήτηση.';
     }
     final detail = (e.message != null && e.message!.isNotEmpty)
         ? '\n${e.message}'
         : '';
-    return 'Σφάλμα αναζήτησης: ${e.status}$detail';
+    return 'Σφάλμα αναζήτησης.$detail';
   }
 
   Future<void> _pick(PlacePrediction p) async {
@@ -883,4 +772,3 @@ class _PlaceSearchSheetState extends State<_PlaceSearchSheet> {
     );
   }
 }
-
