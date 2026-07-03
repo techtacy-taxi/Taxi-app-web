@@ -252,6 +252,10 @@ class _PricingZonesPageState extends State<PricingZonesPage> {
         appBar: appBar,
         body: SafeArea(
           child: TabBarView(
+            // ΣΗΜΑΝΤΙΚΟ: χωρίς swipe αλλαγής tab — αλλιώς το σύρσιμο του
+            // δαχτύλου πάνω στον χάρτη άλλαζε κατά λάθος tab. Τα tabs
+            // αλλάζουν ΜΟΝΟ πατώντας το όνομά τους.
+            physics: const NeverScrollableScrollPhysics(),
             children: [
               _buildMap(isDesktop: false),
               _RoutesTab(db: _db),
@@ -582,7 +586,7 @@ class _PricingZonesPageState extends State<PricingZonesPage> {
                 }
               },
               myLocationButtonEnabled: false,
-              zoomControlsEnabled: true,
+              zoomControlsEnabled: false, // zoom με 2 δάχτυλα (κινητό) / ροδέλα (web)
             ),
             if (snap.connectionState == ConnectionState.active && zones.isEmpty)
               Positioned(
