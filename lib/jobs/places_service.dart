@@ -43,11 +43,32 @@ import '../web/_map_picker.dart';
 /// package name com.example.my_taxi_app + SHA-1 του debug.keystore
 /// (89:ED:34:13:AF:7B:72:57:76:16:6C:9A:EB:25:AA:FC:1E:39:75:AC — το ίδιο
 /// keystore υπογράφει προς το παρόν και τα release APK, βλ. build.gradle.kts).
-const String _kGooglePlacesKeyAndroid = 'ΒΑΛΕ_ΕΔΩ_ΤΟ_ΝΕΟ_ANDROID_KEY';
+///
+/// ΤΑ ΚΛΕΙΔΙΑ ΕΙΝΑΙ RESTRICTED (Android: package+SHA / Web: HTTP referrers),
+/// οπότε είναι ΑΣΦΑΛΕΣ να υπάρχουν εδώ — ακόμη κι αν φανούν, δεν χρησιμοποιούνται
+/// από αλλού. Μπορείς προαιρετικά να τα περάσεις και build-time χωρίς να
+/// αγγίξεις τον κώδικα, με:
+///   flutter build apk   --dart-define=ANDROID_MAPS_KEY=AIza...
+///   flutter build web   --dart-define=WEB_MAPS_KEY=AIza...
+/// Αν δεν δοθεί define, χρησιμοποιείται το προεπιλεγμένο (fallback) πιο κάτω.
 
-/// Κλειδί ΜΟΝΟ για το web admin — restriction "HTTP referrers":
-/// taxi-app-web.pages.dev/* (και το δικό σου custom domain αν υπάρχει).
-const String _kGooglePlacesKeyWeb = 'ΒΑΛΕ_ΕΔΩ_ΤΟ_ΝΕΟ_WEB_KEY';
+/// Κλειδί ΜΟΝΟ για την Android εφαρμογή — restriction "Android apps"
+/// (package name com.example.my_taxi_app + SHA-1). Places API (New) + Routes.
+/// 👉 ΒΑΛΕ ΕΔΩ το ΝΕΟ Android-restricted κλειδί (με Places+Routes+Geocoding).
+///    Το παρακάτω είναι το ήδη υπάρχον Android Maps-SDK κλειδί ως προσωρινό
+///    fallback — αν δεν έχει ενεργό Places/Routes, το autocomplete θα αποτύχει,
+///    γι' αυτό αντικατέστησέ το με το νέο κλειδί.
+const String _kGooglePlacesKeyAndroid = String.fromEnvironment(
+  'ANDROID_MAPS_KEY',
+  defaultValue: 'AIzaSyBkey_LttIk4F512hI66q5YcYzzOoTmBO4',
+);
+
+/// Κλειδί ΜΟΝΟ για το web admin — restriction "HTTP referrers"
+/// (taxi-app-web.pages.dev/* + taxiathenstransfers.com/*).
+const String _kGooglePlacesKeyWeb = String.fromEnvironment(
+  'WEB_MAPS_KEY',
+  defaultValue: 'AIzaSyBW2YdAX_5beQrjkKmNyykTMqRixc-K88Y',
+);
 
 /// Κλειδί για τις web υπηρεσίες (Places / Directions) — διαλέγεται αυτόματα
 /// ανά platform ώστε καθένα να δουλεύει ΜΟΝΟ από εκεί που πρέπει.
