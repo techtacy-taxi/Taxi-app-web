@@ -239,7 +239,7 @@ class _OpenJobsTabState extends State<_OpenJobsTab>
   final Set<String> _autoReturnHandled = {};
   bool _autoReturnRunning = false;
 
-  // Παρακολούθηση ραντεβού που πέρασαν >1 ώρα (αδιεκδίκητα) → διαγραφή μία φορά.
+  // Παρακολούθηση ραντεβού που πέρασαν >2 ώρες (αδιεκδίκητα) → διαγραφή μία φορά.
   final Set<String> _staleDeleteHandled = {};
   bool _staleDeleteRunning = false;
 
@@ -410,21 +410,27 @@ class _OpenJobsTabState extends State<_OpenJobsTab>
             if (snap.connectionState == ConnectionState.waiting) {
               return const JobListSkeleton(count: 4);
             }
-            // Βάση: ενεργές + δικαιώματα + επιλεγμένα φίλτρα
+            // Βάση: ενεργές + δικαιώματα + επιλεγμένα φίλτρα.
+            // Συμπεριλαμβάνει και ραντεβού που μαρκαρίστηκαν ήδη 'expired'
+            // (π.χ. τελείωσε η κλιμάκωση πριν φτάσει η ώρα τους) ώστε να ΜΗΝ
+            // εξαφανίζονται πριν προλάβει να τρέξει το auto-return/auto-delete.
             final base = (snap.data ?? [])
-                .where((j) => j.isOpen || j.isTaken || j.isBoarded)
+                .where((j) =>
+                    j.isOpen || j.isTaken || j.isBoarded ||
+                    (j.status == JobStatus.expired && j.scheduledAt != null))
                 .where(_baseVisible)
                 .where(_matchesFilters)
                 .toList();
 
             // ── AUTO-RETURN ληγμένων αδιεκδίκητων στις «Αποθηκευμένες» ──
-            // Αδιεκδίκητες που πέρασαν όλα τα στάδια & τον χρόνο, δεν είναι
-            // σταματημένες, και είναι δικές μου (ή master). Τις επαναφέρουμε.
+            // Αδιεκδίκητες που πέρασαν όλα τα στάδια & τον χρόνο (ή έχουν ήδη
+            // μαρκαριστεί 'expired' — isUnclaimedExpired πιάνει και τις δύο
+            // περιπτώσεις), δεν είναι σταματημένες, και είναι δικές μου (ή
+            // master). Τις επαναφέρουμε.
             final expired = (snap.data ?? [])
                 .where((j) =>
-                    j.isOpen &&
-                    !j.stopped &&
-                    j.isPastDeadline &&
+                    j.isUnclaimedExpired &&
+                    !(j.status == JobStatus.open && j.stopped) &&
                     (widget.isMaster || j.createdBy == widget.adminUid) &&
                     !_autoReturnHandled.contains(j.id))
                 .toList();
@@ -432,9 +438,10 @@ class _OpenJobsTabState extends State<_OpenJobsTab>
               _runAutoReturn(expired);
             }
 
-            // ── AUTO-DELETE ραντεβού που πέρασαν >1 ώρα & δεν αναλήφθηκαν ──
-            // Ανοιχτά ραντεβού των οποίων η ώρα πέρασε πάνω από 1 ώρα χωρίς να
-            // τα πάρει οδηγός → διαγράφονται οριστικά (δικά μου ή master).
+            // ── AUTO-DELETE ραντεβού που πέρασαν >2 ώρες & δεν αναλήφθηκαν ──
+            // Ανοιχτά (ή ήδη 'expired') ραντεβού των οποίων η ώρα πέρασε πάνω
+            // από 2 ώρες χωρίς να τα πάρει οδηγός → διαγράφονται οριστικά
+            // (δικά μου ή master).
             final stale = (snap.data ?? [])
                 .where((j) =>
                     j.isStaleSchedule &&
@@ -541,7 +548,7 @@ class _OpenJobsTabState extends State<_OpenJobsTab>
     }
   }
 
-  // Διαγραφή ραντεβού που πέρασαν >1 ώρα & δεν αναλήφθηκαν (μία φορά ανά εμφάνιση).
+  // Διαγραφή ραντεβού που πέρασαν >2 ώρες & δεν αναλήφθηκαν (μία φορά ανά εμφάνιση).
   Future<void> _runStaleDelete(List<Job> stale) async {
     if (_staleDeleteRunning) return;
     _staleDeleteRunning = true;

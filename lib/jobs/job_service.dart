@@ -254,19 +254,21 @@ class JobService {
   ///
   /// Επιστρέφει πόσες επαναφέρθηκαν. Καλείται από τον admin client όταν βλέπει
   /// τις Ανοιχτές — μία φορά ανά εμφάνιση ληγμένων (όχι σε κάθε tick).
-  /// Διαγράφει οριστικά ΑΝΟΙΧΤΑ ραντεβού των οποίων η ώρα πέρασε >1 ώρα και
-  /// δεν τα ανέλαβε κανείς οδηγός. Σε αντίθεση με το returnExpiredToSaved (που
-  /// επαναφέρει στις «Αποθηκευμένες»), εδώ η δουλειά φεύγει εντελώς — δεν έχει
-  /// νόημα να κρατηθεί draft για ραντεβού που πέρασε.
+  /// Διαγράφει οριστικά ΑΝΟΙΧΤΑ (ή ήδη 'expired') ραντεβού των οποίων η ώρα
+  /// πέρασε >2 ΩΡΕΣ και δεν τα ανέλαβε κανείς οδηγός. Σε αντίθεση με το
+  /// returnExpiredToSaved (που επαναφέρει στις «Αποθηκευμένες»), εδώ η
+  /// δουλειά φεύγει εντελώς — δεν έχει νόημα να κρατηθεί draft για ραντεβού
+  /// που πέρασε.
   ///
   /// Επιστρέφει πόσες διαγράφηκαν. Το transaction επαναβεβαιώνει μέσα του ότι η
-  /// δουλειά είναι ακόμη ανοιχτή & ληγμένη (αποφυγή race αν κάποιος μόλις την
+  /// δουλειά είναι ακόμη ληγμένο ραντεβού (αποφυγή race αν κάποιος μόλις την
   /// πήρε ή την επεξεργάστηκε).
   static Future<int> deleteStaleSchedules(List<Job> stale) async {
     if (stale.isEmpty) return 0;
     int deleted = 0;
     for (final j in stale) {
       try {
+        bool didDelete = false;
         await _fs.runTransaction((tx) async {
           final ref  = _fs.collection(_jobs).doc(j.id);
           final snap = await tx.get(ref);
@@ -274,37 +276,47 @@ class JobService {
           final fresh = Job.fromDoc(snap);
           if (!fresh.isStaleSchedule) return; // ξαναελέγχουμε με φρέσκα δεδομένα
           tx.delete(ref);
+          didDelete = true;
         });
-        deleted++;
+        if (didDelete) deleted++;
       } catch (_) {/* αγνόησε — θα ξαναπροσπαθήσει στο επόμενο φόρτωμα */}
     }
     return deleted;
   }
 
+  /// Πιάνει ΚΑΙ τις δουλειές που είναι ακόμη 'open' & isPastDeadline, ΚΑΙ
+  /// αυτές που έχουν ήδη μαρκαριστεί 'expired' (isUnclaimedExpired) — έτσι
+  /// καμία δεν μένει «κολλημένη»/αόρατη αν το ticker της κάρτας πρόλαβε να
+  /// γράψει το status πριν προλάβει να τρέξει αυτό εδώ.
+  /// Οι δουλειές που επιστρέφουν έτσι αποθηκεύονται ως draft με
+  /// autoReturned=true, ώστε να διαγράφονται αυτόματα 24 ώρες αργότερα αν
+  /// δεν τις ξαναστείλει ο admin (δες SavedJobService/SavedJob.expiresAt).
   static Future<int> returnExpiredToSaved(List<Job> expired) async {
     if (expired.isEmpty) return 0;
     int moved = 0;
     for (final j in expired) {
       try {
-        bool deleted = false;
+        Job? deletedJob;
         await _fs.runTransaction((tx) async {
           final ref  = _fs.collection(_jobs).doc(j.id);
           final snap = await tx.get(ref);
           if (!snap.exists) return;
           final fresh = Job.fromDoc(snap);
           // Επαναβεβαίωση μέσα στο transaction (μπορεί κάποιος να την πήρε)
-          if (fresh.status != JobStatus.open) return;
-          if (fresh.stopped) return;
-          if (!fresh.isPastDeadline) return;
+          if (!fresh.isUnclaimedExpired) return;
+          // Αν είναι ακόμη 'open', σεβάσου το stopped (ο admin τη σταμάτησε
+          // σκόπιμα — μένει στις ανοιχτές του, δεν επιστρέφει μόνη της).
+          if (fresh.status == JobStatus.open && fresh.stopped) return;
           tx.delete(ref);
-          deleted = true;
+          deletedJob = fresh;
         });
-        // Αν διαγράφηκε, αποθήκευσέ την ως draft
-        if (deleted) {
+        // Αν διαγράφηκε, αποθήκευσέ την ως draft (autoReturned → 24ωρη λήξη)
+        if (deletedJob != null) {
           await SavedJobService.save(
-            j,
-            ownerUid:  j.createdBy,
-            ownerName: j.createdByName,
+            deletedJob!,
+            ownerUid:     deletedJob!.createdBy,
+            ownerName:    deletedJob!.createdByName,
+            autoReturned: true,
           );
           moved++;
         }

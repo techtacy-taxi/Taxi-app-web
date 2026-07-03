@@ -126,7 +126,7 @@ class PlacesService {
 
     final data = await _call('placesAutocomplete', {
       'input': q,
-      if (sessionToken != null) 'sessionToken': sessionToken,
+      'sessionToken': ?sessionToken,
     });
 
     final suggestions = (data['suggestions'] as List? ?? []);
@@ -157,7 +157,7 @@ class PlacesService {
   }) async {
     final data = await _call('placesDetails', {
       'placeId': placeId,
-      if (sessionToken != null) 'sessionToken': sessionToken,
+      'sessionToken': ?sessionToken,
     });
 
     final loc = data['location'] as Map<String, dynamic>?;

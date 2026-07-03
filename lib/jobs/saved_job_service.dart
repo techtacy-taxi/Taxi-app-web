@@ -11,8 +11,11 @@
 //
 // Κανόνες αυτόματου σβησίματος (γίνονται client-side κατά το φόρτωμα — ΚΑΝΕΝΑ
 // επιπλέον write αν δεν χρειάζεται, σεβόμενοι το 100m όριο):
-//   • 1 μήνας από το savedAt, Ή
-//   • 1 μέρα μετά το ραντεβού (scheduledAt), όποιο έρθει πρώτο.
+//   • Αν autoReturned == true (δηλ. η δουλειά ΓΥΡΙΣΕ ΜΟΝΗ ΤΗΣ εδώ επειδή δεν
+//     την πήρε κανείς οδηγός — δες JobService.returnExpiredToSaved): 24 ΩΡΕΣ
+//     από το savedAt.
+//   • Αλλιώς (χειροκίνητο draft του admin): 1 μήνας από το savedAt, Ή
+//     1 μέρα μετά το ραντεβού (scheduledAt), όποιο έρθει πρώτο.
 //
 // Ορατότητα:
 //   • admin  → μόνο δικές του (ownerUid == adminUid)
@@ -30,6 +33,7 @@ class SavedJob {
   final String?  calendarEventId; // αν προήλθε από συμβάν ημερολογίου
   final String?  lastEditedByName; // ποιος την άγγιξε τελευταίος (αν ξένος)
   final String?  origin;           // π.χ. 'public_form' = ήρθε από τη φόρμα site
+  final bool     autoReturned;     // true = γύρισε μόνη της (αδιεκδίκητη, όχι χειροκίνητο draft)
 
   const SavedJob({
     required this.id,
@@ -40,6 +44,7 @@ class SavedJob {
     this.calendarEventId,
     this.lastEditedByName,
     this.origin,
+    this.autoReturned = false,
   });
 
   /// True αν η δουλειά δημιουργήθηκε από τη δημόσια φόρμα της ιστοσελίδας.
@@ -58,11 +63,20 @@ class SavedJob {
       calendarEventId: d['calendarEventId'] as String?,
       lastEditedByName: d['lastEditedByName'] as String?,
       origin:   d['origin'] as String?,
+      autoReturned: d['autoReturned'] == true,
     );
   }
 
-  // Πότε λήγει (όποιο έρθει πρώτο: 1 μήνας από αποθήκευση, ή 1 μέρα μετά ραντεβού)
+  // Πότε λήγει:
+  //  • autoReturned == true (αδιεκδίκητη δουλειά που γύρισε μόνη της):
+  //    24 ΩΡΕΣ από το savedAt — δεν έχει νόημα να μένει draft για πολύ μια
+  //    δουλειά που ήδη «χάθηκε» μία φορά.
+  //  • Χειροκίνητο draft: όποιο έρθει πρώτο: 1 μήνας από αποθήκευση, ή 1 μέρα
+  //    μετά το ραντεβού.
   DateTime get expiresAt {
+    if (autoReturned) {
+      return savedAt.add(const Duration(hours: 24));
+    }
     final monthCutoff = DateTime(
         savedAt.year, savedAt.month + 1, savedAt.day,
         savedAt.hour, savedAt.minute);
@@ -87,12 +101,14 @@ class SavedJobService {
     required String ownerUid,
     required String ownerName,
     String? calendarEventId,
+    bool autoReturned = false,
   }) async {
     final map = draft.toMap();
     // Το toMap βάζει createdAt = serverTimestamp· κρατάμε ξεχωριστό savedAt.
     map['ownerUid']  = ownerUid;
     map['ownerName'] = ownerName;
     map['savedAt']   = FieldValue.serverTimestamp();
+    map['autoReturned'] = autoReturned;
     if (calendarEventId != null && calendarEventId.isNotEmpty) {
       map['calendarEventId'] = calendarEventId;
     }

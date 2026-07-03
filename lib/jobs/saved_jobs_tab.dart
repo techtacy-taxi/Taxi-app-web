@@ -666,6 +666,28 @@ class _SavedJobCard extends StatelessWidget {
                   ]),
                 ),
               ],
+              // Badge ΑΔΙΕΚΔΙΚΗΤΗ (πάνω-πάνω) — γύρισε μόνη της, κανείς οδηγός
+              // δεν την πήρε· διαγράφεται αυτόματα 24 ώρες μετά την επιστροφή.
+              if (saved.autoReturned) ...[
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 12, vertical: 6),
+                  margin: const EdgeInsets.only(bottom: 8),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade700,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Row(mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                    Icon(Icons.undo_rounded, color: Colors.white, size: 16),
+                    SizedBox(width: 6),
+                    Text('ΑΔΙΕΚΔΙΚΗΤΗ · ΔΙΑΓΡΑΦΗ ΣΕ 24Ω', style: TextStyle(
+                        color: Colors.white, fontSize: 12,
+                        fontWeight: FontWeight.w900, letterSpacing: 1)),
+                  ]),
+                ),
+              ],
               // Badge ΕΠΙΣΤΡΟΦΗ (πάνω-πάνω)
               if (isReturn) ...[
                 Container(
@@ -803,7 +825,10 @@ class _SavedJobCard extends StatelessWidget {
                   const Spacer(),
                 Icon(Icons.auto_delete_rounded, size: 13, color: Colors.grey[400]),
                 const SizedBox(width: 4),
-                Text('λήγει ${DateFormat('dd/MM').format(expires)}',
+                Text(
+                    saved.autoReturned
+                        ? 'λήγει ${DateFormat('dd/MM HH:mm').format(expires)}'
+                        : 'λήγει ${DateFormat('dd/MM').format(expires)}',
                     style: TextStyle(fontSize: 11, color: Colors.grey[500])),
               ]),
               if (saved.lastEditedByName != null &&

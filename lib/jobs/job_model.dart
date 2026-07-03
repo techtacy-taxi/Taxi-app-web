@@ -376,9 +376,19 @@ class Job {
       DateTime.now().isAfter(_deadline);
 
   // Έχει περάσει οριστικά η προθεσμία (τελευταίο στάδιο & έληξε ο χρόνος).
+  //
+  // ΑΣΦΑΛΙΣΤΙΚΗ ΔΙΚΛΕΙΔΑ: μια ΑΜΕΣΗ δουλειά (χωρίς ραντεβού) ΔΕΝ μένει ανοιχτή
+  // πάνω από 1 ΩΡΑ από τη δημιουργία της, ό,τι κι αν ορίζει η κλιμάκωση/
+  // timeoutMins (π.χ. αν ο admin έχει βάλει μεγάλο timeout ανά στάδιο). Έτσι
+  // ο owner ξέρει σίγουρα ότι μέσα σε 1 ώρα η δουλειά είτε θα αναληφθεί είτε
+  // θα επιστρέψει στις «Αποθηκευμένες».
   bool get isPastDeadline {
     if (!isOpen) return false;
     if (stopped) return false;        // σταματημένη → μένει στις ανοιχτές του admin
+    if (scheduledAt == null &&
+        DateTime.now().isAfter(createdAt.add(const Duration(hours: 1)))) {
+      return true;
+    }
     if (needsStageAdvance) return false;
     return DateTime.now().isAfter(_deadline);
   }
@@ -386,14 +396,25 @@ class Job {
   // Συμβατότητα με παλιό κώδικα
   bool get isTimedOut => isPastDeadline;
 
-  // ΑΝΟΙΧΤΟ ραντεβού του οποίου η ΩΡΑ (scheduledAt) πέρασε πάνω από 1 ώρα και
-  // δεν το ανέλαβε κανείς οδηγός → προς διαγραφή. (Διαφέρει από το
-  // isPastDeadline, που αφορά τη λήξη του χρόνου διεκδίκησης/escalation.)
+  // Αδιεκδίκητη δουλειά που είτε (α) πέρασε οριστικά την προθεσμία της ενώ
+  // είναι ακόμη 'open' (isPastDeadline), είτε (β) έχει ήδη μαρκαριστεί ως
+  // 'expired' (π.χ. από το ticker της κάρτας, που ενδέχεται να προλάβει να
+  // γράψει το status ΠΡΙΝ προλάβει να τρέξει το auto-return). Το auto-return
+  // πρέπει να πιάνει ΚΑΙ τις δύο περιπτώσεις, αλλιώς η δουλειά μένει
+  // «κολλημένη» ως 'expired' και εξαφανίζεται χωρίς ποτέ να επιστρέψει στις
+  // «Αποθηκευμένες».
+  bool get isUnclaimedExpired => status == JobStatus.expired || isPastDeadline;
+
+  // ΑΝΟΙΧΤΟ (ή ήδη μαρκαρισμένο 'expired') ραντεβού του οποίου η ΩΡΑ
+  // (scheduledAt) πέρασε πάνω από 2 ΩΡΕΣ και δεν το ανέλαβε κανείς οδηγός →
+  // προς οριστική διαγραφή. (Διαφέρει από το isPastDeadline, που αφορά τη
+  // λήξη του χρόνου διεκδίκησης/escalation.)
   bool get isStaleSchedule {
-    if (!isOpen) return false;               // αναληφθείσα/ολοκληρωμένη → όχι
+    // αναληφθείσα/ολοκληρωμένη → όχι
+    if (status != JobStatus.open && status != JobStatus.expired) return false;
     final sched = scheduledAt;
     if (sched == null) return false;         // άμεση (χωρίς ραντεβού) → όχι
-    return DateTime.now().isAfter(sched.add(const Duration(hours: 1)));
+    return DateTime.now().isAfter(sched.add(const Duration(hours: 2)));
   }
 
   // Πόσα δευτερόλεπτα απομένουν στο τρέχον στάδιο
