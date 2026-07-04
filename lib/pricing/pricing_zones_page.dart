@@ -29,7 +29,6 @@
 // Android εφαρμογή (menu χάρτη, μόνο master) — ίδιο widget, ίδιο lib/.
 
 import 'dart:math' as math;
-import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:cloud_firestore/cloud_firestore.dart';
