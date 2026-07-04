@@ -2328,10 +2328,13 @@ async function computeEstimate({
       const perKmNow = pick(perKmField, useGreek);
       const perMinNow = pick("perMin", useGreek);
       const luggagePerNow = pick("luggagePer", useGreek);
-      const seatPriceNow = pick("seatPrice", useGreek);
       const vanPctNow = pick("vanPct", useGreek);
       let p = base + distanceKm * perKmNow + durationMin * perMinNow;
-      p += luggage * luggagePerNow + childSeatCount * seatPriceNow;
+      p += luggage * luggagePerNow;
+      // ΣΗΜΕΙΩΣΗ: η επιβάρυνση παιδικού καθίσματος ΔΕΝ μπαίνει εδώ πια —
+      // προστίθεται ξεχωριστά, ΠΑΝΤΑ σταθερή, ΜΕΤΑ την ελάχιστη χρέωση
+      // (βλ. seatFeeOwn/seatFeeOther παρακάτω), ώστε να μην «χάνεται» μέσα
+      // στην ελάχιστη χρέωση όταν η βασική τιμή είναι μικρή.
       if (vehicle === "van") p = p * (1 + vanPctNow / 100);
       return p;
     }
@@ -2339,6 +2342,12 @@ async function computeEstimate({
     basePrice = dynamicPrice(isGreek);
     baseOtherPrice = dynamicPrice(!isGreek); // πάντα υπολογίζεται, ώστε να δείχνεται σωστή έκπτωση
   }
+
+  // ── Επιβάρυνση παιδικού καθίσματος — ΠΑΝΤΑ σταθερή (π.χ. +7€/κάθισμα),
+  // ΔΕΝ επηρεάζεται από νυχτερινή προσαύξηση ούτε απορροφάται από την
+  // ελάχιστη χρέωση. Προστίθεται στο τέλος, πάνω από ό,τι κι αν προκύψει.
+  const seatFeeOwn   = childSeatCount * pick("seatPrice", isGreek);
+  const seatFeeOther = childSeatCount * pick("seatPrice", !isGreek);
 
   // ── Νυχτερινό — για ζώνες κοινό ποσοστό (η διαφοροποίηση Έλληνα/ξένου
   // γίνεται ήδη μέσω taxi/taxiForeign στη διαδρομή), για δυναμικό τύπο ανά
@@ -2367,6 +2376,12 @@ async function computeEstimate({
     price = Math.max(price, minOwn);
     referencePriceRaw = Math.max(referencePriceRaw, minOther);
   }
+
+  // ── Επιβάρυνση παιδικού καθίσματος πάνω από ΟΤΙΔΗΠΟΤΕ έχει προκύψει μέχρι
+  // τώρα (ζωνική τιμή, δυναμικός τύπος, ή ελάχιστη χρέωση) — σταθερή,
+  // ανεξάρτητη από νυχτερινό/ελάχιστο, όπως ζητήθηκε.
+  price += seatFeeOwn;
+  referencePriceRaw += seatFeeOther;
 
   price = Math.floor(price);
   const referencePrice = Math.floor(referencePriceRaw);
