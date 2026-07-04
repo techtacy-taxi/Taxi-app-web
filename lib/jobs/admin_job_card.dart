@@ -154,9 +154,33 @@ class AdminJobCard extends StatelessWidget {
             ),
           ],
           const SizedBox(height: 8),
+          // ── Ταινία «ΠΡΟΠΛΗΡΩΜΕΝΗ» — μόνο όταν πληρώθηκε ΟΛΟΚΛΗΡΗ η τιμή
+          // online (όχι απλή προκαταβολή 10%). Ίδιο στυλ με τη μπάρα
+          // «Ραντεβού» (πλήρους πλάτους, γεμάτο χρώμα) αλλά μοβ + τρίγωνο,
+          // ώστε να ξεχωρίζει αμέσως με την πρώτη ματιά. ΜΟΝΟ ο master το βλέπει.
+          if (isMaster && job.fullyPaid) ...[
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+              margin: const EdgeInsets.only(bottom: 8),
+              decoration: BoxDecoration(
+                color: const Color(0xFF4527A0),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(children: [
+                const Icon(Icons.warning_amber_rounded, size: 16, color: Colors.white),
+                const SizedBox(width: 8),
+                Text(
+                  'ΠΡΟΠΛΗΡΩΜΕΝΗ · ${job.depositAmount.toStringAsFixed(2)}€ (Viva)',
+                  style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w900,
+                      color: Colors.white, letterSpacing: .5),
+                ),
+              ]),
+            ),
+          ],
           // Badge προκαταβολής μέσω Viva — ΜΟΝΟ ο master το βλέπει (ο admin/
           // οδηγός δεν χρειάζεται αυτή την οικονομική λεπτομέρεια εδώ).
-          if (isMaster && job.depositPaid) ...[
+          if (isMaster && job.depositPaid && !job.fullyPaid) ...[
             Container(
               width: double.infinity,
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
@@ -170,9 +194,7 @@ class AdminJobCard extends StatelessWidget {
                 const Icon(Icons.verified_rounded, size: 15, color: Color(0xFF1E8E3E)),
                 const SizedBox(width: 6),
                 Text(
-                  job.fullyPaid
-                      ? 'Πληρώθηκε ΟΛΟΚΛΗΡΗ η τιμή ${job.depositAmount.toStringAsFixed(2)}€ (Viva)'
-                      : 'Πληρώθηκε προκαταβολή ${job.depositAmount.toStringAsFixed(2)}€ (Viva)',
+                  'Πληρώθηκε προκαταβολή ${job.depositAmount.toStringAsFixed(2)}€ (Viva)',
                   style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700,
                       color: Color(0xFF1E8E3E)),
                 ),

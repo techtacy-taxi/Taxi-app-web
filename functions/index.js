@@ -1792,6 +1792,42 @@ exports.onJobBilling = onDocumentUpdated("jobs/{jobId}", async (event) => {
     const commission    = Number(job.commission)    || 0;
     const appCommission = Number(job.appCommission) || 0;
 
+    // ── ΕΙΔΙΚΗ ΠΕΡΙΠΤΩΣΗ: δουλειά πλήρως προπληρωμένη online (Viva) ──
+    // Ο οδηγός ΔΕΝ εισέπραξε τίποτα σε μετρητά (όλο το ποσό είναι ήδη στον
+    // master). Άρα ΔΕΝ ισχύει η κανονική ροή «ο οδηγός χρωστάει προμήθεια» —
+    // αντίστροφα, ο master χρωστάει στον οδηγό το κέρδος του
+    // (τιμή − commission − appCommission), ως ΠΙΣΤΩΣΗ (αρνητικό appDebt).
+    if (job.fullyPaid === true) {
+      const driverEarning = price - Math.max(commission, 0) - Math.max(appCommission, 0);
+      const driverRef = db.collection("presence").doc(driverUid);
+      // ΔΕΝ αγγίζουμε turnover (ο οδηγός δεν εισέπραξε μετρητά)· μόνο πίστωση.
+      if (driverEarning !== 0) {
+        tx.update(driverRef, { appDebt: FieldValue.increment(-driverEarning) });
+        tx.set(db.collection("billing_tx").doc(), {
+          uid:           driverUid,
+          uidName:       job.takenByName || "",
+          monthKey:      _monthKeyJS(job.doneAt ? job.doneAt.toDate() : new Date()),
+          type:          "credit",
+          sourceId:      job.sourceId   || "",
+          sourceName:    job.sourceName || "Standard Rate",
+          adminUid:      job.createdBy,
+          adminName:     job.createdByName,
+          collectorUid:  collector.uid,
+          collectorName: collector.name,
+          jobId:         String(jobId),
+          note:          `Πλήρης προπληρωμή online — ${job.from || ""} → ${job.to || ""}`,
+          voided:        false,
+          createdAt:     FieldValue.serverTimestamp(),
+          createdBy:     "SYSTEM",
+          category:      "fully_prepaid_payout",
+          amount:        -driverEarning, // αρνητικό = πίστωση προς τον οδηγό
+          recipientUid:  driverUid,
+          recipientName: job.takenByName || "",
+        });
+      }
+      return { ok: true, billed: -driverEarning, fullyPrepaid: true };
+    }
+
     const selfPosted   = job.createdBy === driverUid;
     // ΑΡΝΗΤΙΚΟ γιαούρτι = ο διαχειριστής χρωστάει στον οδηγό → μειώνει appDebt.
     // Γι' αυτό ελέγχουμε != 0 (όχι > 0).
@@ -2975,6 +3011,12 @@ exports.createVivaOrder = onRequest(
         return res.status(400).json({ ok: false, error: "invalid_amount" });
       }
 
+      // ── Αποθηκευμένη τιμή της δουλειάς = αρχική τιμή ΜΕΙΟΝ την προκαταβολή
+      // (πάντα, είτε πλήρωσε 10% είτε ολόκληρο το ποσό). Η προκαταβολή είναι
+      // το πάγιο περιθώριο του master· η υπόλοιπη τιμή μπαίνει στο κανονικό
+      // κύκλωμα προμηθειών/κέρδους οδηγού, όπως πριν.
+      const jobPrice = Math.max(0, estimate.price - depositEur);
+
       // ── Αποθήκευση της «εκκρεμούς» κράτησης (ΔΕΝ είναι ακόμα saved_jobs) ──
       const db = getFirestore();
       const pendingRef = await db.collection("pending_bookings").add({
@@ -2984,7 +3026,7 @@ exports.createVivaOrder = onRequest(
         flightOrShip: flight, persons, luggage, childSeatCount,
         vehicleType, note, lang,
         date, time,
-        price: estimate.price,
+        price: jobPrice,
         depositAmount: depositEur,
         fullyPaid: payFull,
         createdAt: FieldValue.serverTimestamp(),
