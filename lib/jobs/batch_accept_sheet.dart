@@ -266,8 +266,8 @@ class _BatchAcceptSheetState extends State<_BatchAcceptSheet> {
           ]),
         ),
         const SizedBox(width: 8),
-        // τιμή
-        Text('${job.price.toStringAsFixed(2)}€',
+        // τιμή (ή υπόλοιπο προς είσπραξη αν πληρώθηκε προκαταβολή)
+        Text('${job.remainingToCollect.toStringAsFixed(2)}€',
             style: const TextStyle(
                 fontSize: 15, fontWeight: FontWeight.bold,
                 color: Color(0xFF1E8E3E))),

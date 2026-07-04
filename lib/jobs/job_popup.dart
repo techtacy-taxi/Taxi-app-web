@@ -522,8 +522,8 @@ class _JobPopupContentState extends State<_JobPopupContent>
                 Row(children: [
                   Expanded(child: _infoCell(
                     icon:  Icons.euro_rounded,
-                    label: 'Τιμή',
-                    value: '${job.price.toStringAsFixed(2)}€',
+                    label: job.depositPaid ? 'Να εισπράξεις' : 'Τιμή',
+                    value: '${job.remainingToCollect.toStringAsFixed(2)}€',
                     color: const Color(0xFF1E8E3E),
                     large: true,
                   )),
@@ -542,6 +542,29 @@ class _JobPopupContentState extends State<_JobPopupContent>
                     large: true,
                   )),
                 ]),
+                // Σημείωση προκαταβολής — ώστε ο οδηγός να καταλάβει γιατί το
+                // ποσό που θα εισπράξει είναι μικρότερο από τη συνολική τιμή.
+                if (job.depositPaid) ...[
+                  const SizedBox(height: 8),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+                    decoration: BoxDecoration(
+                      color: Colors.blue.shade50,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.blue.shade200),
+                    ),
+                    child: Row(children: [
+                      Icon(Icons.info_outline_rounded, size: 15, color: Colors.blue.shade700),
+                      const SizedBox(width: 7),
+                      Expanded(child: Text(
+                        'Ο πελάτης έχει ήδη πληρώσει προκαταβολή ${job.depositAmount.toStringAsFixed(2)}€ online. '
+                        'Συνολική τιμή διαδρομής: ${job.price.toStringAsFixed(2)}€.',
+                        style: TextStyle(fontSize: 11.5, color: Colors.blue.shade900),
+                      )),
+                    ]),
+                  ),
+                ],
                 const SizedBox(height: 12),
 
                 // Χαρακτηριστικά διαδρομής

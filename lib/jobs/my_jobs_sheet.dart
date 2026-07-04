@@ -132,7 +132,7 @@ class _CalendarPickerDialogState extends State<_CalendarPickerDialog> {
   }
 
   String _subtitle(Job j) {
-    final price = '${j.price.toStringAsFixed(2)}€';
+    final price = '${j.remainingToCollect.toStringAsFixed(2)}€';
     if (j.scheduledAt != null) {
       return '${DateFormat('dd/MM  HH:mm').format(j.scheduledAt!)} · $price';
     }
@@ -998,8 +998,14 @@ class MyJobTile extends StatelessWidget {
                 const SizedBox(height: 6),
                 Wrap(spacing: 6, runSpacing: 4, children: [
                   _chip(Icons.euro_rounded,
-                      '${job.price.toStringAsFixed(2)}€',
+                      job.depositPaid
+                          ? 'Είσπραξη ${job.remainingToCollect.toStringAsFixed(2)}€'
+                          : '${job.price.toStringAsFixed(2)}€',
                       const Color(0xFF1E8E3E)),
+                  if (job.depositPaid)
+                    _chip(Icons.verified_rounded,
+                        'Προπληρώθηκε ${job.depositAmount.toStringAsFixed(2)}€',
+                        Colors.blue.shade700),
                   if (job.commission > 0)
                     _chip(Icons.handshake_rounded,
                         '-${job.commission.toStringAsFixed(2)}€'

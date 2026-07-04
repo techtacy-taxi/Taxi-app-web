@@ -347,6 +347,11 @@ class JobDetailsSheet extends StatelessWidget {
               Text('${job.price.toStringAsFixed(2)}€', style: const TextStyle(
                   fontSize: 22, fontWeight: FontWeight.bold,
                   color: Color(0xFF1E8E3E))),
+              if (job.depositPaid)
+                Text('Υπόλοιπο ${job.remainingToCollect.toStringAsFixed(2)}€ '
+                     '(προπληρώθηκε ${job.depositAmount.toStringAsFixed(2)}€)',
+                    style: TextStyle(fontSize: 11.5,
+                        color: Colors.blue.shade700, fontWeight: FontWeight.w700)),
               if (job.commission > 0)
                 Text('-${job.commission.toStringAsFixed(2)}€ γιαούρτι',
                     style: TextStyle(fontSize: 12,

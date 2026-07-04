@@ -2853,3 +2853,356 @@ exports.placesReverseGeocode = onCall(
     return await resp.json();
   }
 );
+
+// ════════════════════════════════════════════════════════════════════════════
+//  VIVA SMART CHECKOUT — 10% προκαταβολή στη δημόσια φόρμα κράτησης
+//
+//  Ροή:
+//   1) Η φόρμα (el/booking.html) στέλνει τα στοιχεία κράτησης στο createVivaOrder.
+//   2) Εδώ ΞΑΝΑ-υπολογίζουμε την τιμή server-side (ίδια λογική με το
+//      submitPublicBooking) — ΠΟΤΕ δεν εμπιστευόμαστε τιμή που στέλνει ο client.
+//   3) Αποθηκεύουμε τα στοιχεία της κράτησης σε pending_bookings/{id} με
+//      status:'pending' — η δουλειά ΔΕΝ μπαίνει ακόμα στα saved_jobs.
+//   4) Δημιουργούμε Viva payment order για το 10% (στρογγυλοποιημένο στο
+//      επόμενο ευρώ) και επιστρέφουμε το checkoutUrl στον client.
+//   5) Ο πελάτης πληρώνει στη Viva. Η Viva καλεί το webhook vivaWebhook.
+//   6) ΜΟΝΟ όταν το webhook επιβεβαιώσει επιτυχημένη πληρωμή, δημιουργούμε
+//      την πραγματική δουλειά στα saved_jobs (ό,τι έκανε πριν το
+//      submitPublicBooking) + email + FCM στον master.
+//   7) Αν ο πελάτης ΔΕΝ πληρώσει (κλείσει τη σελίδα, απορριφθεί η κάρτα,
+//      λήξει το paymentTimeout), ΔΕΝ αποθηκεύεται ΤΙΠΟΤΑ — όπως ζητήθηκε.
+//      Ο μόνος καθαρισμός που χρειάζεται είναι να σβήνονται periodically τα
+//      pending_bookings που έμειναν 'pending' πάνω από π.χ. 2 ώρες (μπορεί να
+//      προστεθεί αργότερα σε κάποιο υπάρχον scheduled cleanup — δεν το
+//      προσθέτω εδώ για να μην πολλαπλασιάζω τα scheduled functions άσκοπα).
+//
+//  ⚠️ ΠΡΙΝ ΤΟ DEPLOY χρειάζεται να μπουν 5 secrets (δες οδηγίες στο τέλος):
+//     VIVA_CLIENT_ID, VIVA_CLIENT_SECRET   (OAuth2 — Smart Checkout credentials)
+//     VIVA_MERCHANT_ID, VIVA_API_KEY       (Basic auth — για επαλήθευση webhook)
+//     VIVA_DEMO                            ("true" ή "false" — αλλάζεις χωρίς redeploy)
+// ════════════════════════════════════════════════════════════════════════════
+
+const VIVA_CLIENT_ID     = defineSecret("VIVA_CLIENT_ID");
+const VIVA_CLIENT_SECRET = defineSecret("VIVA_CLIENT_SECRET");
+const VIVA_MERCHANT_ID   = defineSecret("VIVA_MERCHANT_ID");
+const VIVA_API_KEY       = defineSecret("VIVA_API_KEY");
+const VIVA_DEMO          = defineSecret("VIVA_DEMO"); // "true" | "false"
+
+function vivaIsDemo(v) { return s(v).toLowerCase() !== "false"; } // default demo=true (ασφαλές default)
+
+function vivaHosts(demo) {
+  return demo
+    ? { accounts: "https://demo-accounts.vivapayments.com", api: "https://demo-api.vivapayments.com", web: "https://demo.vivapayments.com" }
+    : { accounts: "https://accounts.vivapayments.com",       api: "https://api.vivapayments.com",       web: "https://www.vivapayments.com" };
+}
+
+// ── OAuth2 access token (Smart Checkout Client ID/Secret) ───────────────────
+async function getVivaAccessToken(demo, clientId, clientSecret) {
+  const hosts = vivaHosts(demo);
+  const basic = Buffer.from(clientId + ":" + clientSecret).toString("base64");
+  const resp = await fetch(hosts.accounts + "/connect/token", {
+    method: "POST",
+    headers: {
+      "Authorization": "Basic " + basic,
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body: "grant_type=client_credentials",
+  });
+  if (!resp.ok) {
+    console.error("getVivaAccessToken error:", resp.status, await resp.text());
+    return null;
+  }
+  const data = await resp.json();
+  return data.access_token || null;
+}
+
+// ── createVivaOrder: επικυρώνει την κράτηση, υπολογίζει το 10% deposit,
+//    αποθηκεύει pending_bookings, δημιουργεί Viva order, γυρνάει checkoutUrl ──
+exports.createVivaOrder = onRequest(
+  {
+    region: "us-central1", cors: BOOKING_ALLOWED_ORIGINS, memory: "256MiB",
+    secrets: [ROUTES_API_KEY, VIVA_CLIENT_ID, VIVA_CLIENT_SECRET, VIVA_DEMO],
+  },
+  async (req, res) => {
+    if (req.method !== "POST") return res.status(405).json({ ok: false, error: "method_not_allowed" });
+    try {
+      const b = req.body || {};
+      const from = s(b.from), to = s(b.to);
+      const name = s(b.name), phone = s(b.phone);
+      const date = s(b.date), time = s(b.time);
+      if (!from || !to || !name || !phone || !date || !time) {
+        return res.status(400).json({ ok: false, error: "missing_fields" });
+      }
+
+      const persons = Math.max(1, parseInt(b.persons, 10) || 1);
+      const luggage = Math.max(0, parseInt(b.luggage, 10) || 0);
+      const childSeatCount = Math.max(0, parseInt(b.childSeatCount, 10) || 0);
+      const vehicleType = (s(b.vehicleType) === "van") ? "van" : "taxi";
+      const email = s(b.email), flight = s(b.flight), note = s(b.note);
+      const lang = s(b.lang) || "el";
+
+      const num = (v) => (v == null || v === "" || isNaN(Number(v))) ? null : Number(v);
+      const fromLat = num(b.fromLat), fromLng = num(b.fromLng);
+      const toLat = num(b.toLat), toLng = num(b.toLng);
+
+      // ── ΙΔΙΟΣ έλεγχος μπλάκαουτ/προθεσμίας/μεγάλης παραγγελίας με το
+      //    submitPublicBooking — ΞΑΝΑ, server-side, ΠΟΤΕ από τον client.
+      const scheduledNaive = athensNaiveFromDateTimeStrings(date, time);
+      const simNaive = athensNaiveDate(new Date());
+      const gateReasons = computeGate(simNaive, scheduledNaive, persons, luggage);
+
+      const dialCode = (phone.match(/^\+\d+/) || [""])[0];
+      const isGreek = lang === "el" ? true : dialCode === "+30";
+
+      const estimate = await computeEstimate({
+        fromLat, fromLng, toLat, toLng, persons, luggage, childSeatCount,
+        vehicleType, isGreek, scheduledNaive, apiKey: ROUTES_API_KEY.value(),
+      });
+      if (estimate.outsideAttica && !gateReasons.includes("outside_attica")) {
+        gateReasons.push("outside_attica");
+      }
+      if (gateReasons.length) {
+        return res.status(400).json({ ok: false, error: "outside_booking_window", reasons: gateReasons });
+      }
+
+      // ── 10% προκαταβολή, στρογγυλοποίηση ΠΑΝΤΑ προς τα πάνω στο επόμενο ευρώ
+      const depositEur = Math.ceil(estimate.price * 0.10);
+      const depositCents = depositEur * 100; // Viva θέλει το amount σε λεπτά
+
+      if (depositEur <= 0) {
+        return res.status(400).json({ ok: false, error: "invalid_amount" });
+      }
+
+      // ── Αποθήκευση της «εκκρεμούς» κράτησης (ΔΕΝ είναι ακόμα saved_jobs) ──
+      const db = getFirestore();
+      const pendingRef = await db.collection("pending_bookings").add({
+        status: "pending",
+        from, to, fromLat, fromLng, toLat, toLng,
+        clientName: name, clientPhone: phone, clientEmail: email,
+        flightOrShip: flight, persons, luggage, childSeatCount,
+        vehicleType, note, lang,
+        date, time,
+        price: estimate.price,
+        depositAmount: depositEur,
+        createdAt: FieldValue.serverTimestamp(),
+      });
+
+      const demo = vivaIsDemo(VIVA_DEMO.value());
+      const hosts = vivaHosts(demo);
+      const accessToken = await getVivaAccessToken(demo, VIVA_CLIENT_ID.value(), VIVA_CLIENT_SECRET.value());
+      if (!accessToken) {
+        await pendingRef.delete().catch(() => {});
+        return res.status(500).json({ ok: false, error: "viva_auth_error" });
+      }
+
+      const orderResp = await fetch(hosts.api + "/checkout/v2/orders", {
+        method: "POST",
+        headers: { "Authorization": "Bearer " + accessToken, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          amount: depositCents,
+          customerTrns: "Προκαταβολή 10% · " + from + " → " + to +
+            " · " + date + " " + time +
+            (vehicleType === "van" ? " · Βαν" : " · Ταξί"),
+          customer: {
+            email: email || undefined,
+            fullName: name,
+            phone: phone,
+            countryCode: dialCode === "+30" ? "GR" : undefined,
+            requestLang: lang === "el" ? "el-GR" : "en-GB",
+          },
+          paymentTimeout: 1800, // 30 λεπτά — μετά λήγει το order (καμία χρέωση)
+          merchantTrns: pendingRef.id, // ← ΤΟ ΚΛΕΙΔΙ που συνδέει Viva order ↔ pending_bookings doc
+          sourceCode: "1325", // Source «TaxiAthensTransfers Booking»
+        }),
+      });
+      if (!orderResp.ok) {
+        console.error("Viva create order error:", orderResp.status, await orderResp.text());
+        await pendingRef.delete().catch(() => {});
+        return res.status(500).json({ ok: false, error: "viva_order_error" });
+      }
+      const orderData = await orderResp.json();
+      const orderCode = orderData.orderCode;
+      if (!orderCode) {
+        await pendingRef.delete().catch(() => {});
+        return res.status(500).json({ ok: false, error: "viva_no_order_code" });
+      }
+
+      await pendingRef.update({ vivaOrderCode: String(orderCode) });
+
+      const checkoutUrl = hosts.web + "/web/checkout?ref=" + orderCode;
+      return res.status(200).json({ ok: true, checkoutUrl, depositAmount: depositEur });
+    } catch (e) {
+      console.error("createVivaOrder error:", e);
+      return res.status(500).json({ ok: false, error: "server_error" });
+    }
+  }
+);
+
+// ── vivaWebhook: GET = επαλήθευση URL από Viva. POST = ειδοποίηση πληρωμής ──
+exports.vivaWebhook = onRequest(
+  {
+    region: "us-central1", memory: "256MiB",
+    secrets: [GCAL_CLIENT_SECRET, VIVA_MERCHANT_ID, VIVA_API_KEY, VIVA_DEMO],
+  },
+  async (req, res) => {
+    const demo = vivaIsDemo(VIVA_DEMO.value());
+    const hosts = vivaHosts(demo);
+
+    // ── GET: η Viva επαληθεύει ότι ο server μας ελέγχεται από εμάς.
+    //    ⚠️ ΠΡΟΣΟΧΗ: Το ακριβές path του "Generate webhook verification key"
+    //    δεν ήταν πλήρως ορατό στην τεκμηρίωση που διάβασα. Πριν πας live,
+    //    επιβεβαίωσέ το στο developer.viva.com/webhooks-for-payments/setting-up-webhooks/
+    //    (ψάξε "Generate webhook verification key"). Αν διαφέρει, άλλαξε ΜΟΝΟ
+    //    το VIVA_VERIFY_PATH παρακάτω.
+    if (req.method === "GET") {
+      try {
+        const VIVA_VERIFY_PATH = "/api/webhooksverificationkey"; // ⚠️ επιβεβαίωσέ το
+        const basic = Buffer.from(VIVA_MERCHANT_ID.value() + ":" + VIVA_API_KEY.value()).toString("base64");
+        const resp = await fetch(hosts.api + VIVA_VERIFY_PATH, {
+          method: "GET",
+          headers: { "Authorization": "Basic " + basic },
+        });
+        const data = await resp.json();
+        return res.status(200).json({ Key: data.Key });
+      } catch (e) {
+        console.error("vivaWebhook GET verify error:", e);
+        return res.status(500).json({ error: "verify_error" });
+      }
+    }
+
+    if (req.method !== "POST") return res.status(405).end();
+
+    try {
+      const body = req.body || {};
+      const ed = body.EventData || body.eventData || {};
+      const eventTypeId = body.EventTypeId || body.eventTypeId;
+      const statusId = ed.StatusId || ed.statusId;
+      const orderCode = String(ed.OrderCode || ed.orderCode || "");
+      const merchantTrns = ed.MerchantTrns || ed.merchantTrns || "";
+      const amountPaid = Number(ed.Amount || ed.amount || 0);
+      const transactionId = ed.TransactionId || ed.transactionId || "";
+
+      // 1796 = Transaction Payment Created. statusId 'F' = επιτυχής πληρωμή.
+      if (Number(eventTypeId) !== 1796 || statusId !== "F") {
+        return res.status(200).json({ ok: true, ignored: true });
+      }
+      if (!merchantTrns) return res.status(200).json({ ok: true, ignored: true });
+
+      const db = getFirestore();
+      const pendingRef = db.collection("pending_bookings").doc(merchantTrns);
+      const pendingDoc = await pendingRef.get();
+      if (!pendingDoc.exists) return res.status(200).json({ ok: true, ignored: true }); // ήδη ολοκληρωμένο ή άγνωστο
+      const pd = pendingDoc.data();
+      if (pd.status !== "pending") return res.status(200).json({ ok: true, ignored: true }); // idempotency — δεν ξαναδημιουργούμε
+
+      // ── Έλεγχος ποσού: πρέπει να ταιριάζει με το deposit που ζητήσαμε ──
+      const expectedCents = Math.round(pd.depositAmount * 100);
+      if (Math.abs(amountPaid - expectedCents) > 1) {
+        console.error("vivaWebhook: amount mismatch", { expectedCents, amountPaid, merchantTrns });
+        return res.status(200).json({ ok: true, ignored: true, reason: "amount_mismatch" });
+      }
+
+      const masterUid = await findMasterUid();
+      if (!masterUid) {
+        console.error("vivaWebhook: δεν βρέθηκε master");
+        return res.status(200).json({ ok: true, error: "no_master" });
+      }
+      const me = await db.collection("presence").doc(masterUid).get();
+      const masterName = (me.exists && me.data().name) ? me.data().name : "Master";
+
+      const scheduledIso = pd.date + "T" + pd.time + ":00";
+      const scheduledAtMs = Date.parse(scheduledIso);
+      const startDate = isNaN(scheduledAtMs) ? new Date() : new Date(scheduledAtMs);
+
+      const noteLines = [];
+      noteLines.push("📝 Από φόρμα ιστοσελίδας · 💳 Προκαταβολή " + pd.depositAmount + "€ μέσω Viva");
+      noteLines.push("Πελάτης: " + pd.clientName + " · " + pd.clientPhone);
+      if (pd.clientEmail) noteLines.push("Email: " + pd.clientEmail);
+      if (pd.flightOrShip) noteLines.push("Πτήση/Πλοίο: " + pd.flightOrShip);
+      noteLines.push("Άτομα: " + pd.persons + " · Βαλίτσες: " + pd.luggage +
+                     (pd.childSeatCount ? " · Παιδικά καθ.: " + pd.childSeatCount : ""));
+      noteLines.push("Όχημα: " + (pd.vehicleType === "van" ? "Βαν" : "Ταξί"));
+      if (pd.note) noteLines.push("Σχόλια: " + pd.note);
+      const fullNote = noteLines.join("\n");
+
+      const { Timestamp } = require("firebase-admin/firestore");
+      const savedRef = await db.collection("saved_jobs").add({
+        origin:         "public_form",
+        from:           pd.from,
+        to:             pd.to,
+        fromLat:        pd.fromLat,
+        fromLng:        pd.fromLng,
+        toLat:          pd.toLat,
+        toLng:          pd.toLng,
+        clientName:     pd.clientName,
+        clientPhone:    pd.clientPhone,
+        clientEmail:    pd.clientEmail,
+        flightOrShip:   pd.flightOrShip,
+        persons:        pd.persons,
+        luggage:        pd.luggage,
+        childSeatCount: pd.childSeatCount,
+        vehicleType:    pd.vehicleType,
+        note:           fullNote,
+        price:          pd.price,
+        scheduledAt:    Timestamp.fromDate(startDate),
+        lang:           pd.lang,
+        ownerUid:       masterUid,
+        ownerName:      masterName,
+        savedAt:        FieldValue.serverTimestamp(),
+        createdAt:      FieldValue.serverTimestamp(),
+        // ── Στοιχεία πληρωμής (deposit μέσω Viva) ──
+        depositPaid:      true,
+        depositAmount:    pd.depositAmount,
+        vivaOrderCode:    orderCode,
+        vivaTransactionId: transactionId,
+      });
+
+      await pendingRef.update({ status: "completed", savedJobId: savedRef.id });
+
+      // ── Email + .ics στον master ──
+      const summary = "🚕 Νέα κράτηση (προκαταβολή πληρώθηκε): " + pd.from + " → " + pd.to;
+      const whenStr = pd.date + " " + pd.time;
+      const emailBody =
+        "Νέα κράτηση από τη φόρμα της ιστοσελίδας — Ο πελάτης ΠΛΗΡΩΣΕ ήδη προκαταβολή " +
+        pd.depositAmount + "€ μέσω Viva.\n\n" +
+        "Διαδρομή: " + pd.from + " → " + pd.to + "\n" +
+        "Ραντεβού: " + whenStr + "\n" +
+        "Πελάτης: " + pd.clientName + " (" + pd.clientPhone + ")\n" +
+        (pd.clientEmail ? "Email: " + pd.clientEmail + "\n" : "") +
+        (pd.flightOrShip ? "Πτήση/Πλοίο: " + pd.flightOrShip + "\n" : "") +
+        "Άτομα: " + pd.persons + " · Βαλίτσες: " + pd.luggage +
+        (pd.childSeatCount ? " · Παιδικά καθίσματα: " + pd.childSeatCount : "") + "\n" +
+        "Όχημα: " + (pd.vehicleType === "van" ? "Βαν" : "Ταξί") + "\n" +
+        (pd.note ? "Σχόλια: " + pd.note + "\n" : "") +
+        "\nΗ δουλειά αποθηκεύτηκε στις «Αποθηκευμένες» της εφαρμογής.";
+
+      const ics = buildIcs({ from: pd.from, to: pd.to, startDate, durationMin: 60, summary, description: emailBody });
+      const masterEmail = (me.exists && me.data().email) ? me.data().email : "techtacy@gmail.com";
+      sendBookingEmail(masterUid, masterEmail, summary, emailBody, ics)
+        .catch((e) => console.error("viva booking email failed:", e));
+
+      try {
+        const tokens = await getMasterTokens();
+        await sendDataOnly(tokens, {
+          type:       "public_booking",
+          savedJobId: savedRef.id,
+          from: pd.from, to: pd.to,
+          clientName: pd.clientName,
+          when:       whenStr,
+          title:      "Νέα κράτηση (πληρωμένη προκαταβολή)",
+          body:       pd.from + " → " + pd.to + " · " + pd.clientName + " · " + pd.depositAmount + "€",
+        });
+      } catch (e) {
+        console.error("viva booking FCM failed:", e);
+      }
+
+      return res.status(200).json({ ok: true });
+    } catch (e) {
+      console.error("vivaWebhook POST error:", e);
+      // Επιστρέφουμε 200 ακόμα και σε σφάλμα ΔΙΚΟ ΜΑΣ, ώστε η Viva να μην κάνει
+      // αμέτρητα retries για κάτι που δεν θα διορθωθεί μόνο του. Το σφάλμα
+      // πάντως καταγράφεται στα logs (console.error) για να το δεις.
+      return res.status(200).json({ ok: false, error: "server_error" });
+    }
+  }
+);

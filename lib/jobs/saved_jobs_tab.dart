@@ -162,6 +162,7 @@ class _SavedJobsTabState extends State<SavedJobsTab> {
                             saved:      items[i],
                             selected:   _selected.contains(items[i].id),
                             showOwner:  widget.isMaster || isForeign,
+                            isMaster:   widget.isMaster,
                             canSend:    lvl.canSend,
                             canEdit:    lvl.canEdit,
                             canDelete:  lvl.canDelete,
@@ -588,6 +589,7 @@ class _SavedJobCard extends StatelessWidget {
   final bool         canSend;
   final bool         canEdit;
   final bool         canDelete;
+  final bool         isMaster;
   final VoidCallback  onTap;
   final VoidCallback? onToggle;
   final VoidCallback? onEdit;
@@ -602,6 +604,7 @@ class _SavedJobCard extends StatelessWidget {
     this.canSend   = true,
     this.canEdit   = true,
     this.canDelete = true,
+    this.isMaster  = false,
     required this.onTap,
     this.onToggle,
     this.onEdit,
@@ -707,6 +710,28 @@ class _SavedJobCard extends StatelessWidget {
                     Text('ΕΠΙΣΤΡΟΦΗ', style: TextStyle(
                         color: Colors.white, fontSize: 13,
                         fontWeight: FontWeight.w900, letterSpacing: 2)),
+                  ]),
+                ),
+              ],
+              // Badge προκαταβολής μέσω Viva — ΜΟΝΟ ο master το βλέπει.
+              if (isMaster && job.depositPaid) ...[
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  margin: const EdgeInsets.only(bottom: 8),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFE8F5E9),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: const Color(0xFF1E8E3E), width: 1),
+                  ),
+                  child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                    const Icon(Icons.verified_rounded, size: 15, color: Color(0xFF1E8E3E)),
+                    const SizedBox(width: 6),
+                    Text(
+                      'Πληρώθηκε προκαταβολή ${job.depositAmount.toStringAsFixed(2)}€ (Viva)',
+                      style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700,
+                          color: Color(0xFF1E8E3E)),
+                    ),
                   ]),
                 ),
               ],

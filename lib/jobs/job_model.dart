@@ -67,6 +67,13 @@ class Job {
   // (σωστό billing/ιστορικό). Κενό = κανονική μεμονωμένη δουλειά.
   final String     batchId;
 
+  // ── Προκαταβολή μέσω Viva (δημόσια φόρμα κράτησης) ──
+  // Αν depositPaid, ο πελάτης έχει ήδη πληρώσει depositAmount στον master
+  // μέσω Viva· ο οδηγός εισπράττει μόνο το υπόλοιπο (βλ. remainingToCollect).
+  final bool       depositPaid;
+  final double     depositAmount;
+  final String?    vivaOrderCode;
+
   const Job({
     required this.id,
     required this.from,
@@ -118,6 +125,9 @@ class Job {
     this.stageStartedAt,
     this.stopped         = false,
     this.batchId         = '',
+    this.depositPaid     = false,
+    this.depositAmount   = 0,
+    this.vivaOrderCode,
   });
 
   factory Job.fromDoc(DocumentSnapshot<Map<String, dynamic>> doc) {
@@ -209,6 +219,9 @@ class Job {
       stageStartedAt:   sStart,
       stopped:          (d['stopped'] as bool?) ?? false,
       batchId:          d['batchId'] ?? '',
+      depositPaid:      (d['depositPaid'] as bool?) ?? false,
+      depositAmount:    (d['depositAmount'] as num?)?.toDouble() ?? 0,
+      vivaOrderCode:    d['vivaOrderCode'] as String?,
     );
   }
 
@@ -261,7 +274,17 @@ class Job {
         : FieldValue.serverTimestamp(),
     'stopped':          stopped,
     if (batchId.isNotEmpty) 'batchId': batchId,
+    if (depositPaid) 'depositPaid': true,
+    if (depositPaid) 'depositAmount': depositAmount,
+    if (vivaOrderCode != null) 'vivaOrderCode': vivaOrderCode,
   };
+
+  // ── Ποσό που πρέπει να εισπράξει ο ΟΔΗΓΟΣ από τον πελάτη ──
+  // Αν έχει ήδη πληρωθεί προκαταβολή μέσω Viva (δημόσια φόρμα), ο οδηγός
+  // εισπράττει μόνο το υπόλοιπο. Η προμήθεια/κέρδος (driverEarning) ΔΕΝ
+  // αλλάζει — υπολογίζεται πάντα στην πλήρη τιμή, όπως πριν.
+  double get remainingToCollect =>
+      depositPaid ? (price - depositAmount).clamp(0, price) : price;
 
   // Helpers
   bool get isOpen      => status == JobStatus.open;

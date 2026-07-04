@@ -805,18 +805,27 @@ class _JobListenerState extends State<JobListener> with WidgetsBindingObserver {
               _boardedRow(Icons.location_on_rounded, 'Προς', job.to,
                   Colors.red),
               const SizedBox(height: 12),
-              // ── Τιμή ──
+              // ── Τιμή (ή υπόλοιπο προς είσπραξη αν πληρώθηκε προκαταβολή) ──
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   const Icon(Icons.euro_rounded,
                       color: Colors.black87, size: 22),
                   const SizedBox(width: 4),
-                  Text('${job.price.toStringAsFixed(2)}€',
+                  Text('${job.remainingToCollect.toStringAsFixed(2)}€',
                       style: const TextStyle(
                           fontWeight: FontWeight.bold, fontSize: 24)),
                 ],
               ),
+              if (job.depositPaid)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text(
+                    'Προπληρώθηκε ${job.depositAmount.toStringAsFixed(2)}€ online',
+                    style: TextStyle(fontSize: 11.5, color: Colors.blue.shade700,
+                        fontWeight: FontWeight.w600),
+                  ),
+                ),
               const SizedBox(height: 10),
               // ── Λοιπές πληροφορίες (chips) ──
               Wrap(
@@ -1069,11 +1078,14 @@ class _JobListenerState extends State<JobListener> with WidgetsBindingObserver {
                         style: const TextStyle(
                             color: Colors.white, fontSize: 14)),
                     const SizedBox(height: 6),
-                    Text('${job.price.toStringAsFixed(2)}€',
+                    Text('${job.remainingToCollect.toStringAsFixed(2)}€',
                         style: const TextStyle(
                             color: Colors.white,
                             fontWeight: FontWeight.bold,
                             fontSize: 20)),
+                    if (job.depositPaid)
+                      Text('(προπληρώθηκε ${job.depositAmount.toStringAsFixed(2)}€)',
+                          style: const TextStyle(color: Colors.white70, fontSize: 11)),
                   ],
                 ),
               ),
