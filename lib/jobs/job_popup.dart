@@ -522,7 +522,7 @@ class _JobPopupContentState extends State<_JobPopupContent>
                 Row(children: [
                   Expanded(child: _infoCell(
                     icon:  Icons.euro_rounded,
-                    label: job.depositPaid ? 'Να εισπράξεις' : 'Τιμή',
+                    label: job.fullyPaid ? 'Πληρώθηκε online' : (job.depositPaid ? 'Να εισπράξεις' : 'Τιμή'),
                     value: '${job.remainingToCollect.toStringAsFixed(2)}€',
                     color: const Color(0xFF1E8E3E),
                     large: true,
@@ -542,8 +542,8 @@ class _JobPopupContentState extends State<_JobPopupContent>
                     large: true,
                   )),
                 ]),
-                // Σημείωση προκαταβολής — ώστε ο οδηγός να καταλάβει γιατί το
-                // ποσό που θα εισπράξει είναι μικρότερο από τη συνολική τιμή.
+                // Σημείωση προκαταβολής/πλήρους πληρωμής — ώστε ο οδηγός να
+                // καταλάβει γιατί το ποσό που θα εισπράξει διαφέρει.
                 if (job.depositPaid) ...[
                   const SizedBox(height: 8),
                   Container(
@@ -558,8 +558,10 @@ class _JobPopupContentState extends State<_JobPopupContent>
                       Icon(Icons.info_outline_rounded, size: 15, color: Colors.blue.shade700),
                       const SizedBox(width: 7),
                       Expanded(child: Text(
-                        'Ο πελάτης έχει ήδη πληρώσει προκαταβολή ${job.depositAmount.toStringAsFixed(2)}€ online. '
-                        'Συνολική τιμή διαδρομής: ${job.price.toStringAsFixed(2)}€.',
+                        job.fullyPaid
+                            ? 'Ο πελάτης έχει ήδη πληρώσει ΟΛΟΚΛΗΡΗ την τιμή (${job.depositAmount.toStringAsFixed(2)}€) online. Δεν χρειάζεται να εισπράξεις τίποτα!'
+                            : 'Ο πελάτης έχει ήδη πληρώσει προκαταβολή ${job.depositAmount.toStringAsFixed(2)}€ online. '
+                              'Συνολική τιμή διαδρομής: ${job.price.toStringAsFixed(2)}€.',
                         style: TextStyle(fontSize: 11.5, color: Colors.blue.shade900),
                       )),
                     ]),

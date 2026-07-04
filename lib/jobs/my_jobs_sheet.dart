@@ -998,13 +998,17 @@ class MyJobTile extends StatelessWidget {
                 const SizedBox(height: 6),
                 Wrap(spacing: 6, runSpacing: 4, children: [
                   _chip(Icons.euro_rounded,
-                      job.depositPaid
-                          ? 'Είσπραξη ${job.remainingToCollect.toStringAsFixed(2)}€'
-                          : '${job.price.toStringAsFixed(2)}€',
+                      job.fullyPaid
+                          ? 'Πληρώθηκε online — 0,00€'
+                          : (job.depositPaid
+                              ? 'Είσπραξη ${job.remainingToCollect.toStringAsFixed(2)}€'
+                              : '${job.price.toStringAsFixed(2)}€'),
                       const Color(0xFF1E8E3E)),
                   if (job.depositPaid)
                     _chip(Icons.verified_rounded,
-                        'Προπληρώθηκε ${job.depositAmount.toStringAsFixed(2)}€',
+                        job.fullyPaid
+                            ? 'Πλήρης πληρωμή ${job.depositAmount.toStringAsFixed(2)}€'
+                            : 'Προπληρώθηκε ${job.depositAmount.toStringAsFixed(2)}€',
                         Colors.blue.shade700),
                   if (job.commission > 0)
                     _chip(Icons.handshake_rounded,

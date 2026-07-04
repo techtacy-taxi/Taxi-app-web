@@ -821,7 +821,9 @@ class _JobListenerState extends State<JobListener> with WidgetsBindingObserver {
                 Padding(
                   padding: const EdgeInsets.only(top: 4),
                   child: Text(
-                    'Προπληρώθηκε ${job.depositAmount.toStringAsFixed(2)}€ online',
+                    job.fullyPaid
+                        ? 'Πληρώθηκε ΟΛΟΚΛΗΡΗ online — μηδέν είσπραξη'
+                        : 'Προπληρώθηκε ${job.depositAmount.toStringAsFixed(2)}€ online',
                     style: TextStyle(fontSize: 11.5, color: Colors.blue.shade700,
                         fontWeight: FontWeight.w600),
                   ),
@@ -1084,7 +1086,9 @@ class _JobListenerState extends State<JobListener> with WidgetsBindingObserver {
                             fontWeight: FontWeight.bold,
                             fontSize: 20)),
                     if (job.depositPaid)
-                      Text('(προπληρώθηκε ${job.depositAmount.toStringAsFixed(2)}€)',
+                      Text(job.fullyPaid
+                          ? '(πληρώθηκε ΟΛΟΚΛΗΡΗ online)'
+                          : '(προπληρώθηκε ${job.depositAmount.toStringAsFixed(2)}€)',
                           style: const TextStyle(color: Colors.white70, fontSize: 11)),
                   ],
                 ),

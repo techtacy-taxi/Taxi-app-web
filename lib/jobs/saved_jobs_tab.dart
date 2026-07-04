@@ -728,7 +728,9 @@ class _SavedJobCard extends StatelessWidget {
                     const Icon(Icons.verified_rounded, size: 15, color: Color(0xFF1E8E3E)),
                     const SizedBox(width: 6),
                     Text(
-                      'Πληρώθηκε προκαταβολή ${job.depositAmount.toStringAsFixed(2)}€ (Viva)',
+                      job.fullyPaid
+                          ? 'Πληρώθηκε ΟΛΟΚΛΗΡΗ η τιμή ${job.depositAmount.toStringAsFixed(2)}€ (Viva)'
+                          : 'Πληρώθηκε προκαταβολή ${job.depositAmount.toStringAsFixed(2)}€ (Viva)',
                       style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700,
                           color: Color(0xFF1E8E3E)),
                     ),

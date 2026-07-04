@@ -73,6 +73,9 @@ class Job {
   final bool       depositPaid;
   final double     depositAmount;
   final String?    vivaOrderCode;
+  // Αν true, ο πελάτης πλήρωσε ΟΛΟΚΛΗΡΗ την τιμή online (όχι μόνο 10%) —
+  // ο οδηγός δεν χρειάζεται να εισπράξει τίποτα.
+  final bool       fullyPaid;
 
   const Job({
     required this.id,
@@ -128,6 +131,7 @@ class Job {
     this.depositPaid     = false,
     this.depositAmount   = 0,
     this.vivaOrderCode,
+    this.fullyPaid       = false,
   });
 
   factory Job.fromDoc(DocumentSnapshot<Map<String, dynamic>> doc) {
@@ -222,6 +226,7 @@ class Job {
       depositPaid:      (d['depositPaid'] as bool?) ?? false,
       depositAmount:    (d['depositAmount'] as num?)?.toDouble() ?? 0,
       vivaOrderCode:    d['vivaOrderCode'] as String?,
+      fullyPaid:        (d['fullyPaid'] as bool?) ?? false,
     );
   }
 
@@ -277,6 +282,7 @@ class Job {
     if (depositPaid) 'depositPaid': true,
     if (depositPaid) 'depositAmount': depositAmount,
     if (vivaOrderCode != null) 'vivaOrderCode': vivaOrderCode,
+    if (fullyPaid) 'fullyPaid': true,
   };
 
   // ── Ποσό που πρέπει να εισπράξει ο ΟΔΗΓΟΣ από τον πελάτη ──

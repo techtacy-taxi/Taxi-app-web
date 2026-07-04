@@ -2965,8 +2965,10 @@ exports.createVivaOrder = onRequest(
         return res.status(400).json({ ok: false, error: "outside_booking_window", reasons: gateReasons });
       }
 
-      // ── 10% προκαταβολή, στρογγυλοποίηση ΠΑΝΤΑ προς τα πάνω στο επόμενο ευρώ
-      const depositEur = Math.ceil(estimate.price * 0.10);
+      // ── 10% προκαταβολή ή ολόκληρο ποσό (αν το ζήτησε ο πελάτης), πάντα
+      // στρογγυλοποίηση προς τα πάνω στο επόμενο ευρώ.
+      const payFull = b.payFull === true;
+      const depositEur = payFull ? Math.ceil(estimate.price) : Math.ceil(estimate.price * 0.10);
       const depositCents = depositEur * 100; // Viva θέλει το amount σε λεπτά
 
       if (depositEur <= 0) {
@@ -2984,6 +2986,7 @@ exports.createVivaOrder = onRequest(
         date, time,
         price: estimate.price,
         depositAmount: depositEur,
+        fullyPaid: payFull,
         createdAt: FieldValue.serverTimestamp(),
       });
 
@@ -3000,7 +3003,7 @@ exports.createVivaOrder = onRequest(
         headers: { "Authorization": "Bearer " + accessToken, "Content-Type": "application/json" },
         body: JSON.stringify({
           amount: depositCents,
-          customerTrns: "Προκαταβολή 10% · " + from + " → " + to +
+          customerTrns: (payFull ? "Πλήρης πληρωμή · " : "Προκαταβολή 10% · ") + from + " → " + to +
             " · " + date + " " + time +
             (vehicleType === "van" ? " · Βαν" : " · Ταξί"),
           customer: {
@@ -3049,49 +3052,28 @@ exports.vivaWebhook = onRequest(
     const hosts = vivaHosts(demo);
 
     // ── GET: η Viva επαληθεύει ότι ο server μας ελέγχεται από εμάς.
-    //    Η δημόσια τεκμηρίωση δεν δείχνει με 100% σαφήνεια το host/path αυτού
-    //    του endpoint, οπότε δοκιμάζουμε αυτόματα τους πιο πιθανούς συνδυασμούς
-    //    (διαφορετικό host: api. vs το βασικό, διαφορετικό path) και
-    //    καταγράφουμε ΚΑΘΕ προσπάθεια στα logs. Ο πρώτος που επιστρέψει valid
-    //    Key "κερδίζει". Αν όλοι αποτύχουν, τα logs θα δείχνουν ακριβώς τι
-    //    επέστρεψε η Viva σε καθέναν, ώστε να μην χρειάζεται άλλη μαντεψιά.
+    //    Επιβεβαιωμένο από τα logs: σωστό host+path είναι
+    //    [hosts.web]/api/messages/config/token (ΟΧΙ hosts.api).
     if (req.method === "GET") {
       try {
         const basic = Buffer.from(VIVA_MERCHANT_ID.value() + ":" + VIVA_API_KEY.value()).toString("base64");
-        const candidates = [
-          hosts.api + "/api/messages/config/token",
-          hosts.web + "/api/messages/config/token",
-          hosts.api + "/api/webhooksverificationkey",
-          hosts.web + "/api/webhooksverificationkey",
-        ];
+        const resp = await fetch(hosts.web + "/api/messages/config/token", {
+          method: "GET",
+          headers: { "Authorization": "Basic " + basic },
+        });
+        const rawText = await resp.text();
+        console.log("vivaWebhook verify raw response:", resp.status, rawText);
 
-        for (const url of candidates) {
-          let rawText = "";
-          let status = 0;
-          try {
-            const resp = await fetch(url, {
-              method: "GET",
-              headers: { "Authorization": "Basic " + basic },
-            });
-            status = resp.status;
-            rawText = await resp.text();
-          } catch (fetchErr) {
-            console.log("vivaWebhook verify candidate FETCH ERROR:", url, String(fetchErr));
-            continue;
-          }
-          console.log("vivaWebhook verify candidate:", url, "→", status, rawText);
+        let data = null;
+        try { data = JSON.parse(rawText); } catch (parseErr) { data = null; }
 
-          let data = null;
-          try { data = JSON.parse(rawText); } catch (parseErr) { data = null; }
-
-          if (data && data.Key) {
-            console.log("vivaWebhook verify SUCCESS με:", url);
-            return res.status(200).json({ key: data.Key });
-          }
+        if (!data || !data.Key) {
+          console.error("vivaWebhook GET verify: δεν βρέθηκε Key στην απάντηση", {
+            status: resp.status, body: rawText,
+          });
+          return res.status(500).json({ error: "verify_error" });
         }
-
-        console.error("vivaWebhook GET verify: ΚΑΝΕΝΑ από τα candidate endpoints δεν επέστρεψε Key — δες τα logs 'vivaWebhook verify candidate:' παραπάνω");
-        return res.status(500).json({ error: "verify_error" });
+        return res.status(200).json({ key: data.Key });
       } catch (e) {
         console.error("vivaWebhook GET verify error:", e);
         return res.status(500).json({ error: "verify_error" });
@@ -3124,9 +3106,11 @@ exports.vivaWebhook = onRequest(
       if (pd.status !== "pending") return res.status(200).json({ ok: true, ignored: true }); // idempotency — δεν ξαναδημιουργούμε
 
       // ── Έλεγχος ποσού: πρέπει να ταιριάζει με το deposit που ζητήσαμε ──
-      const expectedCents = Math.round(pd.depositAmount * 100);
-      if (Math.abs(amountPaid - expectedCents) > 1) {
-        console.error("vivaWebhook: amount mismatch", { expectedCents, amountPaid, merchantTrns });
+      // ── Έλεγχος ποσού: το webhook της Viva στέλνει το ποσό σε ΕΥΡΩ (π.χ. 4
+      // για 4,00€) — ΔΙΑΦΟΡΕΤΙΚΑ από το create-order API που θέλει λεπτά.
+      // Μη μετατρέπεις σε λεπτά εδώ, σύγκρινε απευθείας σε ευρώ.
+      if (Math.abs(amountPaid - pd.depositAmount) > 0.01) {
+        console.error("vivaWebhook: amount mismatch", { expected: pd.depositAmount, amountPaid, merchantTrns });
         return res.status(200).json({ ok: true, ignored: true, reason: "amount_mismatch" });
       }
 
@@ -3142,8 +3126,9 @@ exports.vivaWebhook = onRequest(
       const scheduledAtMs = Date.parse(scheduledIso);
       const startDate = isNaN(scheduledAtMs) ? new Date() : new Date(scheduledAtMs);
 
+      const payLabel = pd.fullyPaid ? "πλήρης πληρωμή" : "προκαταβολή";
       const noteLines = [];
-      noteLines.push("📝 Από φόρμα ιστοσελίδας · 💳 Προκαταβολή " + pd.depositAmount + "€ μέσω Viva");
+      noteLines.push("📝 Από φόρμα ιστοσελίδας · 💳 " + (pd.fullyPaid ? "Πλήρης πληρωμή" : "Προκαταβολή") + " " + pd.depositAmount + "€ μέσω Viva" + (pd.fullyPaid ? " (ΤΙΠΟΤΑ ΑΛΛΟ ΝΑ ΕΙΣΠΡΑΧΘΕΙ)" : ""));
       noteLines.push("Πελάτης: " + pd.clientName + " · " + pd.clientPhone);
       if (pd.clientEmail) noteLines.push("Email: " + pd.clientEmail);
       if (pd.flightOrShip) noteLines.push("Πτήση/Πλοίο: " + pd.flightOrShip);
@@ -3178,9 +3163,10 @@ exports.vivaWebhook = onRequest(
         ownerName:      masterName,
         savedAt:        FieldValue.serverTimestamp(),
         createdAt:      FieldValue.serverTimestamp(),
-        // ── Στοιχεία πληρωμής (deposit μέσω Viva) ──
+        // ── Στοιχεία πληρωμής (μέσω Viva) ──
         depositPaid:      true,
         depositAmount:    pd.depositAmount,
+        fullyPaid:        !!pd.fullyPaid, // true = πληρώθηκε ΟΛΟΚΛΗΡΗ η τιμή, όχι μόνο 10%
         vivaOrderCode:    orderCode,
         vivaTransactionId: transactionId,
       });
@@ -3188,11 +3174,11 @@ exports.vivaWebhook = onRequest(
       await pendingRef.update({ status: "completed", savedJobId: savedRef.id });
 
       // ── Email + .ics στον master ──
-      const summary = "🚕 Νέα κράτηση (προκαταβολή πληρώθηκε): " + pd.from + " → " + pd.to;
+      const summary = "🚕 Νέα κράτηση (" + payLabel + " πληρώθηκε): " + pd.from + " → " + pd.to;
       const whenStr = pd.date + " " + pd.time;
       const emailBody =
-        "Νέα κράτηση από τη φόρμα της ιστοσελίδας — Ο πελάτης ΠΛΗΡΩΣΕ ήδη προκαταβολή " +
-        pd.depositAmount + "€ μέσω Viva.\n\n" +
+        "Νέα κράτηση από τη φόρμα της ιστοσελίδας — Ο πελάτης ΠΛΗΡΩΣΕ ήδη " + payLabel + " " +
+        pd.depositAmount + "€ μέσω Viva" + (pd.fullyPaid ? " (ΔΕΝ χρωστάει τίποτα άλλο)" : "") + ".\n\n" +
         "Διαδρομή: " + pd.from + " → " + pd.to + "\n" +
         "Ραντεβού: " + whenStr + "\n" +
         "Πελάτης: " + pd.clientName + " (" + pd.clientPhone + ")\n" +
@@ -3217,7 +3203,7 @@ exports.vivaWebhook = onRequest(
           from: pd.from, to: pd.to,
           clientName: pd.clientName,
           when:       whenStr,
-          title:      "Νέα κράτηση (πληρωμένη προκαταβολή)",
+          title:      "Νέα κράτηση (" + (pd.fullyPaid ? "πληρωμένη πλήρως" : "πληρωμένη προκαταβολή") + ")",
           body:       pd.from + " → " + pd.to + " · " + pd.clientName + " · " + pd.depositAmount + "€",
         });
       } catch (e) {
