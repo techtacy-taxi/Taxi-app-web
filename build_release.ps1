@@ -1,6 +1,6 @@
 $dateDay  = Get-Date -Format "yyyyMMdd"
 $dateTime = Get-Date -Format "HHmm"
-$apkDate  = Get-Date -Format "yyyyMMdd_HHmm"
+$apkDate  = Get-Date -Format "dd-MM-yyyy_HHmm"
 
 # 3 νούμερα πριν το +, όλο το timestamp μετά
 $version  = "1.0.0"

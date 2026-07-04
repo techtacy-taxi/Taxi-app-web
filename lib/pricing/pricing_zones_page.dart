@@ -29,6 +29,7 @@
 // Android εφαρμογή (menu χάρτη, μόνο master) — ίδιο widget, ίδιο lib/.
 
 import 'dart:math' as math;
+import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -193,8 +194,8 @@ class _PricingZonesPageState extends State<PricingZonesPage> {
   // συγκεκριμένο pixel μέγεθος ως BitmapDescriptor για τους δείκτες χάρτη.
   Future<void> _loadHandleIcons() async {
     try {
-      final corner = await _bitmapFromAsset('assets/icons/handle_corner.png', 84);
-      final rotate = await _bitmapFromAsset('assets/icons/handle_rotate.png', 84);
+      final corner = await _bitmapFromAsset('assets/icons/handle_corner.png', 17);
+      final rotate = await _bitmapFromAsset('assets/icons/handle_rotate.png', 17);
       if (!mounted) return;
       setState(() {
         _cornerIcon = corner;

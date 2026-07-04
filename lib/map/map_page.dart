@@ -112,7 +112,11 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
 
   Future<void> _initPage() async {
     final info = await PackageInfo.fromPlatform();
-    _appVersion = info.version.split('+').first;
+    // Το versionName είναι "1.0.<ημερομηνία>_<ώρα>" (build.gradle.kts). Κόβουμε
+    // το σταθερό πρόθεμα "1.0." ώστε αυτό που βλέπει ο οδηγός/admin να είναι
+    // ΑΚΡΙΒΩΣ ό,τι γράφει και το όνομα του .apk (π.χ. "v04-07-2026_1455"),
+    // εύκολο για σύγκριση αν έχει την τελευταία έκδοση.
+    _appVersion = info.version.split('+').first.replaceFirst(RegExp(r'^1\.0\.'), '');
     _uid = FirebaseAuth.instance.currentUser?.uid;
 
     if (_uid != null) {

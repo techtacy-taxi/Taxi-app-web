@@ -8,7 +8,7 @@ plugins {
     id("com.google.gms.google-services")
 }
 
-val buildTime: String = SimpleDateFormat("yyyyMMdd_HHmm").format(Date())
+val buildTime: String = SimpleDateFormat("dd-MM-yyyy_HHmm").format(Date())
 val buildCode: Int    = SimpleDateFormat("yyyyMMddHH").format(Date()).toInt()
 
 android {
