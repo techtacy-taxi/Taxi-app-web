@@ -3049,21 +3049,49 @@ exports.vivaWebhook = onRequest(
     const hosts = vivaHosts(demo);
 
     // ── GET: η Viva επαληθεύει ότι ο server μας ελέγχεται από εμάς.
-    //    ⚠️ ΠΡΟΣΟΧΗ: Το ακριβές path του "Generate webhook verification key"
-    //    δεν ήταν πλήρως ορατό στην τεκμηρίωση που διάβασα. Πριν πας live,
-    //    επιβεβαίωσέ το στο developer.viva.com/webhooks-for-payments/setting-up-webhooks/
-    //    (ψάξε "Generate webhook verification key"). Αν διαφέρει, άλλαξε ΜΟΝΟ
-    //    το VIVA_VERIFY_PATH παρακάτω.
+    //    Η δημόσια τεκμηρίωση δεν δείχνει με 100% σαφήνεια το host/path αυτού
+    //    του endpoint, οπότε δοκιμάζουμε αυτόματα τους πιο πιθανούς συνδυασμούς
+    //    (διαφορετικό host: api. vs το βασικό, διαφορετικό path) και
+    //    καταγράφουμε ΚΑΘΕ προσπάθεια στα logs. Ο πρώτος που επιστρέψει valid
+    //    Key "κερδίζει". Αν όλοι αποτύχουν, τα logs θα δείχνουν ακριβώς τι
+    //    επέστρεψε η Viva σε καθέναν, ώστε να μην χρειάζεται άλλη μαντεψιά.
     if (req.method === "GET") {
       try {
-        const VIVA_VERIFY_PATH = "/api/webhooksverificationkey"; // ⚠️ επιβεβαίωσέ το
         const basic = Buffer.from(VIVA_MERCHANT_ID.value() + ":" + VIVA_API_KEY.value()).toString("base64");
-        const resp = await fetch(hosts.api + VIVA_VERIFY_PATH, {
-          method: "GET",
-          headers: { "Authorization": "Basic " + basic },
-        });
-        const data = await resp.json();
-        return res.status(200).json({ Key: data.Key });
+        const candidates = [
+          hosts.api + "/api/messages/config/token",
+          hosts.web + "/api/messages/config/token",
+          hosts.api + "/api/webhooksverificationkey",
+          hosts.web + "/api/webhooksverificationkey",
+        ];
+
+        for (const url of candidates) {
+          let rawText = "";
+          let status = 0;
+          try {
+            const resp = await fetch(url, {
+              method: "GET",
+              headers: { "Authorization": "Basic " + basic },
+            });
+            status = resp.status;
+            rawText = await resp.text();
+          } catch (fetchErr) {
+            console.log("vivaWebhook verify candidate FETCH ERROR:", url, String(fetchErr));
+            continue;
+          }
+          console.log("vivaWebhook verify candidate:", url, "→", status, rawText);
+
+          let data = null;
+          try { data = JSON.parse(rawText); } catch (parseErr) { data = null; }
+
+          if (data && data.Key) {
+            console.log("vivaWebhook verify SUCCESS με:", url);
+            return res.status(200).json({ key: data.Key });
+          }
+        }
+
+        console.error("vivaWebhook GET verify: ΚΑΝΕΝΑ από τα candidate endpoints δεν επέστρεψε Key — δες τα logs 'vivaWebhook verify candidate:' παραπάνω");
+        return res.status(500).json({ error: "verify_error" });
       } catch (e) {
         console.error("vivaWebhook GET verify error:", e);
         return res.status(500).json({ error: "verify_error" });
