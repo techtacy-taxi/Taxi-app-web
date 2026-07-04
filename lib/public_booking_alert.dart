@@ -114,7 +114,9 @@ class PublicBookingAlerts {
     await showDialog<void>(
       context: ctx,
       barrierDismissible: false,
-      builder: (dctx) => StatefulBuilder(
+      builder: (dctx) => PopScope(
+        canPop: false,
+        child: StatefulBuilder(
         builder: (c, setLocal) {
           _setStateInDialog = setLocal;
           final n = _pendingCount;
@@ -210,6 +212,7 @@ class PublicBookingAlerts {
             ),
           );
         },
+      ),
       ),
     );
 

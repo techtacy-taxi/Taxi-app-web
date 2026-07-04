@@ -230,7 +230,9 @@ class OwnerAlerts {
       await showDialog<void>(
         context: ctx,
         barrierDismissible: false,
-        builder: (dctx) => Dialog(
+        builder: (dctx) => PopScope(
+          canPop: false,
+          child: Dialog(
           shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(22)),
           child: Padding(
@@ -362,6 +364,7 @@ class OwnerAlerts {
                 ),
               ],
             ),
+          ),
           ),
         ),
       );

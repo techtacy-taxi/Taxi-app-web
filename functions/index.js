@@ -2771,6 +2771,64 @@ exports.placesRoute = onCall(
   }
 );
 
+// ── Plus Code Google Maps (π.χ. "M3W4+9W Λαύριο") → συντεταγμένες ───────────
+// Το Places Autocomplete (New) δεν "καταλαβαίνει" καλά τους Plus Codes σαν
+// ελεύθερο κείμενο αναζήτησης· το Geocoding API όμως τους δέχεται απευθείας
+// στην παράμετρο address (και τη σύντομη μορφή με τοπωνύμιο, π.χ.
+// "M3W4+9W Lavrio", και την πλήρη global μορφή, π.χ. "8FVC9G8F+6X").
+//
+// ΣΗΜΑΝΤΙΚΟ: όταν κάποιος κάνει copy-paste μια τοποθεσία απευθείας από το
+// Google Maps, συχνά έρχεται σαν "M3W4+9W, Λαύριο 195 00" (με ΚΟΜΜΑ και
+// ΤΑΧΥΔΡΟΜΙΚΟ ΚΩΔΙΚΑ στο τέλος). Το Geocoding API με αυτή τη μορφή συχνά
+// γυρνάει ZERO_RESULTS (καμία στην πραγματικότητα HTTP error — η κλήση
+// "πετυχαίνει" αλλά χωρίς αποτελέσματα) — καθαρίζουμε το κείμενο πριν το
+// στείλουμε, και αν παρόλα αυτά αποτύχει ξαναδοκιμάζουμε με τον γυμνό κωδικό.
+const PLUS_CODE_RE = /\b[23456789CFGHJMPQRVWX]{4,8}\+[23456789CFGHJMPQRVWX]{2,3}\b/i;
+
+function cleanPlusCodeQuery(raw) {
+  const m = PLUS_CODE_RE.exec(raw);
+  if (!m) return { bare: raw, compound: raw };
+  const bare = m[0];
+  let rest = raw.slice(m.index + bare.length);
+  rest = rest.replace(/^[\s,]+/, "");
+  rest = rest.replace(/[\d\s]{3,}$/, "");
+  rest = rest.replace(/[,.\s]+$/, "").trim();
+  return { bare, compound: rest ? (bare + " " + rest) : bare };
+}
+
+async function geocodeAddress(address) {
+  const qs = new URLSearchParams({
+    address,
+    key:      ROUTES_API_KEY.value(),
+    language: "el",
+    region:   "gr",
+  });
+  const resp = await fetch("https://maps.googleapis.com/maps/api/geocode/json?" + qs.toString());
+  if (!resp.ok) {
+    const txt = await resp.text();
+    console.error("resolvePlusCode HTTP error:", resp.status, txt);
+    throw new HttpsError("internal", "Plus Code resolve failed (" + resp.status + ")");
+  }
+  return await resp.json();
+}
+
+exports.resolvePlusCode = onCall(
+  { secrets: [ROUTES_API_KEY] },
+  async (request) => {
+    requireSignedIn(request);
+    const code = s(request.data && request.data.code);
+    if (!code) throw new HttpsError("invalid-argument", "Λείπει ο κωδικός τοποθεσίας.");
+
+    const { bare, compound } = cleanPlusCodeQuery(code);
+    let json = await geocodeAddress(compound);
+    if ((!json.results || !json.results.length) && compound !== bare) {
+      // Το τοπωνύμιο (ή ο Τ.Κ. που δεν αφαιρέθηκε σωστά) μπέρδεψε τον Geocoder
+      // → ξαναδοκίμασε μόνο με τον γυμνό κωδικό.
+      json = await geocodeAddress(bare);
+    }
+    return json;
+  }
+);
 // ── Αντίστροφη γεωκωδικοποίηση: συντεταγμένες → διεύθυνση (Geocoding API) ───
 exports.placesReverseGeocode = onCall(
   { secrets: [ROUTES_API_KEY] },

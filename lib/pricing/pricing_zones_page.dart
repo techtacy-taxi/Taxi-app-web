@@ -29,9 +29,11 @@
 // Android εφαρμογή (menu χάρτη, μόνο master) — ίδιο widget, ίδιο lib/.
 
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 
 import '../jobs/job_shared_widgets.dart';
@@ -167,12 +169,53 @@ class _PricingZonesPageState extends State<PricingZonesPage> {
 
   final _nameCtrl = TextEditingController();
 
+  // Custom εικονίδια λαβών (φορτώνονται 1 φορά από τα assets):
+  //  • _cornerIcon → μαύρο τετράγωνο (λαβές γωνιών, μέγεθος/σχήμα)
+  //  • _rotateIcon → βελάκι κυκλικό (λαβή περιστροφής)
+  // Το κόκκινο κέντρο ΜΕΝΕΙ όπως ήταν (BitmapDescriptor.defaultMarker...).
+  BitmapDescriptor? _cornerIcon;
+  BitmapDescriptor? _rotateIcon;
+
   bool get _isEditing => _placingNew || _selectedZoneId != null;
 
   static const CameraPosition _initialCamera = CameraPosition(
     target: LatLng(37.9838, 23.7275), // Αθήνα
     zoom: 9.3,
   );
+
+  @override
+  void initState() {
+    super.initState();
+    _loadHandleIcons();
+  }
+
+  // Διαβάζει τα PNG assets (ήδη κομμένα/διάφανα γύρω-γύρω) και τα φορτώνει σε
+  // συγκεκριμένο pixel μέγεθος ως BitmapDescriptor για τους δείκτες χάρτη.
+  Future<void> _loadHandleIcons() async {
+    try {
+      final corner = await _bitmapFromAsset('assets/icons/handle_corner.png', 84);
+      final rotate = await _bitmapFromAsset('assets/icons/handle_rotate.png', 84);
+      if (!mounted) return;
+      setState(() {
+        _cornerIcon = corner;
+        _rotateIcon = rotate;
+      });
+    } catch (_) {
+      // Αν αποτύχει το φόρτωμα (π.χ. ξέχασε να μπει στο pubspec.yaml), οι
+      // λαβές γυρίζουν αυτόματα στις προεπιλεγμένες πινέζες — καμία κρασάρισμα.
+    }
+  }
+
+  Future<BitmapDescriptor> _bitmapFromAsset(String assetPath, int targetWidth) async {
+    final bytes = await rootBundle.load(assetPath);
+    final codec = await ui.instantiateImageCodec(
+      bytes.buffer.asUint8List(),
+      targetWidth: targetWidth,
+    );
+    final frame = await codec.getNextFrame();
+    final data = await frame.image.toByteData(format: ui.ImageByteFormat.png);
+    return BitmapDescriptor.bytes(data!.buffer.asUint8List());
+  }
 
   @override
   void dispose() {
@@ -551,7 +594,9 @@ class _PricingZonesPageState extends State<PricingZonesPage> {
             markerId: const MarkerId('_rot'),
             position: rotHandle,
             draggable: true,
-            icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen),
+            anchor: const Offset(0.5, 0.5),
+            icon: _rotateIcon ??
+                BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen),
             onDrag: (p) => _rotateTo(editingBounds, p),
             onDragEnd: (p) => _rotateTo(editingBounds, p),
           ));
@@ -564,7 +609,9 @@ class _PricingZonesPageState extends State<PricingZonesPage> {
                 markerId: MarkerId(ids[i]),
                 position: corners[i],
                 draggable: true,
-                icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueOrange),
+                anchor: const Offset(0.5, 0.5),
+                icon: _cornerIcon ??
+                    BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueOrange),
                 onDrag: (p) => _resizeToPoint(editingBounds, p),
                 onDragEnd: (p) => _resizeToPoint(editingBounds, p),
               ));
@@ -680,7 +727,7 @@ class _PricingZonesPageState extends State<PricingZonesPage> {
                     borderRadius: BorderRadius.circular(10),
                   ),
                   child: const Text(
-                    'Πορτοκαλί γωνίες: μέγεθος/σχήμα · πράσινη λαβή: περιστροφή · κέντρο: μετακίνηση',
+                    'Μαύρο τετράγωνο: μέγεθος/σχήμα · βελάκι: περιστροφή · κόκκινο: μετακίνηση',
                     style: TextStyle(color: Colors.white, fontSize: 12),
                   ),
                 ),

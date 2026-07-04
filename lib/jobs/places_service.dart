@@ -45,6 +45,17 @@ import '../web/_map_picker.dart';
 // Μοντέλα
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Αναγνωρίζει αν το κείμενο περιέχει έναν κωδικό τοποθεσίας Google Maps
+/// (Plus Code / Open Location Code) — π.χ. "M3W4+9W Λαύριο" ή global
+/// "8FVC9G8F+6X". Το Places Autocomplete δεν τους καταλαβαίνει καλά ως
+/// ελεύθερο κείμενο· γι' αυτό λύνονται ξεχωριστά μέσω resolvePlusCode
+/// (Geocoding API, που τους δέχεται απευθείας — και με τοπωνύμιο μετά).
+final RegExp _plusCodeRegex = RegExp(
+  r'\b[23456789CFGHJMPQRVWX]{4,8}\+[23456789CFGHJMPQRVWX]{2,3}\b',
+  caseSensitive: false,
+);
+bool looksLikePlusCode(String input) => _plusCodeRegex.hasMatch(input.trim());
+
 /// Μια πρόβλεψη του Autocomplete (δεν έχει ακόμα συντεταγμένες).
 class PlacePrediction {
   final String placeId;
@@ -147,6 +158,25 @@ class PlacesService {
       ));
     }
     return out;
+  }
+
+  /// Λύνει έναν κωδικό τοποθεσίας Google Maps (Plus Code) σε συντεταγμένες +
+  /// διεύθυνση — proxy Geocoding API. Επιστρέφει null αν δεν βρέθηκε τίποτα.
+  static Future<PlacePick?> resolvePlusCode(String code) async {
+    final q = code.trim();
+    if (q.isEmpty) return null;
+    final data = await _call('resolvePlusCode', {'code': q});
+    final results = data['results'] as List? ?? [];
+    if (results.isEmpty) return null;
+    final r0 = results.first as Map<String, dynamic>;
+    final loc = (r0['geometry'] as Map?)?['location'] as Map?;
+    if (loc == null) return null;
+    final addr = r0['formatted_address'] as String? ?? q;
+    return PlacePick(
+      description: addr,
+      lat: (loc['lat'] as num?)?.toDouble(),
+      lng: (loc['lng'] as num?)?.toDouble(),
+    );
   }
 
   /// Λεπτομέρειες σημείου → συντεταγμένες — proxy Places API (New) place details.
@@ -471,6 +501,8 @@ class _PlaceSearchSheetState extends State<_PlaceSearchSheet> {
   bool    _loading = false;
   String? _error;
   late final String _sessionToken;
+  // Αν το τρέχον κείμενο είναι κωδικός τοποθεσίας (Plus Code) που λύθηκε.
+  PlacePick? _plusCodePick;
 
   @override
   void initState() {
@@ -504,17 +536,45 @@ class _PlaceSearchSheetState extends State<_PlaceSearchSheet> {
   }
 
   Future<void> _search(String v) async {
-    if (v.trim().length < 2) {
+    final q = v.trim();
+    if (q.length < 2) {
       setState(() {
         _results = [];
         _error   = null;
+        _plusCodePick = null;
       });
       return;
     }
     setState(() {
       _loading = true;
       _error   = null;
+      _plusCodePick = null;
     });
+
+    // Κωδικός τοποθεσίας Google Maps (Plus Code), π.χ. "M3W4+9W Λαύριο" — το
+    // autocomplete δεν τους καταλαβαίνει καλά, λύνονται ξεχωριστά.
+    if (looksLikePlusCode(q)) {
+      try {
+        final pick = await PlacesService.resolvePlusCode(q);
+        if (!mounted) return;
+        setState(() {
+          _results      = [];
+          _loading      = false;
+          _plusCodePick = pick;
+          _error = pick == null
+              ? 'Δεν βρέθηκε αυτός ο κωδικός τοποθεσίας.'
+              : null;
+        });
+      } catch (_) {
+        if (!mounted) return;
+        setState(() {
+          _loading = false;
+          _error   = 'Δεν ήταν δυνατή η εύρεση του κωδικού τοποθεσίας.';
+        });
+      }
+      return;
+    }
+
     try {
       final res = await PlacesService.autocomplete(v,
           sessionToken: _sessionToken);
@@ -572,6 +632,12 @@ class _PlaceSearchSheetState extends State<_PlaceSearchSheet> {
   void _useTyped() {
     final t = _ctrl.text.trim();
     if (t.isEmpty) return;
+    // Αν λύθηκε ήδη ως Plus Code, χρησιμοποίησε τις πραγματικές συντεταγμένες
+    // αντί για απλό κείμενο χωρίς σημείο στο χάρτη.
+    if (_plusCodePick != null) {
+      Navigator.pop(context, _PlaceSheetResult(pick: _plusCodePick));
+      return;
+    }
     Navigator.pop(
         context, _PlaceSheetResult(pick: PlacePick(description: t)));
   }
@@ -715,6 +781,28 @@ class _PlaceSearchSheetState extends State<_PlaceSearchSheet> {
     if (_loading) {
       return const Center(
           child: CircularProgressIndicator(color: Colors.amber));
+    }
+    if (_plusCodePick != null) {
+      final pick = _plusCodePick!;
+      return ListView(
+        children: [
+          ListTile(
+            leading: const CircleAvatar(
+              backgroundColor: Colors.amber,
+              child: Icon(Icons.grid_view_rounded, color: Colors.white),
+            ),
+            title: const Text('Κωδικός τοποθεσίας (Plus Code)',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+            subtitle: Text(pick.description,
+                maxLines: 2, overflow: TextOverflow.ellipsis),
+            trailing: const Icon(Icons.check_circle_rounded,
+                color: Colors.green),
+            onTap: () => Navigator.pop(
+                context, _PlaceSheetResult(pick: pick)),
+          ),
+          Divider(height: 1, color: Colors.grey.shade200),
+        ],
+      );
     }
     if (_error != null) {
       return SingleChildScrollView(

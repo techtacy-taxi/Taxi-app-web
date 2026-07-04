@@ -338,7 +338,9 @@ class _JobListenerState extends State<JobListener> with WidgetsBindingObserver {
     await showDialog<void>(
       context: ctx0,
       barrierDismissible: false,
-      builder: (ctx) => AlertDialog(
+      builder: (ctx) => PopScope(
+        canPop: false,
+        child: AlertDialog(
         shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(20)),
         title: Row(children: const [
@@ -367,6 +369,7 @@ class _JobListenerState extends State<JobListener> with WidgetsBindingObserver {
             },
           ),
         ],
+        ),
       ),
     );
     _upgradeDialogShowing = false;
@@ -537,7 +540,9 @@ class _JobListenerState extends State<JobListener> with WidgetsBindingObserver {
     await showDialog<void>(
       context: ctx0,
       barrierDismissible: false,
-      builder: (ctx) => AlertDialog(
+      builder: (ctx) => PopScope(
+        canPop: false,
+        child: AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         title: Row(children: [
           const Icon(Icons.person_add_alt_1_rounded,
@@ -577,6 +582,7 @@ class _JobListenerState extends State<JobListener> with WidgetsBindingObserver {
             },
           ),
         ],
+        ),
       ),
     );
     _approvalDialogShowing = false;
@@ -700,7 +706,9 @@ class _JobListenerState extends State<JobListener> with WidgetsBindingObserver {
     await showDialog<void>(
       context: ctx0,
       barrierDismissible: false,
-      builder: (ctx) => Dialog(
+      builder: (ctx) => PopScope(
+        canPop: false,
+        child: Dialog(
         backgroundColor: Colors.transparent,
         insetPadding: const EdgeInsets.symmetric(horizontal: 24),
         child: ClipRRect(
@@ -877,6 +885,7 @@ class _JobListenerState extends State<JobListener> with WidgetsBindingObserver {
           ),
           ),
         ),
+      ),
       ),
     );
   }
