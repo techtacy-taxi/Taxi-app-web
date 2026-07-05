@@ -384,14 +384,19 @@ Future<void> _showPublicBookingBg(
     category:         AndroidNotificationCategory.call,
     visibility:       NotificationVisibility.public,
     autoCancel:       true,
-    ongoing:          true,    // μένει μέχρι να ανοίξει η εφαρμογή ο master
+    // ΣΗΜΑΝΤΙΚΟ: ΟΧΙ ongoing:true εδώ. Σε συνδυασμό με category:call, το
+    // ongoing κάνει τη native ειδοποίηση Android να αγνοεί το tap/autoCancel
+    // σε πολλές συσκευές (συμπεριφορά σαν ενεργή κλήση) — ο ήχος συνέχιζε
+    // να παίζει ακόμα κι αφού ο master άνοιγε την εφαρμογή/πατούσε ΟΚ, μέχρι
+    // να σκοτώσει εντελώς το app. Χωρίς ongoing, το autoCancel δουλεύει
+    // κανονικά στο tap, ΚΑΙ το κουμπί «ΟΚ» παρακάτω σταματά τα πάντα σωστά.
     playSound:        true,
     audioAttributesUsage: AudioAttributesUsage.alarm,
     enableVibration:  true,
     vibrationPattern: kStrongVibration,
     enableLights:     true,
     fullScreenIntent: true,    // εμφανίζεται ακόμα & με κλειστή οθόνη
-    additionalFlags:  _kInsistent, // ΣΗΜΑΝΤΙΚΟ: χτυπάει ΣΥΝΕΧΟΜΕΝΑ (όπως νέα δουλειά), όχι μία φορά
+    additionalFlags:  _kInsistent, // χτυπάει ΣΥΝΕΧΟΜΕΝΑ μέχρι tap/OK/cancel
     styleInformation: BigTextStyleInformation(body),
     actions: const <AndroidNotificationAction>[
       AndroidNotificationAction(kActionOk, 'ΟΚ',
