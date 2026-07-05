@@ -311,6 +311,8 @@ class _AdminDriverCard extends StatelessWidget {
     final webPrice      = (data['webPrice'] as num?)?.toDouble() ?? 0.0;
     final icsPrice      = (data['icsPrice'] as num?)?.toDouble() ?? 0.0;
     final managedGroupIds = List<String>.from(data['managedGroupIds'] ?? []);
+    final tenantOwner = data['tenantOwner'] == true;
+    final tenantId    = data['tenantId'] as String? ?? '';
 
     Color roleColor;
     String roleLabel;
@@ -395,7 +397,9 @@ class _AdminDriverCard extends StatelessWidget {
                       calendarPrice: calendarPrice,
                       webPrice: webPrice,
                       icsPrice: icsPrice,
-                      managedGroupIds: managedGroupIds),
+                      managedGroupIds: managedGroupIds,
+                      tenantOwner: tenantOwner,
+                      tenantId: tenantId),
                 ),
             ]),
 
@@ -607,6 +611,8 @@ class _AdminDriverCard extends StatelessWidget {
     required double       webPrice,
     required double       icsPrice,
     required List<String> managedGroupIds,
+    required bool         tenantOwner,
+    required String       tenantId,
   }) async {
     final groupsSnap = await FirebaseFirestore.instance
         .collection('groups')
@@ -624,7 +630,9 @@ class _AdminDriverCard extends StatelessWidget {
     bool   selCalendar = calendarEnabled;
     bool   selWeb      = webEnabled;
     bool   selIcs      = icsExportEnabled;
+    bool   selTenantOwner = tenantOwner;
     final  selGroupIds = <String>{...managedGroupIds};
+    final  tenantIdCtrl = TextEditingController(text: tenantId);
 
     // Κουτάκια τιμής (€/μήνα) — ένα ανά διακόπτη.
     final calPriceCtrl = TextEditingController(
@@ -736,6 +744,72 @@ class _AdminDriverCard extends StatelessWidget {
                   )),
                 ],
 
+                ],
+
+                // ── Tenant Owner — ξεχωριστό, πρόσθετο δικαίωμα πάνω από
+                // το admin. Ξεκλειδώνει ΜΟΝΟ το μενού «Ζώνες & Τιμές» για
+                // τον δικό του tenant — τίποτα άλλο δεν αλλάζει (βλέπει
+                // κανονικά τις δικές του δουλειές/ομάδες σαν admin).
+                if (selAdmin && !selMaster) ...[
+                  const SizedBox(height: 16),
+                  const Divider(height: 1),
+                  const SizedBox(height: 10),
+                  Row(children: [
+                    Icon(Icons.storefront_rounded, size: 16, color: Colors.teal[700]),
+                    const SizedBox(width: 6),
+                    const Text('Multi-tenant',
+                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                  ]),
+                  const SizedBox(height: 8),
+                  Container(
+                    decoration: BoxDecoration(
+                      color: selTenantOwner
+                          ? Colors.teal.withValues(alpha: 0.08)
+                          : Colors.grey.shade50,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(
+                        color: selTenantOwner
+                            ? Colors.teal.withValues(alpha: 0.4)
+                            : Colors.grey.shade200,
+                      ),
+                    ),
+                    child: Column(children: [
+                      SwitchListTile(
+                        dense: true,
+                        activeThumbColor: Colors.teal,
+                        secondary: Icon(Icons.price_change_rounded,
+                            color: selTenantOwner ? Colors.teal : Colors.grey),
+                        title: const Text('Tenant Owner',
+                            style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+                        subtitle: const Text(
+                            'Βλέπει επιπλέον «Ζώνες & Τιμές» — μόνο τις δικές του',
+                            style: TextStyle(fontSize: 11)),
+                        value: selTenantOwner,
+                        onChanged: (v) => setS(() => selTenantOwner = v),
+                      ),
+                      if (selTenantOwner)
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                          child: TextField(
+                            controller: tenantIdCtrl,
+                            style: const TextStyle(fontSize: 13),
+                            decoration: const InputDecoration(
+                              isDense: true,
+                              labelText: 'Tenant ID',
+                              labelStyle: TextStyle(fontSize: 12),
+                              helperText: 'π.χ. rhodes_taxi — από το Create Tenant',
+                              helperStyle: TextStyle(fontSize: 10),
+                              prefixIcon: Icon(Icons.badge_rounded, size: 18, color: Colors.teal),
+                              border: OutlineInputBorder(),
+                              contentPadding:
+                                  EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                            ),
+                          ),
+                        ),
+                    ]),
+                  ),
+                ],
+
                 // ── Πρόσβαση (admin ή master) ────────────────────
                 if (selAdmin || selMaster) ...[
                   const SizedBox(height: 16),
@@ -813,6 +887,8 @@ class _AdminDriverCard extends StatelessWidget {
                   calendarPrice:    parsePrice(calPriceCtrl),
                   webPrice:         parsePrice(webPriceCtrl),
                   icsPrice:         parsePrice(icsPriceCtrl),
+                  tenantOwner:      selTenantOwner,
+                  tenantId:         tenantIdCtrl.text.trim(),
                   managedGroupIds:  selGroupIds.toList(),
                 );
               },
@@ -947,6 +1023,8 @@ class _AdminDriverCard extends StatelessWidget {
     required double       webPrice,
     required double       icsPrice,
     required List<String> managedGroupIds,
+    required bool         tenantOwner,
+    required String       tenantId,
   }) async {
     final fs = FirebaseFirestore.instance;
 
@@ -961,6 +1039,13 @@ class _AdminDriverCard extends StatelessWidget {
       'webPrice':         webPrice,
       'icsPrice':         icsPrice,
       'managedGroupIds':  managedGroupIds,
+      // Multi-tenant: αν δεν είναι tenantOwner, ΔΕΝ σβήνουμε τυχόν
+      // tenantId — μένει "ό,τι ήταν" ώστε οι δουλειές του να συνεχίσουν να
+      // ανήκουν στον σωστό tenant ακόμα κι αν προσωρινά αφαιρεθεί το
+      // tenantOwner flag (π.χ. αν θες να του κλείσεις μόνο το μενού
+      // Ζώνες & Τιμές χωρίς να χαλάσεις τίποτα άλλο).
+      'tenantOwner': tenantOwner,
+      if (tenantId.isNotEmpty) 'tenantId': tenantId,
     });
 
     // 2. Συγχρόνισε adminUids σε όλες τις ομάδες

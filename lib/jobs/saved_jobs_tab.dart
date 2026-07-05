@@ -21,6 +21,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../voice/recipient_picker.dart';
 import '../voice/voice_models.dart';
@@ -61,9 +62,35 @@ class _SavedJobsTabState extends State<SavedJobsTab> {
   Map<String, ShareLevel> _shared = const {};
   StreamSubscription<Map<String, ShareLevel>>? _shareSub;
 
+  // ── Multi-tenant ──────────────────────────────────────────────────────
+  // Ο master (εσύ, super-admin) βλέπει τα πάντα χωρίς φίλτρο (όπως πριν).
+  // Κάθε άλλος (admin/tenant-owner) χρειάζεται το ΔΙΚΟ ΤΟΥ tenantId ώστε το
+  // query να φιλτράρεται σωστά — αλλιώς, μόλις υπάρξουν docs άλλου tenant
+  // στο ίδιο collection, το ΑΦΙΛΤΡΑΡΙΣΤΟ query θα απέτυχε εντελώς (Firestore
+  // απορρίπτει ολόκληρο το query αν έστω ένα doc αποτυγχάνει τους κανόνες).
+  String? _myTenantId;
+  bool _tenantLoaded = false;
+
+  Future<void> _loadMyTenantId() async {
+    if (widget.isMaster) {
+      // Ο master δεν χρειάζεται φίλτρο — βλέπει τα πάντα, όπως πάντα.
+      if (mounted) setState(() => _tenantLoaded = true);
+      return;
+    }
+    try {
+      final doc = await FirebaseFirestore.instance
+          .collection('presence').doc(widget.adminUid).get();
+      final tid = (doc.data()?['tenantId'] as String?) ?? 'default';
+      if (mounted) setState(() { _myTenantId = tid; _tenantLoaded = true; });
+    } catch (_) {
+      if (mounted) setState(() { _myTenantId = 'default'; _tenantLoaded = true; });
+    }
+  }
+
   @override
   void initState() {
     super.initState();
+    _loadMyTenantId();
     // Ο master βλέπει ούτως ή άλλως τα πάντα — δεν χρειάζεται shares.
     if (!widget.isMaster) {
       _shareSub = ShareService.sharedOwnersStream(widget.adminUid).listen((m) {
@@ -87,13 +114,16 @@ class _SavedJobsTabState extends State<SavedJobsTab> {
 
   @override
   Widget build(BuildContext context) {
+    if (!_tenantLoaded) {
+      return const Center(child: CircularProgressIndicator());
+    }
     // master → όλες· admin → δικές του + όσων του έχουν δώσει πρόσβαση
     final Stream<List<SavedJob>> stream;
     if (widget.isMaster) {
       stream = SavedJobService.stream(ownerUid: null);
     } else {
       final owners = <String>{widget.adminUid, ..._shared.keys};
-      stream = SavedJobService.streamForOwners(owners);
+      stream = SavedJobService.streamForOwners(owners, tenantId: _myTenantId);
     }
 
     return StreamBuilder<List<SavedJob>>(

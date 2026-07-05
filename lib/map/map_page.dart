@@ -65,6 +65,7 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
   bool   _isApproved        = false;
   bool   _isAdmin           = false;
   bool   _isMaster          = false;
+  bool   _isTenantOwner     = false; // multi-tenant: βλέπει μόνο Ζώνες & Τιμές (δικές του)
   bool   _calendarEnabled   = false; // master controls per-admin calendar access
   bool   _isMuted           = false;
   List<String> _managedGroupIds = []; // ομάδες που διαχειρίζεται ο admin
@@ -138,6 +139,7 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
             _isApproved   = data['isApproved']   ?? false;
             _isAdmin      = data['admin']        ?? false;
             _isMaster     = data['master']       ?? false;
+            _isTenantOwner = data['tenantOwner'] ?? false;
             _calendarEnabled = data['calendarEnabled'] ?? false;
             _managedGroupIds = List<String>.from(data['managedGroupIds'] ?? []);
             if ((data['vehicleType'] as String?) == VehicleType.van.name) {
@@ -167,7 +169,10 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
     if ((_isAdmin || _isMaster) && _uid != null) {
       try { OwnerAlerts.instance.start(_uid!); } catch (_) {}
     }
-    if (_isMaster) {
+    // Ειδοποιήσεις «νέα κράτηση από φόρμα» — ενεργές για ΚΑΘΕ admin/master
+    // (όχι μόνο master πια). Το ownerUid φίλτρο μέσα στο PublicBookingAlerts
+    // εξασφαλίζει ότι ο καθένας βλέπει/ακούει ΜΟΝΟ τις δικές του κρατήσεις.
+    if (_isAdmin || _isMaster) {
       try { PublicBookingAlerts.instance.start(); } catch (_) {}
     }
     _lastPublishedPosition = null;
@@ -260,6 +265,7 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
           _isApproved      = doc.data()?['isApproved']       ?? false;
           _isAdmin         = doc.data()?['admin']             ?? false;
           _isMaster        = doc.data()?['master']            ?? false;
+          _isTenantOwner   = doc.data()?['tenantOwner']        ?? false;
           _calendarEnabled = doc.data()?['calendarEnabled']   ?? false;
           _managedGroupIds = List<String>.from(
               doc.data()?['managedGroupIds'] ?? []);
@@ -270,8 +276,9 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
         } else {
           OwnerAlerts.instance.stop();
         }
-        // Ειδοποιήσεις «νέα κράτηση από φόρμα»: μόνο για master.
-        if (_isMaster) {
+        // Ειδοποιήσεις «νέα κράτηση από φόρμα» — ενεργές για κάθε admin/
+        // master. Το ownerUid φίλτρο εξασφαλίζει σωστή απομόνωση ανά tenant.
+        if (_isAdmin || _isMaster) {
           PublicBookingAlerts.instance.start();
         } else {
           PublicBookingAlerts.instance.dispose();
@@ -1079,9 +1086,9 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
                           ),
                         ]),
                       ),
-                    if (_isMaster) const PopupMenuDivider(),
-                    // Ζώνες & Τιμές (φόρμα κράτησης) — μόνο για master
-                    if (_isMaster)
+                    if (_isMaster || _isTenantOwner) const PopupMenuDivider(),
+                    // Ζώνες & Τιμές (φόρμα κράτησης) — master ή tenantOwner
+                    if (_isMaster || _isTenantOwner)
                       PopupMenuItem(
                         value: MenuAction.pricingZones,
                         child: Row(children: [

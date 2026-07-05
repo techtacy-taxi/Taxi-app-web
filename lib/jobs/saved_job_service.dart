@@ -150,10 +150,17 @@ class SavedJobService {
   }
 
   /// Stream αποθηκευμένων για συγκεκριμένη λίστα owner uids (δικές μου + κοινές).
-  /// Client-side φιλτράρισμα πάνω σε όλο το collection — ίδιο κόστος ανάγνωσης
-  /// με τον master, δεν προσθέτει writes.
-  static Stream<List<SavedJob>> streamForOwners(Set<String> ownerUids) {
-    return _fs.collection(_coll).snapshots().map((snap) {
+  /// [tenantId]: ΑΠΑΡΑΙΤΗΤΟ για μη-master χρήστες (multi-tenant) — φιλτράρει
+  /// το ίδιο το Firestore query, ώστε να μην αποτύχει όταν υπάρχουν docs
+  /// άλλου tenant στο ίδιο collection (Firestore απορρίπτει ολόκληρο το
+  /// query αν έστω ένα doc αποτυγχάνει τους κανόνες ασφαλείας). Ο master
+  /// (tenantId == null) συνεχίζει να παίρνει τα πάντα, όπως πριν.
+  static Stream<List<SavedJob>> streamForOwners(Set<String> ownerUids, {String? tenantId}) {
+    Query<Map<String, dynamic>> q = _fs.collection(_coll);
+    if (tenantId != null) {
+      q = q.where('tenantId', isEqualTo: tenantId);
+    }
+    return q.snapshots().map((snap) {
       final all = snap.docs
           .map((d) => SavedJob.fromDoc(d))
           .where((s) => ownerUids.contains(s.ownerUid))

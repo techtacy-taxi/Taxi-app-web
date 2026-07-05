@@ -2,6 +2,8 @@ const { onDocumentCreated, onDocumentUpdated } = require("firebase-functions/v2/
 const { initializeApp }   = require("firebase-admin/app");
 const { getFirestore, FieldValue }    = require("firebase-admin/firestore");
 const { getMessaging }    = require("firebase-admin/messaging");
+const { getAuth }         = require("firebase-admin/auth");
+const { SecretManagerServiceClient } = require("@google-cloud/secret-manager");
 
 initializeApp();
 
@@ -801,10 +803,23 @@ async function freshAccessTokenFor(uid) {
 }
 
 // ─── Βρες τον (πρώτο) master ─────────────────────────────────────────────────
-async function findMasterUid() {
-  const snap = await getFirestore().collection("presence")
-    .where("master", "==", true).limit(1).get();
-  return snap.empty ? null : snap.docs[0].id;
+async function findMasterUid(tenantId) {
+  const tid = tenantId || "default";
+  const db = getFirestore();
+  const masterSnap = await db.collection("presence")
+    .where("master", "==", true)
+    .where("tenantId", "==", tid)
+    .limit(1).get();
+  if (!masterSnap.empty) return masterSnap.docs[0].id;
+
+  // Fallback: ο tenant δεν έχει master (νέο μοντέλο multi-tenant — ο
+  // πελάτης είναι admin + tenantOwner, όχι master) — ειδοποιούμε τον
+  // πρώτο admin που βρεθεί σε αυτόν τον tenant.
+  const adminSnap = await db.collection("presence")
+    .where("admin", "==", true)
+    .where("tenantId", "==", tid)
+    .limit(1).get();
+  return adminSnap.empty ? null : adminSnap.docs[0].id;
 }
 
 // ─── Μήνας/έτος ΣΕ ΩΡΑ ΕΛΛΑΔΑΣ για ένα Date ─────────────────────────────────
@@ -2238,16 +2253,31 @@ function matchZone(lat, lng, zones) {
 }
 
 // ── Ρυθμίσεις τιμολόγησης (ζώνες + διαδρομές + δυναμικός τύπος), cache 60″ ──
-let _pricingCache = null;
-let _pricingCacheAt = 0;
-async function getPricingData() {
+// ΝΕΟ (multi-tenant, Φάση 3): ξεχωριστό cache + ξεχωριστά δεδομένα ανά
+// tenantId. Ο δικός σου tenant ("default") συνεχίζει να χρησιμοποιεί
+// ΑΚΡΙΒΩΣ τα ίδια docs που χρησιμοποιούσε πάντα (app_settings/pricing,
+// pricing_zones/pricing_routes ΧΩΡΙΣ tenantId filter — για συμβατότητα με
+// τα δικά σου δεδομένα πριν το backfillDefaultTenantId).
+const _pricingCacheByTenant = new Map(); // tenantId -> { data, at }
+async function getPricingData(tenantId) {
+  const tid = tenantId || "default";
   const now = Date.now();
-  if (_pricingCache && now - _pricingCacheAt < 60000) return _pricingCache;
+  const cached = _pricingCacheByTenant.get(tid);
+  if (cached && now - cached.at < 60000) return cached.data;
+
   const db = getFirestore();
+  const zonesQuery = tid === "default"
+    ? db.collection("pricing_zones")
+    : db.collection("pricing_zones").where("tenantId", "==", tid);
+  const routesQuery = tid === "default"
+    ? db.collection("pricing_routes")
+    : db.collection("pricing_routes").where("tenantId", "==", tid);
+  const cfgDocRef = tid === "default"
+    ? db.collection("app_settings").doc("pricing")
+    : db.collection("tenant_pricing_settings").doc(tid);
+
   const [zonesSnap, routesSnap, cfgDoc] = await Promise.all([
-    db.collection("pricing_zones").get(),
-    db.collection("pricing_routes").get(),
-    db.collection("app_settings").doc("pricing").get(),
+    zonesQuery.get(), routesQuery.get(), cfgDocRef.get(),
   ]);
   const zones = zonesSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
   const routes = {};
@@ -2265,9 +2295,9 @@ async function getPricingData() {
     },
     cfgDoc.exists ? cfgDoc.data() : {}
   );
-  _pricingCache = { zones, routes, cfg };
-  _pricingCacheAt = now;
-  return _pricingCache;
+  const result = { zones, routes, cfg };
+  _pricingCacheByTenant.set(tid, { data: result, at: now });
+  return result;
 }
 
 // ── Κεντρικός υπολογισμός τιμής (ζώνη ή δυναμικός τύπος + νυχτερινό) ───────
@@ -2287,8 +2317,9 @@ async function computeEstimate({
   fromLat, fromLng, toLat, toLng, persons, luggage, childSeatCount,
   vehicleType, isGreek, scheduledNaive, apiKey,
   cachedDistanceKm, cachedDurationMin, cachedRoutePolyline, needMap,
+  tenantId,
 }) {
-  const { zones, routes, cfg } = await getPricingData();
+  const { zones, routes, cfg } = await getPricingData(tenantId);
   const forced = persons >= 5 || luggage >= 5;
   const vehicle = forced ? "van" : (vehicleType === "van" ? "van" : "taxi");
 
@@ -2503,6 +2534,7 @@ exports.estimatePrice = onRequest(
         cachedDurationMin: num(b.cachedDurationMin),
         cachedRoutePolyline: b.cachedRoutePolyline || null,
         needMap: b.needMap === true,
+        tenantId: s(b.tenantId) || "default",
       });
       if (result.outsideAttica && !gateReasons.includes("outside_attica")) {
         gateReasons.push("outside_attica");
@@ -3059,11 +3091,32 @@ exports.createVivaOrder = onRequest(
     if (req.method !== "POST") return res.status(405).json({ ok: false, error: "method_not_allowed" });
     try {
       const b = req.body || {};
+      const tenantId = s(b.tenantId) || "default";
       const from = s(b.from), to = s(b.to);
       const name = s(b.name), phone = s(b.phone);
       const date = s(b.date), time = s(b.time);
       if (!from || !to || !name || !phone || !date || !time) {
         return res.status(400).json({ ok: false, error: "missing_fields" });
+      }
+
+      // ── Multi-tenant: αν δεν είναι ο δικός σου ("default") tenant, φόρτωσε
+      // τα στοιχεία του (active status από Firestore, Viva credentials από
+      // Secret Manager) — ΠΡΙΝ συνεχίσουμε.
+      let tenantCfg = null;
+      let tenantViva = null;
+      if (tenantId !== "default") {
+        const tenantDoc = await getFirestore().collection("tenants").doc(tenantId).get();
+        if (!tenantDoc.exists) {
+          return res.status(400).json({ ok: false, error: "unknown_tenant" });
+        }
+        tenantCfg = tenantDoc.data();
+        if (tenantCfg.active === false) {
+          return res.status(403).json({ ok: false, error: "tenant_inactive" });
+        }
+        tenantViva = await getTenantVivaCredentials(tenantId);
+        if (!tenantViva.clientId || !tenantViva.clientSecret) {
+          return res.status(500).json({ ok: false, error: "tenant_viva_not_configured" });
+        }
       }
 
       const persons = Math.max(1, parseInt(b.persons, 10) || 1);
@@ -3092,6 +3145,7 @@ exports.createVivaOrder = onRequest(
         needMap: true, // ΠΑΝΤΑ εδώ — πραγματική κράτηση, αποθηκεύουμε
         // distance/duration/polyline ΜΙΑ φορά ώστε η εφαρμογή (Flutter) να
         // μην τα ξαναϋπολογίζει ζωντανά κάθε φορά που ανοίγει την κάρτα.
+        tenantId,
       });
       if (estimate.outsideAttica && !gateReasons.includes("outside_attica")) {
         gateReasons.push("outside_attica");
@@ -3128,6 +3182,7 @@ exports.createVivaOrder = onRequest(
       const db = getFirestore();
       const pendingRef = await db.collection("pending_bookings").add({
         status: "pending",
+        tenantId,
         from, to, fromLat, fromLng, toLat, toLng,
         clientName: name, clientPhone: phone, clientEmail: email,
         flightOrShip: flight, persons, luggage, childSeatCount,
@@ -3141,9 +3196,11 @@ exports.createVivaOrder = onRequest(
         createdAt: FieldValue.serverTimestamp(),
       });
 
-      const demo = vivaIsDemo(VIVA_DEMO.value());
+      const demo = tenantCfg ? tenantCfg.vivaDemo !== false : vivaIsDemo(VIVA_DEMO.value());
       const hosts = vivaHosts(demo);
-      const accessToken = await getVivaAccessToken(demo, VIVA_CLIENT_ID.value(), VIVA_CLIENT_SECRET.value());
+      const vClientId = tenantViva ? tenantViva.clientId : VIVA_CLIENT_ID.value();
+      const vClientSecret = tenantViva ? tenantViva.clientSecret : VIVA_CLIENT_SECRET.value();
+      const accessToken = await getVivaAccessToken(demo, vClientId, vClientSecret);
       if (!accessToken) {
         await pendingRef.delete().catch(() => {});
         return res.status(500).json({ ok: false, error: "viva_auth_error" });
@@ -3166,7 +3223,7 @@ exports.createVivaOrder = onRequest(
           },
           paymentTimeout: 1800, // 30 λεπτά — μετά λήγει το order (καμία χρέωση)
           merchantTrns: pendingRef.id, // ← ΤΟ ΚΛΕΙΔΙ που συνδέει Viva order ↔ pending_bookings doc
-          sourceCode: "1325", // Source «TaxiAthensTransfers Booking»
+          sourceCode: tenantCfg ? (tenantCfg.vivaSourceCode || "Default") : "1325",
         }),
       });
       if (!orderResp.ok) {
@@ -3199,7 +3256,24 @@ exports.vivaWebhook = onRequest(
     secrets: [GCAL_CLIENT_SECRET, VIVA_MERCHANT_ID, VIVA_API_KEY, VIVA_DEMO],
   },
   async (req, res) => {
-    const demo = vivaIsDemo(VIVA_DEMO.value());
+    // ── Multi-tenant: κάθε tenant καταχωρεί το webhook URL με ?tenantId=xyz
+    // στο ΔΙΚΟ ΤΟΥ Viva dashboard, ώστε να ξέρουμε ποια credentials να
+    // χρησιμοποιήσουμε για την επαλήθευση GET. Ο δικός σου ("default")
+    // tenant συνεχίζει να δουλεύει ΧΩΡΙΣ τίποτα στο URL, όπως πάντα.
+    const webhookTenantId = s(req.query && req.query.tenantId) || "default";
+    let vMerchantId = VIVA_MERCHANT_ID.value();
+    let vApiKey = VIVA_API_KEY.value();
+    let demo = vivaIsDemo(VIVA_DEMO.value());
+    if (webhookTenantId !== "default") {
+      const tDoc = await getFirestore().collection("tenants").doc(webhookTenantId).get();
+      if (tDoc.exists) {
+        const t = tDoc.data();
+        demo = t.vivaDemo !== false;
+        const creds = await getTenantVivaCredentials(webhookTenantId);
+        vMerchantId = creds.merchantId || vMerchantId;
+        vApiKey = creds.apiKey || vApiKey;
+      }
+    }
     const hosts = vivaHosts(demo);
 
     // ── GET: η Viva επαληθεύει ότι ο server μας ελέγχεται από εμάς.
@@ -3207,7 +3281,7 @@ exports.vivaWebhook = onRequest(
     //    [hosts.web]/api/messages/config/token (ΟΧΙ hosts.api).
     if (req.method === "GET") {
       try {
-        const basic = Buffer.from(VIVA_MERCHANT_ID.value() + ":" + VIVA_API_KEY.value()).toString("base64");
+        const basic = Buffer.from(vMerchantId + ":" + vApiKey).toString("base64");
         const resp = await fetch(hosts.web + "/api/messages/config/token", {
           method: "GET",
           headers: { "Authorization": "Basic " + basic },
@@ -3265,9 +3339,9 @@ exports.vivaWebhook = onRequest(
         return res.status(200).json({ ok: true, ignored: true, reason: "amount_mismatch" });
       }
 
-      const masterUid = await findMasterUid();
+      const masterUid = await findMasterUid(pd.tenantId);
       if (!masterUid) {
-        console.error("vivaWebhook: δεν βρέθηκε master");
+        console.error("vivaWebhook: δεν βρέθηκε master", { tenantId: pd.tenantId });
         return res.status(200).json({ ok: true, error: "no_master" });
       }
       const me = await db.collection("presence").doc(masterUid).get();
@@ -3294,6 +3368,7 @@ exports.vivaWebhook = onRequest(
       const { Timestamp } = require("firebase-admin/firestore");
       const savedRef = await db.collection("saved_jobs").add({
         origin:         "public_form",
+        tenantId:       pd.tenantId || "default",
         from:           pd.from,
         to:             pd.to,
         fromLat:        pd.fromLat,
@@ -3374,5 +3449,297 @@ exports.vivaWebhook = onRequest(
       // πάντως καταγράφεται στα logs (console.error) για να το δεις.
       return res.status(200).json({ ok: false, error: "server_error" });
     }
+  }
+);
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  MULTI-TENANT — Φάση 1: onboarding νέου tenant
+//
+//  createTenant — ΜΟΝΟ ο super-admin (εσύ, techtacy@gmail.com) μπορεί να το
+//  καλέσει. Δημιουργεί:
+//   1) tenants/{tenantId} doc — όνομα επιχείρησης, Viva credentials/source
+//      code (ΠΟΤΕ δεν εκτίθενται σε client — μόνο Cloud Functions τα διαβάζουν
+//      μέσω Admin SDK, που παρακάμπτει τα Firestore rules).
+//   2) presence/{masterUid}.tenantId = tenantId, master:true, isApproved:true
+//      — ο νέος πελάτης γίνεται αμέσως master ΤΟΥ ΔΙΚΟΥ ΤΟΥ tenant.
+//
+//  Ο νέος master πρέπει ΠΡΩΤΑ να έχει κάνει τουλάχιστον ένα login στην
+//  εφαρμογή (ώστε να υπάρχει το Firebase Auth account του) — μετά καλείς
+//  αυτή τη function με το email του.
+//
+//  ⚠️ Αυτό ΔΕΝ αγγίζει καθόλου τα δικά σου (tenant "default") δεδομένα.
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  MULTI-TENANT — Secret Manager (ασφαλής αποθήκευση Viva credentials)
+//
+//  ΑΝΤΙ να αποθηκεύουμε τα Viva credentials σαν απλά πεδία στο tenants/{id}
+//  Firestore doc, δημιουργούμε ΞΕΧΩΡΙΣΤΟ Google Secret Manager secret ανά
+//  credential ανά tenant, δυναμικά (runtime), με το ίδιο επίπεδο προστασίας
+//  (κρυπτογράφηση + IAM audit log) που έχουν και τα δικά σου secrets
+//  (VIVA_CLIENT_ID κλπ, μέσω defineSecret). Το Firestore tenants/{id} doc
+//  κρατάει ΜΟΝΟ μη-ευαίσθητα στοιχεία (όνομα, email, active, sourceCode).
+//
+//  ⚠️ ΑΠΑΙΤΕΙΤΑΙ: το service account των Cloud Functions
+//  (PROJECT_ID@appspot.gserviceaccount.com, ή το compute default SA) χρειάζεται
+//  τους ρόλους "Secret Manager Admin" (roles/secretmanager.admin) στο GCP
+//  IAM, ώστε να μπορεί να ΔΗΜΙΟΥΡΓΕΙ νέα secrets δυναμικά (όχι μόνο να τα
+//  διαβάζει). Χωρίς αυτό το δικαίωμα, το createTenant θα αποτύχει.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const _secretManagerClient = new SecretManagerServiceClient();
+const _gcpProjectId = process.env.GCLOUD_PROJECT || process.env.GOOGLE_CLOUD_PROJECT || "my-taxi-app-bbc7c";
+
+// Δημιουργεί (αν δεν υπάρχει) ένα secret και προσθέτει μια νέα έκδοση με
+// την τιμή του. Ασφαλές να καλείται ξανά (idempotent ως προς τη δημιουργία).
+async function upsertSecret(secretId, value) {
+  const parent = `projects/${_gcpProjectId}`;
+  const secretName = `${parent}/secrets/${secretId}`;
+  try {
+    await _secretManagerClient.getSecret({ name: secretName });
+  } catch (e) {
+    // Δεν υπάρχει ακόμα — το δημιουργούμε.
+    await _secretManagerClient.createSecret({
+      parent,
+      secretId,
+      secret: { replication: { automatic: {} } },
+    });
+  }
+  await _secretManagerClient.addSecretVersion({
+    parent: secretName,
+    payload: { data: Buffer.from(value, "utf8") },
+  });
+}
+
+// Cache 10 λεπτών ανά secret ώστε να μην χτυπάμε το Secret Manager σε κάθε
+// μία κράτηση (Secret Manager API έχει και δικό του κόστος ανά πρόσβαση).
+const _secretValueCache = new Map(); // secretId -> { value, at }
+async function readSecret(secretId) {
+  const now = Date.now();
+  const cached = _secretValueCache.get(secretId);
+  if (cached && now - cached.at < 10 * 60 * 1000) return cached.value;
+  try {
+    const [version] = await _secretManagerClient.accessSecretVersion({
+      name: `projects/${_gcpProjectId}/secrets/${secretId}/versions/latest`,
+    });
+    const value = version.payload.data.toString("utf8");
+    _secretValueCache.set(secretId, { value, at: now });
+    return value;
+  } catch (e) {
+    console.error("readSecret error για", secretId, ":", e.message);
+    return null;
+  }
+}
+
+// Ονόματα secrets ανά tenant (σταθερό, προβλέψιμο μοτίβο — δεν χρειάζεται
+// να αποθηκεύουμε τίποτα στο Firestore για να τα ξαναβρούμε).
+function tenantSecretId(tenantId, field) {
+  return `tenant-${tenantId}-${field}`;
+}
+
+async function getTenantVivaCredentials(tenantId) {
+  const [clientId, clientSecret, merchantId, apiKey] = await Promise.all([
+    readSecret(tenantSecretId(tenantId, "viva-client-id")),
+    readSecret(tenantSecretId(tenantId, "viva-client-secret")),
+    readSecret(tenantSecretId(tenantId, "viva-merchant-id")),
+    readSecret(tenantSecretId(tenantId, "viva-api-key")),
+  ]);
+  return { clientId, clientSecret, merchantId, apiKey };
+}
+
+exports.createTenant = onCall(
+  { region: "us-central1" },
+  async (request) => {
+    // ── Μόνο ο super-admin μπορεί να δημιουργήσει νέο tenant ──
+    if (!request.auth || request.auth.token.email !== "techtacy@gmail.com") {
+      throw new HttpsError("permission-denied", "Μόνο ο super-admin μπορεί να δημιουργήσει tenant.");
+    }
+
+    const d = request.data || {};
+    const tenantId = s(d.tenantId);
+    const businessName = s(d.businessName);
+    const masterEmailInput = s(d.masterEmail);
+    if (!tenantId || !businessName || !masterEmailInput) {
+      throw new HttpsError("invalid-argument", "Χρειάζονται tenantId, businessName, masterEmail.");
+    }
+    if (tenantId === "default") {
+      throw new HttpsError("invalid-argument", "Το 'default' είναι δεσμευμένο για τον δικό σου λογαριασμό.");
+    }
+
+    const db = getFirestore();
+    const existing = await db.collection("tenants").doc(tenantId).get();
+    if (existing.exists) {
+      throw new HttpsError("already-exists", "Υπάρχει ήδη tenant με αυτό το tenantId.");
+    }
+
+    // ── Βρες το Firebase Auth uid του νέου master βάσει email ──
+    // (πρέπει να έχει ήδη κάνει τουλάχιστον ένα login/signup στην εφαρμογή)
+    let masterUid;
+    try {
+      const userRecord = await getAuth().getUserByEmail(masterEmailInput);
+      masterUid = userRecord.uid;
+    } catch (e) {
+      throw new HttpsError("not-found",
+        "Δεν βρέθηκε λογαριασμός με αυτό το email — ο πελάτης πρέπει πρώτα να κάνει login στην εφαρμογή.");
+    }
+
+    // ── 1) Δημιουργία tenants/{tenantId} — ΜΟΝΟ μη-ευαίσθητα στοιχεία ──
+    // Τα Viva credentials (Client ID/Secret/Merchant ID/API Key) ΔΕΝ
+    // αποθηκεύονται εδώ πια — πάνε στο Secret Manager (βλ. παρακάτω).
+    await db.collection("tenants").doc(tenantId).set({
+      businessName,
+      masterEmail: masterEmailInput,
+      masterUid,
+      active: true, // ⚠️ αν γίνει false, ο tenant ΔΕΝ μπορεί να δεχτεί νέες κρατήσεις/πληρωμές
+      vivaSourceCode:   s(d.vivaSourceCode)   || null, // ΔΕΝ είναι μυστικό, μπορεί να μείνει εδώ
+      vivaDemo:         d.vivaDemo !== false, // default true (ασφαλές, demo)
+      hasVivaCredentials: !!(s(d.vivaClientId) && s(d.vivaClientSecret)),
+      createdAt: FieldValue.serverTimestamp(),
+      createdBy: "techtacy@gmail.com",
+    });
+
+    // ── 1β) Viva credentials → Secret Manager (ΟΧΙ Firestore) ──
+    // Δημιουργούμε δυναμικά ένα ξεχωριστό, κρυπτογραφημένο secret ανά
+    // credential — ίδιο επίπεδο προστασίας με τα δικά σου (VIVA_CLIENT_ID
+    // κλπ). Αν κάποιο πεδίο λείπει τώρα, μπορεί να προστεθεί αργότερα
+    // (κάλεσε ξανά αυτή τη λειτουργία / πρόσθεσε νέο endpoint update).
+    const vivaFields = {
+      "viva-client-id":     s(d.vivaClientId),
+      "viva-client-secret": s(d.vivaClientSecret),
+      "viva-merchant-id":   s(d.vivaMerchantId),
+      "viva-api-key":       s(d.vivaApiKey),
+    };
+    for (const [field, value] of Object.entries(vivaFields)) {
+      if (value) {
+        try {
+          await upsertSecret(tenantSecretId(tenantId, field), value);
+        } catch (e) {
+          console.error("createTenant: αποτυχία αποθήκευσης secret", field, e.message);
+          throw new HttpsError("internal",
+            "Αποτυχία αποθήκευσης Viva credential στο Secret Manager: " + e.message +
+            " (έλεγξε ότι το service account έχει τον ρόλο Secret Manager Admin)");
+        }
+      }
+    }
+
+    // ── 2) Ενημέρωση presence/{masterUid} — ΜΟΝΟ tenantId + isApproved.
+    // Το admin/tenantOwner ΔΕΝ τα θέτουμε εδώ αυτόματα πια — τα ορίζεις εσύ
+    // χειροκίνητα μέσω της σελίδας «Διαχειριστές» (masters_admin_page.dart),
+    // ώστε να αποφασίζεις ρητά τι ρόλο/ομάδα θα έχει ο καθένας. Έτσι
+    // αποφεύγουμε να δώσουμε πλήρη master δικαιώματα σε κάποιον πελάτη
+    // κατά λάθος — γίνεται μόνο admin + tenantOwner, ρητά, από σένα.
+    await db.collection("presence").doc(masterUid).set({
+      tenantId,
+      isApproved: true,
+    }, { merge: true });
+
+    console.log("createTenant: νέος tenant", tenantId, "για", masterEmailInput);
+    return { ok: true, tenantId, masterUid };
+  }
+);
+
+// ── setTenantActive: «κλείδωμα»/ενεργοποίηση tenant — μόνο ο super-admin ──
+// Όταν active:false, ο tenant ΔΕΝ μπορεί πλέον να δεχτεί νέες κρατήσεις/
+// πληρωμές μέσω της δικής του booking.html (ελέγχεται στο createVivaOrder
+// στη Φάση 3, όταν το tenantId μπει πλήρως στη ροή). Οι ΥΠΑΡΧΟΥΣΕΣ δουλειές/
+// δεδομένα του ΔΕΝ διαγράφονται — απλά «παγώνει» η δυνατότητα νέων.
+exports.setTenantActive = onCall(
+  { region: "us-central1" },
+  async (request) => {
+    if (!request.auth || request.auth.token.email !== "techtacy@gmail.com") {
+      throw new HttpsError("permission-denied", "Μόνο ο super-admin μπορεί να το αλλάξει.");
+    }
+    const d = request.data || {};
+    const tenantId = s(d.tenantId);
+    if (!tenantId || tenantId === "default") {
+      throw new HttpsError("invalid-argument", "Μη έγκυρο tenantId.");
+    }
+    const db = getFirestore();
+    const ref = db.collection("tenants").doc(tenantId);
+    const doc = await ref.get();
+    if (!doc.exists) throw new HttpsError("not-found", "Δεν βρέθηκε αυτός ο tenant.");
+    await ref.update({ active: d.active === true });
+    return { ok: true, tenantId, active: d.active === true };
+  }
+);
+
+// ── listTenants: λίστα όλων των tenants — μόνο ο super-admin ──
+exports.listTenants = onCall(
+  { region: "us-central1" },
+  async (request) => {
+    if (!request.auth || request.auth.token.email !== "techtacy@gmail.com") {
+      throw new HttpsError("permission-denied", "Μόνο ο super-admin μπορεί να τα δει.");
+    }
+    const db = getFirestore();
+    const snap = await db.collection("tenants").orderBy("createdAt", "desc").get();
+    const tenants = snap.docs.map((doc) => {
+      const t = doc.data();
+      return {
+        tenantId: doc.id,
+        businessName: t.businessName || "",
+        masterEmail: t.masterEmail || "",
+        active: t.active !== false,
+        vivaDemo: t.vivaDemo !== false,
+        hasVivaCredentials: t.hasVivaCredentials === true,
+      };
+    });
+    return { ok: true, tenants };
+  }
+);
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  MULTI-TENANT — Φάση 2 πρώτο βήμα: εφάπαξ «γέμισμα» tenantId:'default'
+//
+//  ΚΡΙΣΙΜΟ: το Firestore απορρίπτει ΟΛΟΚΛΗΡΟ ένα query (π.χ. «όλες οι ζώνες
+//  τιμών») αν έστω ΕΝΑ doc μέσα στο collection αποτυγχάνει τους κανόνες για
+//  τον τρέχοντα χρήστη — ΑΚΟΜΑ ΚΙ ΑΝ ο client δεν το ζήτησε ρητά. Άρα μόλις
+//  υπάρξει 2ος tenant με δικά του docs στο ΙΔΙΟ collection (π.χ. pricing_zones),
+//  τα δικά σου (χωρίς tenantId) queries θα σταματήσουν να δουλεύουν, ΕΚΤΟΣ αν
+//  κάθε doc έχει ήδη ρητά tenantId:'default' ώστε το query να μπορεί να
+//  φιλτράρει σωστά με .where('tenantId','==','default').
+//
+//  Αυτή η function γράφει tenantId:'default' σε ΚΑΘΕ doc που δεν το έχει
+//  ήδη, στα σχετικά collections. ΑΣΦΑΛΕΣ να τρέξει πολλές φορές (idempotent).
+//  Τρέχεις τη ΜΙΑ φορά, ΤΩΡΑ, πριν δημιουργήσεις τον 2ο πραγματικό tenant.
+// ═══════════════════════════════════════════════════════════════════════════
+
+exports.backfillDefaultTenantId = onCall(
+  { region: "us-central1", timeoutSeconds: 300 },
+  async (request) => {
+    if (!request.auth || request.auth.token.email !== "techtacy@gmail.com") {
+      throw new HttpsError("permission-denied", "Μόνο ο super-admin.");
+    }
+
+    const db = getFirestore();
+    const collections = [
+      "jobs", "saved_jobs", "job_batches", "billing_tx", "settlements",
+      "clients", "sources", "pricing_zones", "pricing_routes", "presence",
+    ];
+
+    const results = {};
+    for (const colName of collections) {
+      const snap = await db.collection(colName).get();
+      let updated = 0;
+      // Batched writes (μέγιστο 500 ανά batch, όριο Firestore)
+      let batch = db.batch();
+      let inBatch = 0;
+      for (const doc of snap.docs) {
+        if (doc.data().tenantId == null) {
+          batch.update(doc.ref, { tenantId: "default" });
+          updated++;
+          inBatch++;
+          if (inBatch >= 450) {
+            await batch.commit();
+            batch = db.batch();
+            inBatch = 0;
+          }
+        }
+      }
+      if (inBatch > 0) await batch.commit();
+      results[colName] = { total: snap.size, updated };
+      console.log("backfillDefaultTenantId:", colName, results[colName]);
+    }
+
+    return { ok: true, results };
   }
 );

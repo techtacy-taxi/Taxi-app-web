@@ -28,6 +28,7 @@ class AdminSession {
   final String lastName;
   final bool   isMaster;
   final bool   isAdmin;
+  final bool   isTenantOwner;
   final bool   calendarEnabled;
   final List<String> managedGroupIds;
 
@@ -37,6 +38,7 @@ class AdminSession {
     required this.lastName,
     required this.isMaster,
     required this.isAdmin,
+    required this.isTenantOwner,
     required this.calendarEnabled,
     required this.managedGroupIds,
   });
@@ -107,6 +109,7 @@ class _WebAuthGatewayState extends State<WebAuthGateway> {
 
       final isMaster = data['master'] == true;
       final isAdmin  = data['admin']  == true;
+      final isTenantOwner = data['tenantOwner'] == true;
 
       if (!isMaster && !isAdmin) {
         // Οδηγός ή μη εξουσιοδοτημένος → έξω.
@@ -125,6 +128,7 @@ class _WebAuthGatewayState extends State<WebAuthGateway> {
           lastName:        (data['lastName'] as String?) ?? '',
           isMaster:        isMaster,
           isAdmin:         isAdmin,
+          isTenantOwner:   isTenantOwner,
           calendarEnabled: data['calendarEnabled'] == true,
           managedGroupIds:
               List<String>.from(data['managedGroupIds'] ?? const []),

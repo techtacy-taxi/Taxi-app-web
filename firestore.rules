@@ -16,6 +16,21 @@ rules_version = '2';
 //
 //  ⚠️ ΕΛΕΓΞΕ ΤΟ EMAIL ΠΑΡΑΚΑΤΩ (γραμμή masterEmail) πριν το deploy!
 //
+//  ─────────────────────────────────────────────────────────────────────────
+//  ΝΕΟ (Multi-tenant, Φάση 1): κάθε επιχείρηση («tenant») έχει τις δικές της
+//  δουλειές/τιμές/πελάτες, χωρισμένες από τις άλλες. Κάθε σχετικό doc έχει
+//  πεδίο `tenantId`. Αν ΛΕΙΠΕΙ (όλα τα ΥΠΑΡΧΟΝΤΑ δεδομένα σου), θεωρείται
+//  αυτόματα tenant "default" — ΚΑΜΙΑ αλλαγή στη δική σου λειτουργία.
+//  Εσύ (masterEmail) παραμένεις super-admin: βλέπεις/γράφεις ΠΑΝΤΟΥ, σε
+//  όλους τους tenants, όπως πάντα. Νέοι tenant-masters (presence.master
+//  με δικό τους tenantId) βλέπουν ΜΟΝΟ τον δικό τους tenant.
+//
+//  ΣΗΜΕΙΩΣΗ: το presence/{uid} ΔΕΝ έχει ακόμα tenant-isolation στο read —
+//  αυτό μπαίνει στη Φάση 5 (onboarding), μαζί με τον μηχανισμό που δίνει
+//  αυτόματα το σωστό tenantId σε κάθε νέο οδηγό/admin που προσκαλείται.
+//  Μέχρι τότε, η λίστα οδηγών (presence) παραμένει ορατή σε όλους τους
+//  συνδεδεμένους — όπως ακριβώς σήμερα, καμία αλλαγή, κανένα ρίσκο.
+//
 //  Deploy:  firebase deploy --only firestore:rules
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -29,6 +44,7 @@ service cloud.firestore {
     }
 
     // ⚠️ Ο ΜΟΝΙΜΟΣ MASTER — έλεγξε την ορθογραφία του email!
+    // Αυτός είναι ο SUPER-ADMIN: βλέπει/γράφει σε ΟΛΟΥΣ τους tenants.
     function masterEmail() {
       return signedIn() && request.auth.token.email == 'techtacy@gmail.com';
     }
@@ -57,12 +73,49 @@ service cloud.firestore {
         || (signedIn() && presenceExists() && myPresence().get('isApproved', false) == true);
     }
 
+    // Multi-tenant: πελάτης που βλέπει επιπλέον το μενού «Ζώνες & Τιμές»
+    // ΓΙΑ ΤΟΝ ΔΙΚΟ ΤΟΥ tenant. Δεν είναι master, δεν είναι super-admin —
+    // παραμένει κανονικός admin σε όλα τα άλλα (jobs, ομάδες κλπ), απλά
+    // ξεκλειδώνει επιπλέον το pricing/zones του δικού του tenant.
+    function isTenantOwner() {
+      return signedIn() && presenceExists() && myPresence().get('tenantOwner', false) == true;
+    }
+
+    // ── Multi-tenant helpers (ΝΕΟ) ───────────────────────────────────────────
+
+    // Ο tenant του τρέχοντος συνδεδεμένου χρήστη. Λείπει το πεδίο στο
+    // presence; → "default" (δηλαδή εσύ/το υπάρχον σύστημά σου).
+    function myTenantId() {
+      return (signedIn() && presenceExists())
+        ? myPresence().get('tenantId', 'default')
+        : 'default';
+    }
+
+    // Ισχύει αν: (α) είσαι ο super-admin (βλέπεις τα πάντα, όλους τους
+    // tenants), ή (β) το doc ανήκει στον ΔΙΚΟ σου tenant. Λείπει το πεδίο
+    // tenantId στο doc; → θεωρείται "default".
+    // ⚠️ ΚΡΙΣΙΜΟ: εδώ ελέγχουμε masterEmail() (ΜΟΝΟ ο πραγματικός
+    // super-admin, εσύ), ΟΧΙ isMaster() (που θα περιλάμβανε ΚΑΙ κάθε
+    // tenant-master, δίνοντάς του κατά λάθος πρόσβαση σε ΟΛΟΥΣ τους
+    // tenants). Ένας tenant-master ΔΕΝ είναι super-admin — βλέπει ΜΟΝΟ
+    // τον δικό του tenant, ό,τι κι αν λέει το πεδίο `master` στο presence
+    // του δικού του.
+    function sameTenantAsResource() {
+      return masterEmail()
+        || myTenantId() == resource.data.get('tenantId', 'default');
+    }
+
+    function sameTenantAsNewDoc() {
+      return masterEmail()
+        || myTenantId() == request.resource.data.get('tenantId', 'default');
+    }
+
     // Πεδία ρόλων/εξουσιοδότησης που ΜΟΝΟ ο master αλλάζει
     function roleFieldsUnchanged() {
       return !request.resource.data.diff(resource.data).affectedKeys()
         .hasAny(['master', 'admin', 'isApproved', 'calendarEnabled',
                  'webEnabled', 'icsExportEnabled',
-                 'calendarPrice', 'webPrice', 'icsPrice']);
+                 'calendarPrice', 'webPrice', 'icsPrice', 'tenantId', 'tenantOwner']);
     }
 
     // Σε νέο doc: δεν επιτρέπεται να αυτο-οριστείς master/admin/approved
@@ -81,24 +134,39 @@ service cloud.firestore {
                  'lastSubscriptionMonth', 'lastCalendarSubMonth']);
     }
 
+    // ── tenants/{tenantId} — στοιχεία επιχείρησης (Viva credentials, source
+    // code, όνομα). ΚΑΝΕΝΑΣ client δεν διαβάζει/γράφει απευθείας — μόνο το
+    // Cloud Function createTenant (Admin SDK) και οι υπόλοιπες server-side
+    // συναρτήσεις (estimatePrice/createVivaOrder/vivaWebhook) το διαβάζουν,
+    // παρακάμπτοντας τα rules. Έτσι τα credentials ΔΕΝ εκτίθενται ποτέ σε
+    // client, ούτε καν στον ίδιο τον tenant-master.
+    match /tenants/{tenantId} {
+      allow read, write: if false;
+    }
+
     // ── presence/{uid} ──────────────────────────────────────────────────────
     // Οδηγοί/admins: θέση, διαθεσιμότητα, fcmToken, στοιχεία προφίλ.
     // ΤΑ ΟΙΚΟΝΟΜΙΚΑ (appDebt/turnover/billedAt/συνδρομές) τα γράφει ΜΟΝΟ ο
     // server (Cloud Functions) ή ο master/admin — ΟΧΙ ο οδηγός.
+    // ΣΗΜΕΙΩΣΗ: όχι ακόμα tenant-isolation στο read (βλ. σχόλιο στην κορυφή).
     match /presence/{uid} {
       // Όλοι οι συνδεδεμένοι διαβάζουν (χάρτης συναδέλφων, ονόματα κ.λπ.)
       allow read: if signedIn();
 
       // Δημιουργία: μόνο το ΔΙΚΟ σου doc, χωρίς προνομιακά πεδία.
+      // Το tenantId σε νέο doc ΔΕΝ μπορεί να το ορίσει ο ίδιος ο χρήστης
+      // αυθαίρετα (θα μπορούσε να «μπει» σε άλλον tenant) — μόνο ο master/
+      // server (μέσω createTenant ή αντίστοιχου invite flow) το θέτει.
       allow create: if isMaster()
-        || (signedIn() && request.auth.uid == uid && noPrivilegedOnCreate());
+        || (signedIn() && request.auth.uid == uid && noPrivilegedOnCreate()
+            && request.resource.data.get('tenantId', 'default') == 'default');
 
       // Ενημέρωση:
       //  • master: τα πάντα (εγκρίσεις, ρόλοι, flags, billing reset/settlement)
       //  • admin:  οποιοδήποτε doc ΕΚΤΟΣ από πεδία ρόλων — ΜΠΟΡΕΙ να αγγίξει
       //            οικονομικά (settlement: μηδενισμός appDebt μετά πληρωμή)
       //  • χρήστης: το ΔΙΚΟ του doc, ΕΚΤΟΣ από πεδία ρόλων ΚΑΙ οικονομικά
-      //            (θέση/διαθεσιμότητα/token/προφίλ — ΟΧΙ χρέος/τζίρο)
+      //            (θέση/διαθεσιμότητα/token/προφίλ — ΟΧΙ χρέος/τζίρο/tenantId)
       allow update: if isMaster()
         || (isAdmin() && roleFieldsUnchanged())
         || (signedIn() && request.auth.uid == uid
@@ -111,56 +179,62 @@ service cloud.firestore {
     // Δημιουργία/διαγραφή: admin & master. Ενημέρωση: και οι εγκεκριμένοι
     // οδηγοί (take/boarded/done — transactions από τον client), αλλά ΔΕΝ
     // αλλάζουν τον δημιουργό ΟΥΤΕ το billedAt (idempotency marker που τον
-    // γράφει ΜΟΝΟ ο server-trigger onJobBilling).
+    // γράφει ΜΟΝΟ ο server-trigger onJobBilling). ΝΕΟ: tenant isolation.
     match /jobs/{jobId} {
-      allow read:   if isApproved();
-      allow create: if isAdmin();
-      // master: τα πάντα. admin: τα πάντα ΕΚΤΟΣ από αλλαγή ιδιοκτησίας/billedAt
-      // (έτσι ο Β που επεξεργάζεται ξένη δουλειά μέσω κοινής πρόσβασης ΔΕΝ
-      // μπορεί να αλλάξει τον δημιουργό — η ιδιοκτησία & το billing μένουν στον Α).
-      // οδηγός: μόνο take/boarded/done, χωρίς createdBy/billedAt.
-      allow update: if isMaster()
+      allow read:   if isApproved() && sameTenantAsResource();
+      allow create: if isAdmin() && sameTenantAsNewDoc();
+      // master: τα πάντα (στον δικό του tenant, ή παντού αν super-admin).
+      // admin: τα πάντα ΕΚΤΟΣ από αλλαγή ιδιοκτησίας/billedAt/tenantId.
+      // οδηγός: μόνο take/boarded/done, χωρίς createdBy/billedAt/tenantId.
+      allow update: if sameTenantAsResource() && (
+        isMaster()
         || (isAdmin()
             && !request.resource.data.diff(resource.data).affectedKeys()
-                 .hasAny(['createdBy', 'createdByName', 'billedAt']))
+                 .hasAny(['createdBy', 'createdByName', 'billedAt', 'tenantId']))
         || (isApproved()
             && !request.resource.data.diff(resource.data).affectedKeys()
-                 .hasAny(['createdBy', 'createdByName', 'billedAt']));
-      allow delete: if isAdmin();
+                 .hasAny(['createdBy', 'createdByName', 'billedAt', 'tenantId']))
+      );
+      allow delete: if isAdmin() && sameTenantAsResource();
     }
 
     // ── job_batches/{batchId} ───────────────────────────────────────────────
     // Ο admin δημιουργεί ομαδική αποστολή· ο οδηγός-παραλήπτης μπορεί να
     // ενημερώσει (αποδοχή batch).
     match /job_batches/{batchId} {
-      allow read:   if isApproved();
-      allow create: if isAdmin();
-      allow update: if isAdmin()
-        || (isApproved() && resource.data.get('driverUid', '') == request.auth.uid);
-      allow delete: if isAdmin();
+      allow read:   if isApproved() && sameTenantAsResource();
+      allow create: if isAdmin() && sameTenantAsNewDoc();
+      allow update: if sameTenantAsResource() && (
+        isAdmin()
+        || (isApproved() && resource.data.get('driverUid', '') == request.auth.uid)
+      );
+      allow delete: if isAdmin() && sameTenantAsResource();
     }
 
     // ── billing_tx/{txId} ───────────────────────────────────────────────────
     // Χρεώσεις/πληρωμές. Δημιουργούνται από client στην ολοκλήρωση (οδηγός)
-    // και στα settlements (admin). Ανάγνωση: admin/master βλέπουν όλα·
-    // ο οδηγός μόνο όσα τον αφορούν (ως χρεωμένος ή ως εισπράκτορας).
+    // και στα settlements (admin). Ανάγνωση: admin/master βλέπουν όλα (στον
+    // δικό τους tenant)· ο οδηγός μόνο όσα τον αφορούν.
     match /billing_tx/{txId} {
-      allow read: if isAdmin()
+      allow read: if sameTenantAsResource() && (
+        isAdmin()
         || (isApproved()
             && (resource.data.get('uid', '') == request.auth.uid
-                || resource.data.get('collectorUid', '') == request.auth.uid));
+                || resource.data.get('collectorUid', '') == request.auth.uid))
+      );
       // Δημιουργία: ο server (Admin SDK) παρακάμπτει τα rules. Από clients,
       // μόνο admin/master (cancelJob/διορθώσεις). Ο οδηγός ΔΕΝ δημιουργεί
       // πια billing_tx — τα φτιάχνει ο trigger onJobBilling.
-      allow create: if isAdmin();
-      allow update: if isAdmin();   // voiding / διορθώσεις ποσών
-      allow delete: if isMaster();
+      allow create: if isAdmin() && sameTenantAsNewDoc();
+      allow update: if isAdmin() && sameTenantAsResource();   // voiding / διορθώσεις ποσών
+      allow delete: if isMaster() && sameTenantAsResource();
     }
 
     // ── settlements/{id} ────────────────────────────────────────────────────
     match /settlements/{id} {
-      allow read:  if isApproved();
-      allow write: if isAdmin();
+      allow read:  if isApproved() && sameTenantAsResource();
+      allow write: if isAdmin() && (resource == null
+                     ? sameTenantAsNewDoc() : sameTenantAsResource());
     }
 
     // ── groups/{groupId} ────────────────────────────────────────────────────
@@ -171,46 +245,64 @@ service cloud.firestore {
 
     // ── clients/{id} — πελατολόγιο admins ───────────────────────────────────
     match /clients/{id} {
-      allow read:  if isAdmin();
-      allow write: if isAdmin();
+      allow read:  if isAdmin() && sameTenantAsResource();
+      allow write: if isAdmin() && (resource == null
+                     ? sameTenantAsNewDoc() : sameTenantAsResource());
     }
 
     // ── sources/{id} — πηγές δουλειών (Χίλτον κ.λπ.) ───────────────────────
     match /sources/{id} {
-      allow read:  if isApproved();
-      allow write: if isAdmin();
+      allow read:  if isApproved() && sameTenantAsResource();
+      allow write: if isAdmin() && (resource == null
+                     ? sameTenantAsNewDoc() : sameTenantAsResource());
     }
 
     // ── saved_jobs/{id} — αποθηκευμένες δουλειές ───────────────────────────
-    // Όλοι οι admins διαβάζουν/δημιουργούν. Στο UI ο διαχωρισμός «ποιος βλέπει
-    // ποιανού» γίνεται μέσω groups.savedJobShares. ΑΣΦΑΛΕΙΑ: σε update ΔΕΝ
-    // επιτρέπεται αλλαγή ιδιοκτησίας (ownerUid/ownerName) — έτσι κανένας admin
-    // δεν «κλέβει» δουλειά/billing άλλου μέσω κοινής πρόσβασης.
+    // Όλοι οι admins διαβάζουν/δημιουργούν (στον δικό τους tenant). Στο UI ο
+    // διαχωρισμός «ποιος βλέπει ποιανού» γίνεται μέσω groups.savedJobShares.
+    // ΑΣΦΑΛΕΙΑ: σε update ΔΕΝ επιτρέπεται αλλαγή ιδιοκτησίας/tenantId.
     match /saved_jobs/{id} {
-      allow read:   if isAdmin();
-      allow create: if isAdmin();
-      allow update: if isAdmin()
+      allow read:   if isAdmin() && sameTenantAsResource();
+      allow create: if isAdmin() && sameTenantAsNewDoc();
+      allow update: if isAdmin() && sameTenantAsResource()
         && (isMaster()
             || !request.resource.data.diff(resource.data).affectedKeys()
-                 .hasAny(['ownerUid', 'ownerName']));
-      allow delete: if isAdmin();
+                 .hasAny(['ownerUid', 'ownerName', 'tenantId']));
+      allow delete: if isAdmin() && sameTenantAsResource();
     }
 
-    // ── app_settings/{id} — ρυθμίσεις εφαρμογής ────────────────────────────
+    // ── app_settings/{id} — ρυθμίσεις εφαρμογής (ΔΙΚΕΣ ΣΟΥ, tenant "default")
+    // Οι tenant-specific ρυθμίσεις τιμών ζωνών ζουν πλέον στο
+    // tenants/{tenantId}/settings/pricing (βλ. Φάση 2/3) — αυτό εδώ μένει
+    // όπως ήταν, για συμβατότητα με τον δικό σου, υπάρχοντα κώδικα.
     match /app_settings/{id} {
       allow read:  if signedIn();
       allow write: if isAdmin();
     }
 
+    // ── tenant_pricing_settings/{tenantId} — δυναμικός τύπος τιμολόγησης
+    // ΚΑΘΕ ΝΕΟΥ tenant (εκτός του δικού σου "default", που συνεχίζει να
+    // χρησιμοποιεί το ήδη υπάρχον app_settings/pricing χωρίς καμία αλλαγή).
+    // Ο super-admin (εσύ), ο master του tenant, Ή ο tenantOwner του
+    // συγκεκριμένου tenant το βλέπει/επεξεργάζεται.
+    match /tenant_pricing_settings/{tenantId} {
+      allow read, write: if masterEmail()
+        || ((isMaster() || isTenantOwner()) && myTenantId() == tenantId);
+    }
+
     // ── pricing_zones/{id} / pricing_routes/{id} — «Ζώνες & Τιμές» ─────────
     // Πάγιες τιμές γνωστών διαδρομών της δημόσιας φόρμας κράτησης. Τα
     // διαβάζει ο server (Cloud Function estimatePrice, Admin SDK — παρακάμπτει
-    // τα rules)· από τον client τα διαχειρίζεται ΜΟΝΟ ο master.
+    // τα rules)· από τον client τα διαχειρίζονται ο master Ή ο tenantOwner
+    // (πελάτης multi-tenant, βλέπει ΜΟΝΟ τον δικό του tenant — sameTenant*
+    // το εξασφαλίζει, αφού ΔΕΝ είναι masterEmail()).
     match /pricing_zones/{id} {
-      allow read, write: if isMaster();
+      allow read, write: if (isMaster() || isTenantOwner()) && (resource == null
+                            ? sameTenantAsNewDoc() : sameTenantAsResource());
     }
     match /pricing_routes/{id} {
-      allow read, write: if isMaster();
+      allow read, write: if (isMaster() || isTenantOwner()) && (resource == null
+                            ? sameTenantAsNewDoc() : sameTenantAsResource());
     }
 
     // ── app_broadcasts/{id} — ανακοινώσεις (owner alerts) ──────────────────
@@ -232,6 +324,13 @@ service cloud.firestore {
     // ΚΑΝΕΝΑΣ client δεν τα αγγίζει. Τα Cloud Functions χρησιμοποιούν το
     // Admin SDK που παρακάμπτει τα rules — άρα συνεχίζουν να δουλεύουν.
     match /calendar_tokens/{uid} {
+      allow read, write: if false;
+    }
+
+    // ── pending_bookings/{id} — εκκρεμείς κρατήσεις Viva (πριν πληρωμή) ────
+    // ΚΑΝΕΝΑΣ client δεν τα αγγίζει· τα γράφει/διαβάζει μόνο ο server
+    // (createVivaOrder/vivaWebhook μέσω Admin SDK).
+    match /pending_bookings/{id} {
       allow read, write: if false;
     }
 

@@ -122,8 +122,10 @@ class _AdminShellState extends State<AdminShell> {
       ));
     }
 
-    // Ζώνες & Τιμές (τιμοκατάλογος δημόσιας φόρμας κράτησης) — μόνο master.
-    if (s.isMaster) {
+    // Ζώνες & Τιμές (τιμοκατάλογος δημόσιας φόρμας κράτησης) — master ή
+    // tenantOwner (πελάτης multi-tenant, βλέπει ΜΟΝΟ αυτό το επιπλέον menu,
+    // πέρα από τα κανονικά admin δικαιώματα που ήδη έχει).
+    if (s.isMaster || s.isTenantOwner) {
       sections.add(const _Section(
         label: 'Ζώνες & Τιμές',
         icon: Icons.price_change_rounded,

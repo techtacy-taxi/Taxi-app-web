@@ -32,6 +32,8 @@ import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:google_maps_flutter/google_maps_flutter.dart';
@@ -178,6 +180,60 @@ class _PricingZonesPageState extends State<PricingZonesPage> {
 
   bool get _isEditing => _placingNew || _selectedZoneId != null;
 
+  // ── Multi-tenant (Φάση 2) ─────────────────────────────────────────────
+  // Ο tenant του συνδεδεμένου χρήστη — διαβάζεται 1 φορά από το δικό του
+  // presence doc. Μέχρι να φορτωθεί, ΔΕΝ τρέχουμε κανένα query/write, ώστε
+  // να μην κάνουμε ποτέ λάθος ανάγνωση/εγγραφή με λάθος (προεπιλεγμένο)
+  // tenantId.
+  String _myTenantId = 'default';
+  bool _tenantLoaded = false;
+
+  // ── Tenant switcher (ΜΟΝΟ για τον super-admin) ──────────────────────────
+  // Επιτρέπει στον super-admin να «μπει προσωρινά» σε άλλον tenant και να
+  // φτιάξει/επεξεργαστεί τις ζώνες/τιμές ΓΙΑ ΛΟΓΑΡΙΑΣΜΟ ΤΟΥ, όταν ο ίδιος ο
+  // πελάτης δεν μπορεί/δεν ξέρει να το κάνει. Οι Firestore rules ΗΔΗ το
+  // επιτρέπουν (isMaster() παρακάμπτει τον έλεγχο tenant) — αυτό εδώ είναι
+  // απλά το UI που λείπει για να χρησιμοποιηθεί σωστά.
+  bool get _isSuperAdmin =>
+      FirebaseAuth.instance.currentUser?.email == 'techtacy@gmail.com';
+  List<Map<String, dynamic>> _allTenants = [];
+  String? _viewingAsTenantId; // null = ο δικός του (_myTenantId)
+
+  // ΑΥΤΟ είναι το tenantId που ΠΡΑΓΜΑΤΙΚΑ χρησιμοποιείται σε κάθε
+  // query/write παρακάτω — είτε ο δικός του, είτε αυτός που επέλεξε (αν
+  // είναι super-admin σε λειτουργία «προσωρινής εισόδου» σε άλλον tenant).
+  String get _effectiveTenantId => _viewingAsTenantId ?? _myTenantId;
+
+  Future<void> _loadSuperAdminTenants() async {
+    if (!_isSuperAdmin) return;
+    try {
+      final callable = FirebaseFunctions.instance.httpsCallable('listTenants');
+      final res = await callable.call();
+      final list = (res.data['tenants'] as List?) ?? [];
+      if (mounted) {
+        setState(() => _allTenants =
+            list.map((e) => Map<String, dynamic>.from(e as Map)).toList());
+      }
+    } catch (_) {
+      // Αν αποτύχει, απλά δεν εμφανίζεται ο επιλογέας — καμία διακοπή.
+    }
+  }
+
+  Future<void> _loadMyTenantId() async {
+    try {
+      final uid = FirebaseAuth.instance.currentUser?.uid;
+      if (uid == null) {
+        if (mounted) setState(() => _tenantLoaded = true);
+        return;
+      }
+      final doc = await FirebaseFirestore.instance.collection('presence').doc(uid).get();
+      final tid = (doc.data()?['tenantId'] as String?) ?? 'default';
+      if (mounted) setState(() { _myTenantId = tid; _tenantLoaded = true; });
+    } catch (_) {
+      if (mounted) setState(() { _myTenantId = 'default'; _tenantLoaded = true; });
+    }
+  }
+
   static const CameraPosition _initialCamera = CameraPosition(
     target: LatLng(37.9838, 23.7275), // Αθήνα
     zoom: 9.3,
@@ -187,6 +243,8 @@ class _PricingZonesPageState extends State<PricingZonesPage> {
   void initState() {
     super.initState();
     _loadHandleIcons();
+    _loadMyTenantId();
+    _loadSuperAdminTenants();
   }
 
   // Διαβάζει τα PNG assets (ήδη κομμένα/διάφανα γύρω-γύρω) και τα φορτώνει σε
@@ -194,7 +252,7 @@ class _PricingZonesPageState extends State<PricingZonesPage> {
   Future<void> _loadHandleIcons() async {
     try {
       final corner = await _bitmapFromAsset('assets/icons/handle_corner.png', 17);
-      final rotate = await _bitmapFromAsset('assets/icons/handle_rotate.png', 17);
+      final rotate = await _bitmapFromAsset('assets/icons/handle_rotate.png', 34); // διπλάσιο μέγεθος — ήταν πολύ μικρό
       if (!mounted) return;
       setState(() {
         _cornerIcon = corner;
@@ -225,6 +283,9 @@ class _PricingZonesPageState extends State<PricingZonesPage> {
 
   @override
   Widget build(BuildContext context) {
+    if (!_tenantLoaded) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
     final isDesktop = MediaQuery.of(context).size.width >= 900;
 
     final appBar = AppBar(
@@ -279,13 +340,18 @@ class _PricingZonesPageState extends State<PricingZonesPage> {
     if (isDesktop) {
       return Scaffold(
         appBar: appBar,
-        body: Row(
-          children: [
-            Expanded(flex: 3, child: _buildMap(isDesktop: true)),
-            const VerticalDivider(width: 1),
-            SizedBox(width: 420, child: _buildPanel()),
-          ],
-        ),
+        body: Column(children: [
+          _buildTenantSwitcherBanner(),
+          Expanded(
+            child: Row(
+              children: [
+                Expanded(flex: 3, child: _buildMap(isDesktop: true)),
+                const VerticalDivider(width: 1),
+                SizedBox(width: 420, child: _buildPanel()),
+              ],
+            ),
+          ),
+        ]),
       );
     }
 
@@ -294,19 +360,85 @@ class _PricingZonesPageState extends State<PricingZonesPage> {
       child: Scaffold(
         appBar: appBar,
         body: SafeArea(
-          child: TabBarView(
-            // ΣΗΜΑΝΤΙΚΟ: χωρίς swipe αλλαγής tab — αλλιώς το σύρσιμο του
-            // δαχτύλου πάνω στον χάρτη άλλαζε κατά λάθος tab. Τα tabs
-            // αλλάζουν ΜΟΝΟ πατώντας το όνομά τους.
-            physics: const NeverScrollableScrollPhysics(),
-            children: [
-              _buildMap(isDesktop: false),
-              _RoutesTab(db: _db),
-              _PricingConfigTab(db: _db),
-            ],
-          ),
+          child: Column(children: [
+            _buildTenantSwitcherBanner(),
+            Expanded(
+              child: TabBarView(
+                // ΣΗΜΑΝΤΙΚΟ: χωρίς swipe αλλαγής tab — αλλιώς το σύρσιμο του
+                // δαχτύλου πάνω στον χάρτη άλλαζε κατά λάθος tab. Τα tabs
+                // αλλάζουν ΜΟΝΟ πατώντας το όνομά τους.
+                physics: const NeverScrollableScrollPhysics(),
+                children: [
+                  _buildMap(isDesktop: false),
+                  _RoutesTab(db: _db, tenantId: _effectiveTenantId),
+                  _PricingConfigTab(db: _db, tenantId: _effectiveTenantId),
+                ],
+              ),
+            ),
+          ]),
         ),
       ),
+    );
+  }
+
+  // ── Tenant switcher — ΜΟΝΟ για τον super-admin, ώστε να μπορεί να
+  // δουλέψει προσωρινά τις ζώνες/τιμές ΓΙΑ ΛΟΓΑΡΙΑΣΜΟ κάποιου πελάτη,
+  // χωρίς να χρειάζεται να συνδεθεί με τα δικά του στοιχεία. ──────────────
+  Widget _buildTenantSwitcherBanner() {
+    if (!_isSuperAdmin || _allTenants.isEmpty) return const SizedBox.shrink();
+    final viewingOther = _viewingAsTenantId != null;
+    return Container(
+      width: double.infinity,
+      color: viewingOther ? Colors.deepPurple.shade50 : Colors.grey.shade100,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      child: Row(children: [
+        Icon(Icons.swap_horiz_rounded, size: 18,
+            color: viewingOther ? Colors.deepPurple : Colors.grey[700]),
+        const SizedBox(width: 8),
+        Expanded(
+          child: DropdownButtonHideUnderline(
+            child: DropdownButton<String>(
+              isDense: true,
+              isExpanded: true,
+              value: _viewingAsTenantId ?? '__own__',
+              items: [
+                const DropdownMenuItem(
+                  value: '__own__',
+                  child: Text('Ο δικός μου λογαριασμός',
+                      style: TextStyle(fontWeight: FontWeight.w600)),
+                ),
+                ..._allTenants.map((t) => DropdownMenuItem(
+                      value: t['tenantId'] as String,
+                      child: Text(
+                          '${t['businessName']} (${t['tenantId']})'
+                          '${t['active'] == false ? " — Κλειδωμένος" : ""}'),
+                    )),
+              ],
+              onChanged: (v) {
+                setState(() {
+                  _viewingAsTenantId = (v == null || v == '__own__') ? null : v;
+                  // Καθαρίζουμε τυχόν ενεργή επεξεργασία ζώνης όταν αλλάζει
+                  // ο tenant, ώστε να μην αποθηκευτεί κατά λάθος στον λάθος.
+                  _placingNew = false;
+                  _selectedZoneId = null;
+                });
+              },
+            ),
+          ),
+        ),
+        if (viewingOther) ...[
+          const SizedBox(width: 8),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            decoration: BoxDecoration(
+              color: Colors.deepPurple,
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: const Text('ΠΡΟΣΩΡΙΝΗ ΕΙΣΟΔΟΣ',
+                style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ]),
     );
   }
 
@@ -441,6 +573,7 @@ class _PricingZonesPageState extends State<PricingZonesPage> {
       'east':   b.east,
       'west':   b.west,
       'rotationDeg': _editRotation,
+      'tenantId': _effectiveTenantId,
     };
     try {
       if (_placingNew) {
@@ -523,7 +656,8 @@ class _PricingZonesPageState extends State<PricingZonesPage> {
 
   Widget _buildMap({required bool isDesktop}) {
     return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-      stream: _db.collection('pricing_zones').snapshots(),
+      stream: _db.collection('pricing_zones')
+          .where('tenantId', isEqualTo: _effectiveTenantId).snapshots(),
       builder: (context, snap) {
         if (snap.hasError) {
           return Container(
@@ -774,8 +908,8 @@ class _PricingZonesPageState extends State<PricingZonesPage> {
           Expanded(
             child: TabBarView(
               children: [
-                _RoutesTab(db: _db),
-                _PricingConfigTab(db: _db),
+                _RoutesTab(db: _db, tenantId: _effectiveTenantId),
+                _PricingConfigTab(db: _db, tenantId: _effectiveTenantId),
               ],
             ),
           ),
@@ -789,17 +923,21 @@ class _PricingZonesPageState extends State<PricingZonesPage> {
 
 class _RoutesTab extends StatelessWidget {
   final FirebaseFirestore db;
-  const _RoutesTab({required this.db});
+  final String tenantId;
+  const _RoutesTab({required this.db, required this.tenantId});
 
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-      stream: db.collection('pricing_zones').orderBy('name').snapshots(),
+      stream: db.collection('pricing_zones')
+          .where('tenantId', isEqualTo: tenantId)
+          .orderBy('name').snapshots(),
       builder: (context, zoneSnap) {
         final zones = (zoneSnap.data?.docs ?? []).map(PricingZone.fromDoc).toList();
         final zoneName = {for (final z in zones) z.id: z.name};
         return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-          stream: db.collection('pricing_routes').snapshots(),
+          stream: db.collection('pricing_routes')
+              .where('tenantId', isEqualTo: tenantId).snapshots(),
           builder: (context, routeSnap) {
             final routes = (routeSnap.data?.docs ?? []).map(PricingRoute.fromDoc).toList();
             return Column(
@@ -928,6 +1066,7 @@ class _RoutesTab extends StatelessWidget {
                         ? null : double.tryParse(taxiFCtrl.text.replaceAll(',', '.')),
                     'vanForeign': vanFCtrl.text.trim().isEmpty
                         ? null : double.tryParse(vanFCtrl.text.replaceAll(',', '.')),
+                    'tenantId': tenantId,
                   };
                   try {
                     if (existing == null) {
@@ -960,13 +1099,21 @@ class _RoutesTab extends StatelessWidget {
 
 class _PricingConfigTab extends StatefulWidget {
   final FirebaseFirestore db;
-  const _PricingConfigTab({required this.db});
+  final String tenantId;
+  const _PricingConfigTab({required this.db, required this.tenantId});
 
   @override
   State<_PricingConfigTab> createState() => _PricingConfigTabState();
 }
 
 class _PricingConfigTabState extends State<_PricingConfigTab> {
+  // Οι δικές σου (default) ρυθμίσεις μένουν ΑΚΡΙΒΩΣ στο ίδιο doc που ήταν
+  // πάντα (app_settings/pricing) — καμία αλλαγή, κανένα ρίσκο. Κάθε ΝΕΟΣ
+  // tenant παίρνει το δικό του, ξεχωριστό doc.
+  DocumentReference<Map<String, dynamic>> get _pricingDocRef => widget.tenantId == 'default'
+      ? widget.db.collection('app_settings').doc('pricing')
+      : widget.db.collection('tenant_pricing_settings').doc(widget.tenantId);
+
   static const _keys = [
     'base', 'perKm', 'perKmOutside', 'perKmOutsideVan', 'perMin', 'minCharge', 'minChargeNight',
     'nightPctTaxi', 'nightPctVan', 'vanPct', 'luggagePer', 'seatPrice',
@@ -1022,7 +1169,7 @@ class _PricingConfigTabState extends State<_PricingConfigTab> {
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-      stream: widget.db.collection('app_settings').doc('pricing').snapshots(),
+      stream: _pricingDocRef.snapshots(),
       builder: (context, snap) {
         if (snap.hasError) {
           return Padding(
@@ -1169,7 +1316,7 @@ class _PricingConfigTabState extends State<_PricingConfigTab> {
       'customFormula': '',
     };
     try {
-      await widget.db.collection('app_settings').doc('pricing').set(data, SetOptions(merge: true));
+      await _pricingDocRef.set(data, SetOptions(merge: true));
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(

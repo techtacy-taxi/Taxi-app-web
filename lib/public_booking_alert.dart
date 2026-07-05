@@ -20,6 +20,7 @@
 
 import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'notifications_service.dart';
@@ -49,9 +50,20 @@ class PublicBookingAlerts {
     if (_fsSub == null) {
       _primed = false;
       _seenIds.clear();
+      final myUid = FirebaseAuth.instance.currentUser?.uid;
+      if (myUid == null) return; // δεν είναι συνδεδεμένος — τίποτα να ακούσει
+      // ΣΗΜΑΝΤΙΚΟ: φιλτράρουμε με ownerUid == ο ίδιος — το vivaWebhook ήδη
+      // αναθέτει κάθε δουλειά από τη δημόσια φόρμα στον master/tenant-owner
+      // ΤΟΥ ΣΥΓΚΕΚΡΙΜΕΝΟΥ tenant (βλ. findMasterUid στο index.js). Έτσι:
+      //   • Εσύ (master, tenant "default") βλέπεις/ακούς ΜΟΝΟ τις δικές σου.
+      //   • Κάθε tenant-owner βλέπει/ακούει ΜΟΝΟ τις δικές του — σαν να τις
+      //     είχε φτιάξει μόνος του και τις είχε αποθηκεύσει.
+      // Χωρίς αυτό το φίλτρο, ΟΛΟΙ θα έβλεπαν/άκουγαν τις κρατήσεις ΟΛΩΝ
+      // των tenants — διαρροή δεδομένων μεταξύ πελατών.
       _fsSub = FirebaseFirestore.instance
           .collection('saved_jobs')
           .where('origin', isEqualTo: 'public_form')
+          .where('ownerUid', isEqualTo: myUid)
           .snapshots()
           .listen(_onSnapshot, onError: (_) {});
     }
