@@ -9,6 +9,7 @@ import 'package:vibration/vibration.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 
 import 'job_details_sheet.dart';
 import 'job_shared_widgets.dart';
@@ -1065,7 +1066,7 @@ class MyJobTile extends StatelessWidget {
                         launchUrl(Uri.parse('https://wa.me/$digits'),
                             mode: LaunchMode.externalApplication);
                       },
-                      child: _chip(Icons.chat_bubble_rounded, 'WhatsApp', const Color(0xFF25D366)),
+                      child: _chip(FontAwesomeIcons.whatsapp, 'WhatsApp', const Color(0xFF25D366)),
                     ),
                   if (job.flightOrShip != null && job.flightOrShip!.isNotEmpty)
                     _chip(Icons.flight_rounded, job.flightOrShip!, Colors.indigo),

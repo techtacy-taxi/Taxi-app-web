@@ -319,55 +319,67 @@ class JobDetailsSheet extends StatelessWidget {
             const SizedBox(height: 14),
           ],
 
-          // Διαδρομή + τιμή
-          Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Expanded(child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _navBox(
-                  context: context,
-                  pinIcon: Icons.trip_origin_rounded,
-                  pinColor: Colors.amber.shade700,
-                  label: job.from,
-                  lat:   job.fromLat,
-                  lng:   job.fromLng,
-                ),
-                const SizedBox(height: 8),
-                _navBox(
-                  context: context,
-                  pinIcon: Icons.place_rounded,
-                  pinColor: Colors.red,
-                  label: job.to,
-                  lat:   job.toLat,
-                  lng:   job.toLng,
-                ),
-              ],
-            )),
-            const SizedBox(width: 10),
-            Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-              Text('${job.price.toStringAsFixed(2)}€', style: const TextStyle(
-                  fontSize: 22, fontWeight: FontWeight.bold,
-                  color: Color(0xFF1E8E3E))),
-              if (job.depositPaid)
-                Text(job.fullyPaid
-                     ? 'Πληρώθηκε ΟΛΟΚΛΗΡΗ online (${job.depositAmount.toStringAsFixed(2)}€) — μηδέν είσπραξη'
-                     : 'Υπόλοιπο ${job.remainingToCollect.toStringAsFixed(2)}€ '
-                       '(προπληρώθηκε ${job.depositAmount.toStringAsFixed(2)}€)',
-                    style: TextStyle(fontSize: 11.5,
-                        color: Colors.blue.shade700, fontWeight: FontWeight.w700)),
-              if (job.commission > 0)
-                Text('-${job.commission.toStringAsFixed(2)}€ γιαούρτι',
-                    style: TextStyle(fontSize: 12,
-                        color: Colors.red.shade700, fontWeight: FontWeight.w600)),
-              if (job.appCommission > 0)
-                Text('-${job.appCommission.toStringAsFixed(2)}€ app',
-                    style: TextStyle(fontSize: 12,
-                        color: Colors.indigo.shade700, fontWeight: FontWeight.w600)),
-              Text('Κέρδος: ${job.driverEarning.toStringAsFixed(2)}€',
-                  style: const TextStyle(fontSize: 14,
-                      fontWeight: FontWeight.bold, color: Colors.purple)),
+          // ── Τιμή / είσπραξη — ΠΡΩΤΑ, πλήρους πλάτους, ξεκάθαρη διατύπωση ──
+          // (Το job.price είναι ΗΔΗ η καθαρή τιμή μετά την προκαταβολή — ΔΕΝ
+          // αφαιρείται τίποτα άλλο. Το γράφουμε ρητά ώστε να μην μπερδεύεται
+          // με «υπόλοιπο ΜΕΙΟΝ προκαταβολή».)
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.grey.shade50,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: Colors.grey.shade200),
+            ),
+            child: Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
+              Expanded(
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text(job.fullyPaid ? 'Πληρώθηκε online — μηδέν είσπραξη' : 'Να εισπράξεις',
+                      style: TextStyle(fontSize: 12, color: Colors.grey[600], fontWeight: FontWeight.w600)),
+                  Text('${job.price.toStringAsFixed(2)}€', style: const TextStyle(
+                      fontSize: 24, fontWeight: FontWeight.bold, color: Color(0xFF1E8E3E))),
+                  if (job.depositPaid)
+                    Text(job.fullyPaid
+                         ? 'Ο πελάτης πλήρωσε ήδη ΟΛΟΚΛΗΡΗ την τιμή (${job.depositAmount.toStringAsFixed(2)}€) online στον master.'
+                         : 'Ο πελάτης πλήρωσε ήδη ${job.depositAmount.toStringAsFixed(2)}€ προκαταβολή online στον master — δεν αφαιρείται από το ποσό πάνω, είναι ήδη υπολογισμένη.',
+                        style: TextStyle(fontSize: 11, color: Colors.blue.shade700)),
+                ]),
+              ),
+              Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+                if (job.commission > 0)
+                  Text('-${job.commission.toStringAsFixed(2)}€ γιαούρτι',
+                      style: TextStyle(fontSize: 12,
+                          color: Colors.red.shade700, fontWeight: FontWeight.w600)),
+                if (job.appCommission > 0)
+                  Text('-${job.appCommission.toStringAsFixed(2)}€ app',
+                      style: TextStyle(fontSize: 12,
+                          color: Colors.indigo.shade700, fontWeight: FontWeight.w600)),
+                Text('Κέρδος: ${job.driverEarning.toStringAsFixed(2)}€',
+                    style: const TextStyle(fontSize: 14,
+                        fontWeight: FontWeight.bold, color: Colors.purple)),
+              ]),
             ]),
-          ]),
+          ),
+          const SizedBox(height: 12),
+
+          // ── Διαδρομή — ΜΕΤΑ την τιμή, πλήρους πλάτους (όχι στριμωγμένη) ──
+          _navBox(
+            context: context,
+            pinIcon: Icons.trip_origin_rounded,
+            pinColor: Colors.amber.shade700,
+            label: job.from,
+            lat:   job.fromLat,
+            lng:   job.fromLng,
+          ),
+          const SizedBox(height: 8),
+          _navBox(
+            context: context,
+            pinIcon: Icons.place_rounded,
+            pinColor: Colors.red,
+            label: job.to,
+            lat:   job.toLat,
+            lng:   job.toLng,
+          ),
           const SizedBox(height: 16),
           Divider(color: Colors.grey[200]),
           const SizedBox(height: 8),

@@ -560,8 +560,8 @@ class _JobPopupContentState extends State<_JobPopupContent>
                       Expanded(child: Text(
                         job.fullyPaid
                             ? 'Ο πελάτης έχει ήδη πληρώσει ΟΛΟΚΛΗΡΗ την τιμή (${job.depositAmount.toStringAsFixed(2)}€) online. Δεν χρειάζεται να εισπράξεις τίποτα!'
-                            : 'Ο πελάτης έχει ήδη πληρώσει προκαταβολή ${job.depositAmount.toStringAsFixed(2)}€ online. '
-                              'Συνολική τιμή διαδρομής: ${job.price.toStringAsFixed(2)}€.',
+                            : 'Ο πελάτης πλήρωσε προκαταβολή ${job.depositAmount.toStringAsFixed(2)}€ online στον master. '
+                              'Το ποσό ${job.price.toStringAsFixed(2)}€ πάνω είναι ήδη το ΥΠΟΛΟΙΠΟ που θα εισπράξεις — δεν αφαιρείται τίποτα άλλο.',
                         style: TextStyle(fontSize: 11.5, color: Colors.blue.shade900),
                       )),
                     ]),
