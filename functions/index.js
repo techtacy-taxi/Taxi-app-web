@@ -2286,6 +2286,7 @@ async function getPricingData() {
 async function computeEstimate({
   fromLat, fromLng, toLat, toLng, persons, luggage, childSeatCount,
   vehicleType, isGreek, scheduledNaive, apiKey,
+  cachedDistanceKm, cachedDurationMin, cachedRoutePolyline, needMap,
 }) {
   const { zones, routes, cfg } = await getPricingData();
   const forced = persons >= 5 || luggage >= 5;
@@ -2329,30 +2330,49 @@ async function computeEstimate({
     }
   }
 
-  // ── Ζωνική διαδρομή: η ΤΙΜΗ είναι σταθερή (πάγια), αλλά ΚΑΙ ΕΔΩ φέρνουμε
-  // απόσταση/χρόνο/polyline ΜΟΝΟ για εμφάνιση στον χάρτη — δεν επηρεάζει
-  // καθόλου την τιμή.
-  if (zoneMatch && fromLat != null && fromLng != null && toLat != null && toLng != null) {
-    const rd = await routesDistanceDuration(
-      { lat: fromLat, lng: fromLng }, { lat: toLat, lng: toLng }, apiKey, departureTime);
-    if (rd) {
-      distanceKm = rd.distanceKm;
-      durationMin = rd.durationMin;
-      routePolyline = rd.polyline;
-    }
-  }
+  // ── Cache διαδρομής: αν ο client μας έστειλε ήδη υπολογισμένα km/λεπτά/
+  // polyline για την ΙΔΙΑ διαδρομή (μόνο ημερομηνία/ώρα/άτομα άλλαξαν),
+  // τα χρησιμοποιούμε ΑΝΤΙ να ξαναρωτήσουμε τη Google — εξοικονομεί Routes
+  // API κλήσεις σημαντικά.
+  const useCache = cachedDistanceKm != null && Number(cachedDistanceKm) > 0;
 
-  if (!zoneMatch) {
-    if (fromLat != null && fromLng != null && toLat != null && toLng != null) {
+  // ── Ζωνική διαδρομή: η ΤΙΜΗ είναι σταθερή (πάγια) — η απόσταση/χρόνος/
+  // polyline χρειάζονται ΜΟΝΟ για εμφάνιση στον χάρτη. Αν ο client δεν τα
+  // χρειάζεται ακόμα (needMap===false, π.χ. δεν έχει μπει όνομα στη φόρμα),
+  // ΔΕΝ καλούμε καθόλου τη Google — εξοικονομεί ολόκληρη την κλήση.
+  if (zoneMatch && needMap && fromLat != null && fromLng != null && toLat != null && toLng != null) {
+    if (useCache) {
+      distanceKm = Number(cachedDistanceKm);
+      durationMin = Number(cachedDurationMin) || 0;
+      routePolyline = cachedRoutePolyline || null;
+    } else {
       const rd = await routesDistanceDuration(
         { lat: fromLat, lng: fromLng }, { lat: toLat, lng: toLng }, apiKey, departureTime);
       if (rd) {
         distanceKm = rd.distanceKm;
         durationMin = rd.durationMin;
         routePolyline = rd.polyline;
+      }
+    }
+  }
+
+  if (!zoneMatch) {
+    if (fromLat != null && fromLng != null && toLat != null && toLng != null) {
+      if (useCache) {
+        distanceKm = Number(cachedDistanceKm);
+        durationMin = Number(cachedDurationMin) || 0;
+        routePolyline = cachedRoutePolyline || null;
       } else {
-        distanceKm = haversineKm({ lat: fromLat, lng: fromLng }, { lat: toLat, lng: toLng }) * 1.3;
-        durationMin = (distanceKm / 45) * 60;
+        const rd = await routesDistanceDuration(
+          { lat: fromLat, lng: fromLng }, { lat: toLat, lng: toLng }, apiKey, departureTime);
+        if (rd) {
+          distanceKm = rd.distanceKm;
+          durationMin = rd.durationMin;
+          routePolyline = rd.polyline;
+        } else {
+          distanceKm = haversineKm({ lat: fromLat, lng: fromLng }, { lat: toLat, lng: toLng }) * 1.3;
+          durationMin = (distanceKm / 45) * 60;
+        }
       }
     }
     outsideAttica = isOutsideAttica(fromLat, fromLng) || isOutsideAttica(toLat, toLng);
@@ -2479,6 +2499,10 @@ exports.estimatePrice = onRequest(
       const result = await computeEstimate({
         fromLat, fromLng, toLat, toLng, persons, luggage, childSeatCount,
         vehicleType, isGreek, scheduledNaive, apiKey: ROUTES_API_KEY.value(),
+        cachedDistanceKm: num(b.cachedDistanceKm),
+        cachedDurationMin: num(b.cachedDurationMin),
+        cachedRoutePolyline: b.cachedRoutePolyline || null,
+        needMap: b.needMap === true,
       });
       if (result.outsideAttica && !gateReasons.includes("outside_attica")) {
         gateReasons.push("outside_attica");
@@ -3065,6 +3089,9 @@ exports.createVivaOrder = onRequest(
       const estimate = await computeEstimate({
         fromLat, fromLng, toLat, toLng, persons, luggage, childSeatCount,
         vehicleType, isGreek, scheduledNaive, apiKey: ROUTES_API_KEY.value(),
+        needMap: true, // ΠΑΝΤΑ εδώ — πραγματική κράτηση, αποθηκεύουμε
+        // distance/duration/polyline ΜΙΑ φορά ώστε η εφαρμογή (Flutter) να
+        // μην τα ξαναϋπολογίζει ζωντανά κάθε φορά που ανοίγει την κάρτα.
       });
       if (estimate.outsideAttica && !gateReasons.includes("outside_attica")) {
         gateReasons.push("outside_attica");
@@ -3109,6 +3136,8 @@ exports.createVivaOrder = onRequest(
         price: jobPrice,
         depositAmount: chargeAmount,
         fullyPaid: payFull,
+        routeKm: estimate.distanceKm || null,
+        routePolyline: estimate.routePolyline || null,
         createdAt: FieldValue.serverTimestamp(),
       });
 
@@ -3279,6 +3308,8 @@ exports.vivaWebhook = onRequest(
         luggage:        pd.luggage,
         childSeatCount: pd.childSeatCount,
         childSeat:      pd.childSeatCount > 0,
+        routeKm:        pd.routeKm || null,
+        routePolyline:  pd.routePolyline || null,
         vehicleType:    pd.vehicleType,
         note:           fullNote,
         price:          pd.price,
