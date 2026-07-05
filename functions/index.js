@@ -2093,6 +2093,17 @@ function athensNaiveFromDateTimeStrings(dateStr, timeStr) {
   if (!y || !m || !d) return null;
   return new Date(Date.UTC(y, m - 1, d, hh || 0, mm || 0, 0));
 }
+// Μετατρέπει ένα "naive" Athens Date (βλ. πάνω) σε ΠΡΑΓΜΑΤΙΚΟ UTC Date, ώστε να
+// μπορεί να σταλεί ως departureTime στο Google Routes API (πρόβλεψη κίνησης
+// για τη ΣΥΓΚΕΚΡΙΜΕΝΗ ώρα ραντεβού, όχι για τώρα). Ο υπολογισμός offset
+// βασίζεται στο σημερινό offset Αθήνας (καλή προσέγγιση — μικρό ρίσκο μόνο
+// στις 1-2 μέρες γύρω από αλλαγή ώρας θερινή/χειμερινή).
+function athensNaiveToRealDate(naive) {
+  const now = new Date();
+  const nowNaive = athensNaiveDate(now);
+  const offsetMs = nowNaive.getTime() - now.getTime();
+  return new Date(naive.getTime() - offsetMs);
+}
 
 // ── Νυχτερινό τιμολόγιο 23:30–05:30 ──────────────────────────────────────────
 function isNightWindow(naiveDate) {
@@ -2133,22 +2144,31 @@ function haversineKm(a, b) {
 }
 
 // ── Πραγματική απόσταση/διάρκεια μέσω Routes API (κλειδί ΜΟΝΟ server-side) ──
-async function routesDistanceDuration(origin, dest, apiKey) {
+async function routesDistanceDuration(origin, dest, apiKey, departureTime) {
   if (!apiKey) return null;
   try {
+    const body = {
+      origin: { location: { latLng: { latitude: origin.lat, longitude: origin.lng } } },
+      destination: { location: { latLng: { latitude: dest.lat, longitude: dest.lng } } },
+      travelMode: "DRIVE",
+      routingPreference: "TRAFFIC_AWARE",
+    };
+    // Αν έχουμε συγκεκριμένη μελλοντική ώρα ραντεβού, ζητάμε πρόβλεψη κίνησης
+    // ΓΙ' ΕΚΕΙΝΗ την ώρα (όχι για τώρα) — TRAFFIC_AWARE_OPTIMAL υποστηρίζει
+    // departureTime στο μέλλον.
+    if (departureTime instanceof Date && !isNaN(departureTime.getTime()) &&
+        departureTime.getTime() > Date.now()) {
+      body.routingPreference = "TRAFFIC_AWARE_OPTIMAL";
+      body.departureTime = departureTime.toISOString();
+    }
     const resp = await fetch("https://routes.googleapis.com/directions/v2:computeRoutes", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "X-Goog-Api-Key": apiKey,
-        "X-Goog-FieldMask": "routes.distanceMeters,routes.duration",
+        "X-Goog-FieldMask": "routes.distanceMeters,routes.duration,routes.polyline.encodedPolyline",
       },
-      body: JSON.stringify({
-        origin: { location: { latLng: { latitude: origin.lat, longitude: origin.lng } } },
-        destination: { location: { latLng: { latitude: dest.lat, longitude: dest.lng } } },
-        travelMode: "DRIVE",
-        routingPreference: "TRAFFIC_AWARE",
-      }),
+      body: JSON.stringify(body),
     });
     const data = await resp.json();
     const route = data && data.routes && data.routes[0];
@@ -2156,6 +2176,7 @@ async function routesDistanceDuration(origin, dest, apiKey) {
     return {
       distanceKm: Number(route.distanceMeters || 0) / 1000,
       durationMin: parseInt(route.duration, 10) / 60,
+      polyline: (route.polyline && route.polyline.encodedPolyline) || null,
     };
   } catch (e) {
     console.error("routesDistanceDuration error:", e);
@@ -2236,7 +2257,7 @@ async function getPricingData() {
   });
   const cfg = Object.assign(
     {
-      base: 3.5, perKm: 1.0, perKmOutside: 2.0, perMin: 0.2,
+      base: 3.5, perKm: 1.0, perKmOutside: 1.2, perKmOutsideVan: 2.0, perMin: 0.2,
       minCharge: 25, minChargeNight: 35,
       nightPctTaxi: 30, nightPctVan: 25, vanPct: 90,
       luggagePer: 0, seatPrice: 5,
@@ -2286,6 +2307,8 @@ async function computeEstimate({
   let minChargeApplied = false;
   let outsideAttica = false;
   let distanceKm = 0, durationMin = 0;
+  let routePolyline = null; // για εμφάνιση στον χάρτη (booking.html)
+  const departureTime = scheduledNaive ? athensNaiveToRealDate(scheduledNaive) : null;
 
   if (fromZone && toZone) {
     const route = routes[fromZone.id + ">" + toZone.id];
@@ -2306,12 +2329,27 @@ async function computeEstimate({
     }
   }
 
+  // ── Ζωνική διαδρομή: η ΤΙΜΗ είναι σταθερή (πάγια), αλλά ΚΑΙ ΕΔΩ φέρνουμε
+  // απόσταση/χρόνο/polyline ΜΟΝΟ για εμφάνιση στον χάρτη — δεν επηρεάζει
+  // καθόλου την τιμή.
+  if (zoneMatch && fromLat != null && fromLng != null && toLat != null && toLng != null) {
+    const rd = await routesDistanceDuration(
+      { lat: fromLat, lng: fromLng }, { lat: toLat, lng: toLng }, apiKey, departureTime);
+    if (rd) {
+      distanceKm = rd.distanceKm;
+      durationMin = rd.durationMin;
+      routePolyline = rd.polyline;
+    }
+  }
+
   if (!zoneMatch) {
     if (fromLat != null && fromLng != null && toLat != null && toLng != null) {
-      const rd = await routesDistanceDuration({ lat: fromLat, lng: fromLng }, { lat: toLat, lng: toLng }, apiKey);
+      const rd = await routesDistanceDuration(
+        { lat: fromLat, lng: fromLng }, { lat: toLat, lng: toLng }, apiKey, departureTime);
       if (rd) {
         distanceKm = rd.distanceKm;
         durationMin = rd.durationMin;
+        routePolyline = rd.polyline;
       } else {
         distanceKm = haversineKm({ lat: fromLat, lng: fromLng }, { lat: toLat, lng: toLng }) * 1.3;
         durationMin = (distanceKm / 45) * 60;
@@ -2324,18 +2362,33 @@ async function computeEstimate({
     // για το reference (ώστε να δείχνεται σωστή έκπτωση γνωριμίας).
     function dynamicPrice(useGreek) {
       const base = pick("base", useGreek);
-      const perKmField = outsideAttica ? "perKmOutside" : "perKm";
-      const perKmNow = pick(perKmField, useGreek);
       const perMinNow = pick("perMin", useGreek);
       const luggagePerNow = pick("luggagePer", useGreek);
       const vanPctNow = pick("vanPct", useGreek);
-      let p = base + distanceKm * perKmNow + durationMin * perMinNow;
-      p += luggage * luggagePerNow;
+
+      // ── Χιλιομετρική χρέωση ─────────────────────────────────────────────
+      // ΕΝΤΟΣ Αττικής: όπως πριν — ενιαίο perKm, μπαίνει στο άθροισμα που
+      // παίρνει τη γενική προσαύξηση βαν (vanPct) μαζί με base/χρόνο/βαλίτσες.
+      // ΕΚΤΟΣ Αττικής: ΣΤΑΘΕΡΗ τιμή ανά όχημα (1,2€/χλμ ταξί, 2€/χλμ βαν),
+      // η οποία ΔΕΝ παίρνει επιπλέον προσαύξηση vanPct από πάνω — το 2€ του
+      // βαν είναι ήδη η τελική τιμή.
+      let kmCost;
+      if (outsideAttica) {
+        const perKmOutsideField = vehicle === "van" ? "perKmOutsideVan" : "perKmOutside";
+        kmCost = distanceKm * pick(perKmOutsideField, useGreek);
+      } else {
+        kmCost = distanceKm * pick("perKm", useGreek);
+      }
+
+      let p = base + durationMin * perMinNow + luggage * luggagePerNow;
+      if (!outsideAttica) p += kmCost; // εντός Αττικής: μπαίνει ΠΡΙΝ το van markup, όπως πριν
       // ΣΗΜΕΙΩΣΗ: η επιβάρυνση παιδικού καθίσματος ΔΕΝ μπαίνει εδώ πια —
       // προστίθεται ξεχωριστά, ΠΑΝΤΑ σταθερή, ΜΕΤΑ την ελάχιστη χρέωση
       // (βλ. seatFeeOwn/seatFeeOther παρακάτω), ώστε να μην «χάνεται» μέσα
       // στην ελάχιστη χρέωση όταν η βασική τιμή είναι μικρή.
       if (vehicle === "van") p = p * (1 + vanPctNow / 100);
+
+      if (outsideAttica) p += kmCost; // εκτός Αττικής: σταθερό ανά όχημα, ΧΩΡΙΣ vanPct πάνω του
       return p;
     }
 
@@ -2394,7 +2447,7 @@ async function computeEstimate({
   let discountPercent = displayOriginal > 0 ? Math.round((1 - price / displayOriginal) * 100) : 8;
   if (!isFinite(discountPercent)) discountPercent = 8;
 
-  return { price, nightApplies, vehicle, zoneMatch, minChargeApplied, displayOriginal, discountPercent, outsideAttica };
+  return { price, nightApplies, vehicle, zoneMatch, minChargeApplied, displayOriginal, discountPercent, outsideAttica, distanceKm, durationMin, routePolyline };
 }
 
 // ── estimatePrice: καλείται ζωντανά από τη φόρμα καθώς συμπληρώνει ο πελάτης ─
@@ -2441,6 +2494,9 @@ exports.estimatePrice = onRequest(
         displayOriginal: result.displayOriginal,
         discountPercent: result.discountPercent,
         minChargeApplied: result.minChargeApplied,
+        distanceKm: result.distanceKm,
+        durationMin: result.durationMin,
+        routePolyline: result.routePolyline,
       });
     } catch (e) {
       console.error("estimatePrice error:", e);
@@ -2623,6 +2679,7 @@ exports.submitPublicBooking = onRequest(
         persons:        persons,
         luggage:        luggage,
         childSeatCount: childSeatCount,
+        childSeat:      childSeatCount > 0,
         vehicleType:    vehicleType,     // 'taxi' | 'van'
         note:           fullNote,
         price:          estimate.price,   // υπολογισμένη τιμή (ζώνη ή δυναμικός τύπος)
@@ -3016,21 +3073,29 @@ exports.createVivaOrder = onRequest(
         return res.status(400).json({ ok: false, error: "outside_booking_window", reasons: gateReasons });
       }
 
-      // ── 10% προκαταβολή ή ολόκληρο ποσό (αν το ζήτησε ο πελάτης), πάντα
-      // στρογγυλοποίηση προς τα πάνω στο επόμενο ευρώ.
+      // ── ΔΥΟ ΔΙΑΦΟΡΕΤΙΚΑ ΠΟΣΑ — μην τα μπερδέψεις:
+      //   • depositEquivalent = ΠΑΝΤΑ το 10% της αρχικής τιμής (ό,τι κι αν
+      //     επέλεξε ο πελάτης). Είναι το πάγιο περιθώριο του master, και
+      //     αφαιρείται ΠΑΝΤΑ από την τιμή για να προκύψει η «καθαρή» τιμή
+      //     δουλειάς (jobPrice) — έτσι ώστε jobPrice = 49€ και στις δύο
+      //     περιπτώσεις σε ένα ταξίδι 55€ με προκαταβολή 6€, όχι μόνο στην
+      //     απλή προκαταβολή.
+      //   • chargeAmount = πόσο ΠΡΑΓΜΑΤΙΚΑ χρεώνεται στη Viva τώρα
+      //     (depositEquivalent αν 10%, ή ΟΛΟΚΛΗΡΗ η τιμή αν payFull).
       const payFull = b.payFull === true;
-      const depositEur = payFull ? Math.ceil(estimate.price) : Math.ceil(estimate.price * 0.10);
-      const depositCents = depositEur * 100; // Viva θέλει το amount σε λεπτά
+      const depositEquivalent = Math.ceil(estimate.price * 0.10);
+      const chargeAmount = payFull ? Math.ceil(estimate.price) : depositEquivalent;
+      const depositCents = chargeAmount * 100; // Viva θέλει το amount σε λεπτά
 
-      if (depositEur <= 0) {
+      if (chargeAmount <= 0) {
         return res.status(400).json({ ok: false, error: "invalid_amount" });
       }
 
-      // ── Αποθηκευμένη τιμή της δουλειάς = αρχική τιμή ΜΕΙΟΝ την προκαταβολή
-      // (πάντα, είτε πλήρωσε 10% είτε ολόκληρο το ποσό). Η προκαταβολή είναι
-      // το πάγιο περιθώριο του master· η υπόλοιπη τιμή μπαίνει στο κανονικό
-      // κύκλωμα προμηθειών/κέρδους οδηγού, όπως πριν.
-      const jobPrice = Math.max(0, estimate.price - depositEur);
+      // ── Αποθηκευμένη τιμή της δουλειάς = αρχική τιμή ΜΕΙΟΝ ΠΑΝΤΑ το
+      // 10%-ισοδύναμο (όχι το πραγματικό ποσό χρέωσης) — έτσι η τιμή που
+      // βλέπει ο οδηγός/master ως «τιμή δουλειάς» είναι πάντα η ίδια,
+      // ανεξάρτητα αν πληρώθηκε 10% ή 100% online.
+      const jobPrice = Math.max(0, estimate.price - depositEquivalent);
 
       // ── Αποθήκευση της «εκκρεμούς» κράτησης (ΔΕΝ είναι ακόμα saved_jobs) ──
       const db = getFirestore();
@@ -3042,7 +3107,7 @@ exports.createVivaOrder = onRequest(
         vehicleType, note, lang,
         date, time,
         price: jobPrice,
-        depositAmount: depositEur,
+        depositAmount: chargeAmount,
         fullyPaid: payFull,
         createdAt: FieldValue.serverTimestamp(),
       });
@@ -3090,7 +3155,7 @@ exports.createVivaOrder = onRequest(
       await pendingRef.update({ vivaOrderCode: String(orderCode) });
 
       const checkoutUrl = hosts.web + "/web/checkout?ref=" + orderCode;
-      return res.status(200).json({ ok: true, checkoutUrl, depositAmount: depositEur });
+      return res.status(200).json({ ok: true, checkoutUrl, depositAmount: chargeAmount });
     } catch (e) {
       console.error("createVivaOrder error:", e);
       return res.status(500).json({ ok: false, error: "server_error" });
@@ -3185,7 +3250,9 @@ exports.vivaWebhook = onRequest(
 
       const payLabel = pd.fullyPaid ? "πλήρης πληρωμή" : "προκαταβολή";
       const noteLines = [];
-      noteLines.push("📝 Από φόρμα ιστοσελίδας · 💳 " + (pd.fullyPaid ? "Πλήρης πληρωμή" : "Προκαταβολή") + " " + pd.depositAmount + "€ μέσω Viva" + (pd.fullyPaid ? " (ΤΙΠΟΤΑ ΑΛΛΟ ΝΑ ΕΙΣΠΡΑΧΘΕΙ)" : ""));
+      noteLines.push(pd.fullyPaid
+        ? "📝 Από φόρμα ιστοσελίδας · ⚠️ ΠΡΟΠΛΗΡΩΜΕΝΟ ΔΡΟΜΟΛΟΓΙΟ — δεν εισπράττεις τίποτα από τον πελάτη"
+        : "📝 Από φόρμα ιστοσελίδας · 💳 Πληρώθηκε προκαταβολή online — εισπράττεις μόνο το υπόλοιπο");
       noteLines.push("Πελάτης: " + pd.clientName + " · " + pd.clientPhone);
       if (pd.clientEmail) noteLines.push("Email: " + pd.clientEmail);
       if (pd.flightOrShip) noteLines.push("Πτήση/Πλοίο: " + pd.flightOrShip);
@@ -3211,6 +3278,7 @@ exports.vivaWebhook = onRequest(
         persons:        pd.persons,
         luggage:        pd.luggage,
         childSeatCount: pd.childSeatCount,
+        childSeat:      pd.childSeatCount > 0,
         vehicleType:    pd.vehicleType,
         note:           fullNote,
         price:          pd.price,

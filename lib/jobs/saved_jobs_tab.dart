@@ -720,7 +720,7 @@ class _SavedJobCard extends StatelessWidget {
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
                   margin: const EdgeInsets.only(bottom: 8),
                   decoration: BoxDecoration(
-                    color: const Color(0xFF4527A0),
+                    color: const Color(0xFFD97757),
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [

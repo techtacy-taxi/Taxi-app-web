@@ -968,29 +968,30 @@ class _PricingConfigTab extends StatefulWidget {
 
 class _PricingConfigTabState extends State<_PricingConfigTab> {
   static const _keys = [
-    'base', 'perKm', 'perKmOutside', 'perMin', 'minCharge', 'minChargeNight',
+    'base', 'perKm', 'perKmOutside', 'perKmOutsideVan', 'perMin', 'minCharge', 'minChargeNight',
     'nightPctTaxi', 'nightPctVan', 'vanPct', 'luggagePer', 'seatPrice',
   ];
 
   static const _defaults = {
-    'base': 3.5, 'perKm': 1.0, 'perKmOutside': 2.0, 'perMin': 0.2,
+    'base': 3.5, 'perKm': 1.0, 'perKmOutside': 1.2, 'perKmOutsideVan': 2.0, 'perMin': 0.2,
     'minCharge': 25.0, 'minChargeNight': 35.0,
     'nightPctTaxi': 30.0, 'nightPctVan': 25.0,
     'vanPct': 90.0, 'luggagePer': 0.0, 'seatPrice': 5.0,
   };
 
   static const _labels = {
-    'base':           'Βάση εκκίνησης (€)',
-    'perKm':          '€ ανά χιλιόμετρο (εντός Αττικής)',
-    'perKmOutside':   '€ ανά χιλιόμετρο (εκτός Αττικής)',
-    'perMin':         '€ ανά λεπτό',
-    'minCharge':      'Ελάχιστη χρέωση διαδρομής, ημέρα (€)',
-    'minChargeNight': 'Ελάχιστη χρέωση διαδρομής, νύχτα (€)',
-    'nightPctTaxi':   'Νυχτερινή προσαύξηση Ταξί (%)',
-    'nightPctVan':    'Νυχτερινή προσαύξηση Βαν (%)',
-    'vanPct':         'Βαν = Ταξί + (%) — δυναμικός τύπος',
-    'luggagePer':     '€ ανά βαλίτσα',
-    'seatPrice':      '€ ανά παιδικό κάθισμα',
+    'base':             'Βάση εκκίνησης (€)',
+    'perKm':            '€ ανά χιλιόμετρο (εντός Αττικής)',
+    'perKmOutside':     '€ ανά χιλιόμετρο εκτός Αττικής — Ταξί',
+    'perKmOutsideVan':  '€ ανά χιλιόμετρο εκτός Αττικής — Βαν',
+    'perMin':           '€ ανά λεπτό',
+    'minCharge':        'Ελάχιστη χρέωση διαδρομής, ημέρα (€)',
+    'minChargeNight':   'Ελάχιστη χρέωση διαδρομής, νύχτα (€)',
+    'nightPctTaxi':     'Νυχτερινή προσαύξηση Ταξί (%)',
+    'nightPctVan':      'Νυχτερινή προσαύξηση Βαν (%)',
+    'vanPct':           'Βαν = Ταξί + (%) — δυναμικός τύπος (εντός Αττικής)',
+    'luggagePer':       '€ ανά βαλίτσα',
+    'seatPrice':        '€ ανά παιδικό κάθισμα',
   };
 
   // Κύριες τιμές (Έλληνας/κοινή).

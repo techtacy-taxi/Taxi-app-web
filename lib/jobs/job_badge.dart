@@ -837,7 +837,7 @@ class _JobListenerState extends State<JobListener> with WidgetsBindingObserver {
                 children: [
                   _boardedChip('👤 ${job.persons} άτ.'),
                   if (job.luggage > 0) _boardedChip('🧳 ${job.luggage}'),
-                  if (job.childSeat && job.childSeatCount > 0)
+                  if (job.childSeatCount > 0)
                     _boardedChip('🪑 ${job.childSeatCount} παιδ.'),
                   if (job.withReturn) _boardedChip('🔄 Με επιστροφή'),
                   if (job.withStops) _boardedChip('🛑 Με στάσεις'),

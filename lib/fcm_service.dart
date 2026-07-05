@@ -381,7 +381,7 @@ Future<void> _showPublicBookingBg(
     channelDescription: kOwnerChannelDesc,
     importance:       Importance.max,
     priority:         Priority.max,
-    category:         AndroidNotificationCategory.message,
+    category:         AndroidNotificationCategory.call,
     visibility:       NotificationVisibility.public,
     autoCancel:       true,
     ongoing:          true,    // μένει μέχρι να ανοίξει η εφαρμογή ο master
@@ -391,7 +391,12 @@ Future<void> _showPublicBookingBg(
     vibrationPattern: kStrongVibration,
     enableLights:     true,
     fullScreenIntent: true,    // εμφανίζεται ακόμα & με κλειστή οθόνη
+    additionalFlags:  _kInsistent, // ΣΗΜΑΝΤΙΚΟ: χτυπάει ΣΥΝΕΧΟΜΕΝΑ (όπως νέα δουλειά), όχι μία φορά
     styleInformation: BigTextStyleInformation(body),
+    actions: const <AndroidNotificationAction>[
+      AndroidNotificationAction(kActionOk, 'ΟΚ',
+          showsUserInterface: false, cancelNotification: true),
+    ],
   );
 
   final notifId =

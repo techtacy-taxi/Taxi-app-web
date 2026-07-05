@@ -49,6 +49,7 @@ final Int64List kStrongVibration =
 
 const String kActionView        = 'job_view';
 const String kActionReject      = 'job_reject';
+const String kActionOk          = 'dismiss_ok';
 
 // ─── Σίγαση (mute) ──────────────────────────────────────────────────────────
 // Το ίδιο key που γράφει το map_page.dart (_saveSettings → prefs 'muted').

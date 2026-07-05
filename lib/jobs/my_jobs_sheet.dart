@@ -8,6 +8,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:vibration/vibration.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:intl/intl.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import 'job_details_sheet.dart';
 import 'job_shared_widgets.dart';
@@ -922,6 +923,32 @@ class MyJobTile extends StatelessWidget {
         padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
 
+          // ── Μπάρα «ΠΡΟΠΛΗΡΩΜΕΝΗ» (παλλόμενη) — μόνο όταν πληρώθηκε
+          // ΟΛΟΚΛΗΡΗ η τιμή online (fullyPaid). Ίδιο χρώμα με το αντίστοιχο
+          // badge στον master, ώστε ο οδηγός να ξέρει αμέσως ότι δεν
+          // χρειάζεται να εισπράξει τίποτα από τον πελάτη.
+          if (job.fullyPaid)
+            _Pulse(
+              active: true,
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                margin: const EdgeInsets.only(bottom: 6),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFD97757),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Row(mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                  Icon(Icons.warning_amber_rounded, color: Colors.white, size: 18),
+                  SizedBox(width: 8),
+                  Text('ΠΡΟΠΛΗΡΩΜΕΝΗ — ΔΕΝ ΕΙΣΠΡΑΤΤΕΙΣ ΤΙΠΟΤΑ', style: TextStyle(
+                      color: Colors.white, fontSize: 12.5,
+                      fontWeight: FontWeight.w900, letterSpacing: .5)),
+                ]),
+              ),
+            ),
+
           // ── Banner ΕΠΙΣΤΡΟΦΗ (πάνω-πάνω) ───────────────────────────────
           if (job.isReturn)
             Container(
@@ -1025,10 +1052,21 @@ class MyJobTile extends StatelessWidget {
                   _chip(Icons.person_rounded, '${job.persons}', Colors.blue),
                   if (job.luggage > 0)
                     _chip(Icons.luggage_rounded, '${job.luggage}', Colors.grey),
-                  if (job.childSeat)
-                    _chip(Icons.child_care_rounded, 'Παιδικό', Colors.purple),
+                  if (job.childSeatCount > 0)
+                    _chip(Icons.child_care_rounded,
+                        '${job.childSeatCount} παιδικό${job.childSeatCount > 1 ? "ά" : ""}',
+                        Colors.purple),
                   if (job.clientName != null && job.clientName!.isNotEmpty)
                     _chip(Icons.badge_rounded, job.clientName!, Colors.teal),
+                  if (job.clientPhone != null && job.clientPhone!.isNotEmpty)
+                    GestureDetector(
+                      onTap: () {
+                        final digits = job.clientPhone!.replaceAll(RegExp(r'[^0-9]'), '');
+                        launchUrl(Uri.parse('https://wa.me/$digits'),
+                            mode: LaunchMode.externalApplication);
+                      },
+                      child: _chip(Icons.chat_bubble_rounded, 'WhatsApp', const Color(0xFF25D366)),
+                    ),
                   if (job.flightOrShip != null && job.flightOrShip!.isNotEmpty)
                     _chip(Icons.flight_rounded, job.flightOrShip!, Colors.indigo),
                 ]),

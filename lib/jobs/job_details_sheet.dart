@@ -12,6 +12,7 @@ import 'job_service.dart';
 import 'saved_job_service.dart';
 import 'ics_export_service.dart';
 import 'ics_access.dart';
+import 'job_map_distance.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ΚΟΙΝΗ ΡΟΗ «ΤΕΛΟΣ ΔΙΑΔΡΟΜΗΣ» (+ προαιρετική ΕΠΙΣΤΡΟΦΗ)
@@ -371,6 +372,11 @@ class JobDetailsSheet extends StatelessWidget {
           Divider(color: Colors.grey[200]),
           const SizedBox(height: 8),
 
+          // ── Χάρτης + απόσταση από σένα (ίδιο με το popup «Νέα Δουλειά»),
+          // ξαναϋπολογίζεται φρέσκια κάθε φορά που ανοίγει αυτή η κάρτα.
+          JobMapDistanceCard(job: job),
+          const SizedBox(height: 14),
+
           // Info cells
           Wrap(spacing: 8, runSpacing: 8, children: [
             _dCell(Icons.person_rounded,    'Άτομα',    '${job.persons}'),
@@ -378,15 +384,13 @@ class JobDetailsSheet extends StatelessWidget {
             _dCell(job.vehicleType == 'van'
                 ? Icons.airport_shuttle_rounded : Icons.local_taxi_rounded,
                 'Όχημα', job.vehicleLabel),
-            if (job.childSeat)
+            if (job.childSeatCount > 0)
               _dCell(Icons.child_care_rounded, 'Παιδικά καθίσματα',
-                  job.childSeatCount > 0
-                      ? '${job.childSeatCount}'
-                          '${job.childSeatPrice > 0
-                              ? ' (${(job.childSeatCount * job.childSeatPrice)
-                                  .toStringAsFixed(2)}€)'
-                              : ''}'
-                      : 'Ναι'),
+                  '${job.childSeatCount}'
+                  '${job.childSeatPrice > 0
+                      ? ' (${(job.childSeatCount * job.childSeatPrice)
+                          .toStringAsFixed(2)}€)'
+                      : ''}'),
             if (job.flightOrShip != null && job.flightOrShip!.isNotEmpty)
               _dCell(Icons.flight_rounded, 'Πτήση/Πλοίο', job.flightOrShip!),
           ]),
