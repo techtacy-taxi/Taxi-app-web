@@ -744,8 +744,6 @@ class _AdminDriverCard extends StatelessWidget {
                   )),
                 ],
 
-                ],
-
                 // ── Tenant Owner — ξεχωριστό, πρόσθετο δικαίωμα πάνω από
                 // το admin. Ξεκλειδώνει ΜΟΝΟ το μενού «Ζώνες & Τιμές» για
                 // τον δικό του tenant — τίποτα άλλο δεν αλλάζει (βλέπει
