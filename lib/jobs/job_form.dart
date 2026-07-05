@@ -227,13 +227,21 @@ class _JobFormPageState extends State<JobFormPage> {
     if (widget.editJob != null) {
       _prefill(widget.editJob!);
       _loadSources();
+      // Αν η δουλειά ήταν ήδη προπληρωμένη (online ή χειροκίνητα), ο
+      // διακόπτης πρέπει να δείχνει ΑΝΟΙΧΤΟΣ όταν την ξανανοίγεις — αλλιώς
+      // φαίνεται σαν να μην είναι προπληρωμένη ενώ είναι.
+      _fullyPaidManual = widget.editJob!.fullyPaid;
     } else if (widget.editSavedJob != null) {
       _prefill(widget.editSavedJob!);
       _loadSources();
+      _fullyPaidManual = widget.editSavedJob!.fullyPaid;
     } else if (widget.copyFromJob != null) {
       // ΑΝΤΙΓΡΑΦΟ: γέμισε τα πεδία αλλά συμπεριφέρου ως νέα δουλειά.
       _prefill(widget.copyFromJob!);
       _loadSources();
+      // ΣΗΜΑΝΤΙΚΟ: το αντίγραφο είναι ΝΕΑ, μη πληρωμένη κράτηση — ο
+      // διακόπτης ΔΕΝ πρέπει να «κληρονομήσει» το fullyPaid του πρωτότυπου.
+      _fullyPaidManual = false;
       // Αν η αρχική ήταν προγραμματισμένη → ζήτα νέα ώρα αμέσως.
       // Άκυρο = μένει κενό → βγαίνει ΑΜΕΣΑ.
       if (widget.copyFromJob!.scheduledAt != null) {

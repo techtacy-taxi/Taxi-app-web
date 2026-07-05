@@ -419,16 +419,16 @@ class _JobPopupContentState extends State<_JobPopupContent>
         // 1. ΣΤΑΘΕΡΟ HEADER
         Container(
           width:  double.infinity,
-          padding: const EdgeInsets.symmetric(vertical: 16),
+          padding: const EdgeInsets.symmetric(vertical: 9),
           decoration: const BoxDecoration(
             color: Colors.amber,
           ),
           child: Column(children: [
-            const Icon(Icons.work_rounded, size: 32, color: Colors.black87),
-            const SizedBox(height: 4),
+            const Icon(Icons.work_rounded, size: 22, color: Colors.black87),
+            const SizedBox(height: 2),
             const Text('Νέα Διεκδίκηση!',
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.black87)),
-            const SizedBox(height: 8),
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black87)),
+            const SizedBox(height: 5),
             AnimatedBuilder(
               animation: _shakeAnim,
               builder: (_, child) => Transform.translate(
@@ -501,6 +501,31 @@ class _JobPopupContentState extends State<_JobPopupContent>
             ),
           ),
 
+        // 1c. ΜΠΑΡΑ «ΠΡΟΠΛΗΡΩΜΕΝΗ» — αμέσως κάτω από ΡΑΝΤΕΒΟΥ/ΑΜΕΣΑ, άκρη-σε-
+        // άκρη (ίδιο στυλ με τις μπάρες κατάστασης από πάνω). Μόνο για πλήρη
+        // πληρωμή (online ή χειροκίνητη).
+        if (job.fullyPaid)
+          Container(
+            width: double.infinity,
+            color: const Color(0xFFD97757),
+            padding: const EdgeInsets.symmetric(vertical: 9, horizontal: 10),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Icon(Icons.warning_amber_rounded, color: Colors.white, size: 17),
+                const SizedBox(width: 7),
+                Flexible(
+                  child: Text('ΠΡΟΠΛΗΡΩΜΕΝΗ — ΔΕΝ ΕΙΣΠΡΑΤΤΕΙΣ ΤΙΠΟΤΑ',
+                      textAlign: TextAlign.center,
+                      maxLines: 2,
+                      style: const TextStyle(
+                          color: Colors.white, fontSize: 12,
+                          fontWeight: FontWeight.w900)),
+                ),
+              ],
+            ),
+          ),
+
         // 2. SCROLLABLE BODY
         Flexible(
           child: SingleChildScrollView(
@@ -517,27 +542,6 @@ class _JobPopupContentState extends State<_JobPopupContent>
                 const SizedBox(height: 16),
                 Divider(color: Colors.grey[200], height: 1),
                 const SizedBox(height: 12),
-
-                // ── Μπάρα «ΠΡΟΠΛΗΡΩΜΕΝΗ» — μόνο για πλήρη πληρωμή (online ή
-                // χειροκίνητη). Ίδιο χρώμα με όλες τις άλλες κάρτες.
-                if (job.fullyPaid) ...[
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
-                    margin: const EdgeInsets.only(bottom: 10),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFD97757),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-                      Icon(Icons.warning_amber_rounded, color: Colors.white, size: 18),
-                      SizedBox(width: 8),
-                      Text('ΠΡΟΠΛΗΡΩΜΕΝΗ — ΔΕΝ ΕΙΣΠΡΑΤΤΕΙΣ ΤΙΠΟΤΑ', style: TextStyle(
-                          color: Colors.white, fontSize: 12.5,
-                          fontWeight: FontWeight.w900, letterSpacing: .5)),
-                    ]),
-                  ),
-                ],
 
                 // Οικονομικά στοιχεία
                 Row(children: [
