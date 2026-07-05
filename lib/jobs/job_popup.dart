@@ -518,6 +518,27 @@ class _JobPopupContentState extends State<_JobPopupContent>
                 Divider(color: Colors.grey[200], height: 1),
                 const SizedBox(height: 12),
 
+                // ── Μπάρα «ΠΡΟΠΛΗΡΩΜΕΝΗ» — μόνο για πλήρη πληρωμή (online ή
+                // χειροκίνητη). Ίδιο χρώμα με όλες τις άλλες κάρτες.
+                if (job.fullyPaid) ...[
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+                    margin: const EdgeInsets.only(bottom: 10),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFD97757),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                      Icon(Icons.warning_amber_rounded, color: Colors.white, size: 18),
+                      SizedBox(width: 8),
+                      Text('ΠΡΟΠΛΗΡΩΜΕΝΗ — ΔΕΝ ΕΙΣΠΡΑΤΤΕΙΣ ΤΙΠΟΤΑ', style: TextStyle(
+                          color: Colors.white, fontSize: 12.5,
+                          fontWeight: FontWeight.w900, letterSpacing: .5)),
+                    ]),
+                  ),
+                ],
+
                 // Οικονομικά στοιχεία
                 Row(children: [
                   Expanded(child: _infoCell(

@@ -171,7 +171,7 @@ class AdminJobCard extends StatelessWidget {
                 const Icon(Icons.warning_amber_rounded, size: 16, color: Colors.white),
                 const SizedBox(width: 8),
                 Text(
-                  'ΠΡΟΠΛΗΡΩΜΕΝΗ · ${job.depositAmount.toStringAsFixed(2)}€ (Viva)',
+                  'ΠΡΟΠΛΗΡΩΜΕΝΗ · ${job.depositAmount.toStringAsFixed(2)}€${job.vivaOrderCode != null ? " (Viva)" : ""}',
                   style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w900,
                       color: Colors.white, letterSpacing: .5),
                 ),
@@ -194,7 +194,7 @@ class AdminJobCard extends StatelessWidget {
                 const Icon(Icons.verified_rounded, size: 15, color: Color(0xFF1E8E3E)),
                 const SizedBox(width: 6),
                 Text(
-                  'Πληρώθηκε προκαταβολή ${job.depositAmount.toStringAsFixed(2)}€ (Viva)',
+                  'Πληρώθηκε προκαταβολή ${job.depositAmount.toStringAsFixed(2)}€${job.vivaOrderCode != null ? " (Viva)" : ""}',
                   style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700,
                       color: Color(0xFF1E8E3E)),
                 ),

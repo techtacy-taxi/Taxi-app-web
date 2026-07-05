@@ -165,6 +165,12 @@ class _JobFormPageState extends State<JobFormPage> {
   bool      _availableOnly = true;
   bool      _exclusiveTarget = false; // αποκλειστική αποστολή σε ομάδα/οδηγούς
 
+  // Χειροκίνητο toggle «Προπληρωμένο» — ο πελάτης έχει ήδη πληρώσει ΟΛΟΚΛΗΡΗ
+  // την τιμή με άλλο τρόπο (μετρητά στον master, τραπεζικό έμβασμα, κλπ.),
+  // όχι μέσω της online φόρμας/Viva. Ο οδηγός δεν εισπράττει τίποτα· το
+  // κέρδος του το χρωστάει αυτός που έβγαλε τη δουλειά (βλ. onJobBilling).
+  bool      _fullyPaidManual = false;
+
   // Editable commission overrides
   final _commissionCtrl    = TextEditingController(); // πηγή
   final _appCommissionCtrl = TextEditingController(); // app
@@ -870,6 +876,21 @@ class _JobFormPageState extends State<JobFormPage> {
           .map((u) => _targetNames[u] ?? '')
           .toList(),
       timeoutMins:      _timeoutMins,
+      // ── Προπληρωμένο ─────────────────────────────────────────────────
+      // Αν η δουλειά που επεξεργαζόμαστε έχει ήδη ΠΡΑΓΜΑΤΙΚΗ πληρωμή Viva
+      // (ήρθε από την online φόρμα), ΔΙΑΤΗΡΟΥΜΕ αυτά τα στοιχεία όπως είναι
+      // — το χειροκίνητο toggle δεν μπορεί να τα σβήσει/αλλάξει κατά λάθος.
+      // Αλλιώς, εφαρμόζουμε το χειροκίνητο toggle του admin/master.
+      depositPaid:      widget.editJob?.vivaOrderCode != null
+          ? widget.editJob!.depositPaid
+          : _fullyPaidManual,
+      depositAmount:    widget.editJob?.vivaOrderCode != null
+          ? widget.editJob!.depositAmount
+          : (_fullyPaidManual ? price : 0),
+      fullyPaid:        widget.editJob?.vivaOrderCode != null
+          ? widget.editJob!.fullyPaid
+          : _fullyPaidManual,
+      vivaOrderCode:    widget.editJob?.vivaOrderCode,
     );
   }
 
@@ -1170,6 +1191,42 @@ class _JobFormPageState extends State<JobFormPage> {
               ),
             ),
           ]),
+
+          // ── Προπληρωμένο (χειροκίνητο) ──────────────────────────────────
+          // Ο πελάτης έχει ήδη πληρώσει ΟΛΟΚΛΗΡΗ την τιμή με άλλο τρόπο
+          // (μετρητά στον master, έμβασμα, κλπ.) — ΟΧΙ μέσω της online
+          // φόρμας. Ο οδηγός δεν εισπράττει τίποτα από τον πελάτη· το κέρδος
+          // του οδηγού το χρωστάει αυτός που έβγαλε τη δουλειά (master/admin).
+          const SizedBox(height: 12),
+          Container(
+            decoration: BoxDecoration(
+              color: _fullyPaidManual
+                  ? const Color(0xFFD97757).withValues(alpha: 0.10)
+                  : Colors.white,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: _fullyPaidManual
+                    ? const Color(0xFFD97757)
+                    : Colors.grey.shade300,
+              ),
+            ),
+            child: SwitchListTile(
+              title: Row(children: [
+                const Icon(Icons.warning_amber_rounded, size: 18, color: Color(0xFFD97757)),
+                const SizedBox(width: 10),
+                const Text('Προπληρωμένο (ολόκληρο ποσό)'),
+              ]),
+              subtitle: Text(
+                _fullyPaidManual
+                    ? 'Ο οδηγός δεν θα εισπράξει τίποτα — εσύ του χρωστάς το κέρδος του.'
+                    : 'Ενεργοποίησε αν ο πελάτης έχει ήδη πληρώσει ολόκληρη την τιμή με άλλο τρόπο (μετρητά, έμβασμα κλπ.), όχι μέσω online φόρμας.',
+                style: const TextStyle(fontSize: 12),
+              ),
+              value: _fullyPaidManual,
+              activeThumbColor: const Color(0xFFD97757),
+              onChanged: (v) => setState(() => _fullyPaidManual = v),
+            ),
+          ),
 
           // ── Επεξεργάσιμα πεδία προμηθειών ──────────────────────────────
           if (_selectedSource != null) ...[

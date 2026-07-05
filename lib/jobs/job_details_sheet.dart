@@ -319,6 +319,27 @@ class JobDetailsSheet extends StatelessWidget {
             const SizedBox(height: 14),
           ],
 
+          // ── Μπάρα «ΠΡΟΠΛΗΡΩΜΕΝΗ» — μόνο για πλήρη πληρωμή (online ή
+          // χειροκίνητη). Ίδιο στυλ με τη μπλε μπάρα «Ραντεβού» παρακάτω.
+          if (job.fullyPaid) ...[
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+              margin: const EdgeInsets.only(bottom: 10),
+              decoration: BoxDecoration(
+                color: const Color(0xFFD97757),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                Icon(Icons.warning_amber_rounded, color: Colors.white, size: 18),
+                SizedBox(width: 8),
+                Text('ΠΡΟΠΛΗΡΩΜΕΝΗ — ΔΕΝ ΕΙΣΠΡΑΤΤΕΙΣ ΤΙΠΟΤΑ', style: TextStyle(
+                    color: Colors.white, fontSize: 12.5,
+                    fontWeight: FontWeight.w900, letterSpacing: .5)),
+              ]),
+            ),
+          ],
+
           // ── Τιμή / είσπραξη — ΠΡΩΤΑ, πλήρους πλάτους, ξεκάθαρη διατύπωση ──
           // (Το job.price είναι ΗΔΗ η καθαρή τιμή μετά την προκαταβολή — ΔΕΝ
           // αφαιρείται τίποτα άλλο. Το γράφουμε ρητά ώστε να μην μπερδεύεται
