@@ -19,6 +19,9 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+import '../models.dart';
+import '../owner_home_page.dart';
+import '../profile_form.dart';
 import 'admin_shell.dart';
 
 /// Ρόλος + στοιχεία χρήστη που περνούν στο shell.
@@ -29,6 +32,9 @@ class AdminSession {
   final bool   isMaster;
   final bool   isAdmin;
   final bool   isTenantOwner;
+  final bool   isHomeOwner;
+  final String? ownerOfClientId;
+  final String? ownerOfClientName;
   final bool   calendarEnabled;
   final List<String> managedGroupIds;
 
@@ -39,6 +45,9 @@ class AdminSession {
     required this.isMaster,
     required this.isAdmin,
     required this.isTenantOwner,
+    required this.isHomeOwner,
+    required this.ownerOfClientId,
+    required this.ownerOfClientName,
     required this.calendarEnabled,
     required this.managedGroupIds,
   });
@@ -47,7 +56,7 @@ class AdminSession {
       [displayName, lastName].where((s) => s.trim().isNotEmpty).join(' ').trim();
 }
 
-enum _Stage { loading, signedOut, denied, ready }
+enum _Stage { loading, signedOut, denied, needsProfile, pendingApproval, ready }
 
 class WebAuthGateway extends StatefulWidget {
   const WebAuthGateway({super.key});
@@ -60,6 +69,7 @@ class _WebAuthGatewayState extends State<WebAuthGateway> {
   _Stage  _stage = _Stage.loading;
   String? _error;
   String? _deniedEmail;
+  User?   _pendingUser;
   AdminSession? _session;
 
   @override
@@ -105,19 +115,35 @@ class _WebAuthGatewayState extends State<WebAuthGateway> {
     try {
       final doc = await FirebaseFirestore.instance
           .collection('presence').doc(user.uid).get();
+
+      // ── Εντελώς νέος χρήστης (καμία presence ακόμα) — δείξε τη φόρμα
+      // στοιχείων (ίδια με το Android app) αντί να τον διώξουμε αμέσως.
+      if (!doc.exists) {
+        setState(() { _stage = _Stage.needsProfile; _pendingUser = user; });
+        return;
+      }
+
       final data = doc.data() ?? const <String, dynamic>{};
 
       final isMaster = data['master'] == true;
       final isAdmin  = data['admin']  == true;
       final isTenantOwner = data['tenantOwner'] == true;
+      final isHomeOwner   = data['homeOwner'] == true;
+      final isApproved    = data['isApproved'] == true;
 
-      if (!isMaster && !isAdmin) {
-        // Οδηγός ή μη εξουσιοδοτημένος → έξω.
+      if (!isMaster && !isAdmin && !isHomeOwner) {
+        // Ούτε master, ούτε admin, ούτε Home Owner → έξω.
         await FirebaseAuth.instance.signOut();
         setState(() {
           _stage = _Stage.denied;
           _deniedEmail = user.email;
         });
+        return;
+      }
+
+      if (!isMaster && !isApproved) {
+        // Admin ή Home Owner που περιμένει έγκριση από τον master.
+        setState(() { _stage = _Stage.pendingApproval; _pendingUser = user; });
         return;
       }
 
@@ -129,6 +155,9 @@ class _WebAuthGatewayState extends State<WebAuthGateway> {
           isMaster:        isMaster,
           isAdmin:         isAdmin,
           isTenantOwner:   isTenantOwner,
+          isHomeOwner:     isHomeOwner,
+          ownerOfClientId:   data['ownerOfClientId'] as String?,
+          ownerOfClientName: data['ownerOfClientName'] as String?,
           calendarEnabled: data['calendarEnabled'] == true,
           managedGroupIds:
               List<String>.from(data['managedGroupIds'] ?? const []),
@@ -146,6 +175,46 @@ class _WebAuthGatewayState extends State<WebAuthGateway> {
     }
   }
 
+  Future<void> _openProfileFormWeb() async {
+    final user = _pendingUser;
+    if (user == null) return;
+    await showProfileForm(
+      context: context,
+      uid: user.uid,
+      appVersion: 'web',
+      displayName: user.displayName ?? '',
+      lastName: '',
+      phone: user.phoneNumber ?? '',
+      vehicleModel: '',
+      referredBy: '',
+      plateNumber: '',
+      vehicleType: VehicleType.taxi,
+      onSaved: ({
+        required name, required lastName, required phone,
+        required vehicleModel, required referredBy, required plateNumber,
+        required vehicleType, required homeOwner, required ownerOfClientId,
+        required ownerOfClientName,
+      }) async {
+        await FirebaseFirestore.instance.collection('presence').doc(user.uid).set({
+          'displayName': name,
+          'lastName': lastName,
+          'phone': phone,
+          'vehicleModel': vehicleModel,
+          'referredBy': referredBy,
+          'plateNumber': plateNumber,
+          'vehicleType': vehicleType.name,
+          'homeOwner': homeOwner,
+          if (homeOwner) 'ownerOfClientId': ownerOfClientId,
+          if (homeOwner) 'ownerOfClientName': ownerOfClientName,
+          'isApproved': false,
+          'email': user.email,
+        }, SetOptions(merge: true));
+        if (!mounted) return;
+        await _resolveRole(user);
+      },
+    );
+  }
+
   Future<void> _backToSignIn() async {
     await FirebaseAuth.instance.signOut();
     setState(() {
@@ -161,7 +230,29 @@ class _WebAuthGatewayState extends State<WebAuthGateway> {
       case _Stage.loading:
         return const _CenteredCard(child: _Loading());
       case _Stage.ready:
+        // Home Owner (ιδιοκτήτης καταλύματος) που ΔΕΝ είναι επιπλέον admin/
+        // master → περιορισμένη οθόνη (Ανοιχτές/Αποθηκευμένες/Ιστορικό),
+        // ΟΧΙ το κανονικό AdminShell.
+        if (_session!.isHomeOwner && !_session!.isMaster && !_session!.isAdmin) {
+          return OwnerHomePage(
+            uid: _session!.uid,
+            displayName: _session!.fullName,
+            ownerOfClientId: _session!.ownerOfClientId ?? '',
+            ownerOfClientName: _session!.ownerOfClientName ?? '',
+          );
+        }
         return AdminShell(session: _session!);
+      case _Stage.needsProfile:
+        return _CenteredCard(
+          child: _NeedsProfileView(onFillProfile: _openProfileFormWeb),
+        );
+      case _Stage.pendingApproval:
+        return _CenteredCard(
+          child: _PendingApprovalView(
+            onRefresh: () => _pendingUser != null ? _resolveRole(_pendingUser!) : null,
+            onSignOut: _backToSignIn,
+          ),
+        );
       case _Stage.denied:
         return _CenteredCard(
           child: _DeniedView(email: _deniedEmail, onRetry: _backToSignIn),
@@ -312,6 +403,83 @@ class _DeniedView extends StatelessWidget {
           onPressed: onRetry,
           icon: const Icon(Icons.arrow_back_rounded),
           label: const Text('Σύνδεση με άλλον λογαριασμό'),
+        ),
+      ],
+    );
+  }
+}
+
+class _NeedsProfileView extends StatelessWidget {
+  final VoidCallback onFillProfile;
+  const _NeedsProfileView({required this.onFillProfile});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const _Brand(),
+        const SizedBox(height: 28),
+        Icon(Icons.badge_rounded, size: 48, color: Colors.indigo.shade300),
+        const SizedBox(height: 14),
+        const Text('Πρώτη σύνδεση',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+        const SizedBox(height: 8),
+        Text(
+          'Συμπλήρωσε τα στοιχεία σου για να συνεχίσεις. Αν είσαι διαχειριστής '
+          'καταλύματος (Home Owner), θα το επιλέξεις εκεί.',
+          textAlign: TextAlign.center,
+          style: TextStyle(color: Colors.grey[600], fontSize: 13.5, height: 1.4),
+        ),
+        const SizedBox(height: 22),
+        SizedBox(
+          width: double.infinity,
+          child: FilledButton.icon(
+            onPressed: onFillProfile,
+            icon: const Icon(Icons.edit_rounded),
+            label: const Text('Συμπλήρωσε τα στοιχεία σου'),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _PendingApprovalView extends StatelessWidget {
+  final VoidCallback onRefresh;
+  final VoidCallback onSignOut;
+  const _PendingApprovalView({required this.onRefresh, required this.onSignOut});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(Icons.hourglass_top_rounded, size: 56, color: Colors.orange.shade400),
+        const SizedBox(height: 18),
+        const Text('Περιμένεις έγκριση',
+            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+        const SizedBox(height: 10),
+        Text(
+          'Η αίτησή σου εστάλη. Θα αποκτήσεις πρόσβαση μόλις εγκριθεί από τον '
+          'διαχειριστή.',
+          textAlign: TextAlign.center,
+          style: TextStyle(color: Colors.grey[600], fontSize: 14, height: 1.4),
+        ),
+        const SizedBox(height: 24),
+        SizedBox(
+          width: double.infinity,
+          child: FilledButton.icon(
+            onPressed: onRefresh,
+            icon: const Icon(Icons.refresh_rounded),
+            label: const Text('Έλεγχος ξανά'),
+          ),
+        ),
+        const SizedBox(height: 10),
+        OutlinedButton.icon(
+          onPressed: onSignOut,
+          icon: const Icon(Icons.logout_rounded),
+          label: const Text('Αποσύνδεση'),
         ),
       ],
     );

@@ -34,6 +34,7 @@ class _TenantAdminPageState extends State<TenantAdminPage> {
   String? _error;
   List<Map<String, dynamic>> _tenants = [];
   bool _backfilling = false;
+  bool _fixingCase = false;
 
   bool get _isSuperAdmin =>
       FirebaseAuth.instance.currentUser?.email == kSuperAdminEmail;
@@ -129,6 +130,53 @@ class _TenantAdminPageState extends State<TenantAdminPage> {
     }
   }
 
+  Future<void> _runFixCapitalizationPrompt() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dctx) => AlertDialog(
+        title: const Text('Διόρθωση Κεφαλαίο/πεζά'),
+        content: const Text(
+          'Διορθώνει το Όνομα/Επίθετο/Μοντέλο σε κάθε ήδη εγγεγραμμένο χρήστη '
+          '(π.χ. "ΓΙΩΡΓΟΣ" → "Γιώργος"). Ασφαλές να το τρέξεις, δεν αλλάζει '
+          'τίποτα άλλο.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dctx).pop(false),
+            child: const Text('Άκυρο'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dctx).pop(true),
+            child: const Text('Εκτέλεση'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    setState(() => _fixingCase = true);
+    try {
+      final callable = FirebaseFunctions.instance.httpsCallable(
+        'fixCapitalization',
+        options: HttpsCallableOptions(timeout: const Duration(seconds: 120)),
+      );
+      final res = await callable.call();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(
+            'Διορθώθηκαν ${res.data['updated']} από ${res.data['total']} χρήστες.'),
+        backgroundColor: const Color(0xFF1E8E3E),
+      ));
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Σφάλμα: $e'), backgroundColor: Colors.red.shade700));
+      }
+    } finally {
+      if (mounted) setState(() => _fixingCase = false);
+    }
+  }
+
   // Το ακριβές URL που πρέπει να καταχωρήσει ο πελάτης στο ΔΙΚΟ ΤΟΥ Viva
   // dashboard (Settings → API Access → Webhooks) — το ?tenantId=... στο
   // τέλος είναι ΑΠΑΡΑΙΤΗΤΟ ώστε το vivaWebhook να ξέρει ποια credentials
@@ -216,6 +264,16 @@ class _TenantAdminPageState extends State<TenantAdminPage> {
                 : const Icon(Icons.build_circle_rounded),
             onPressed: _backfilling ? null : _runBackfillPrompt,
             tooltip: 'Επισκευή ζωνών/δουλειών (backfill tenantId)',
+          ),
+          IconButton(
+            icon: _fixingCase
+                ? const SizedBox(
+                    width: 20, height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                  )
+                : const Icon(Icons.text_fields_rounded),
+            onPressed: _fixingCase ? null : _runFixCapitalizationPrompt,
+            tooltip: 'Διόρθωση Κεφαλαίο/πεζά (Όνομα/Επίθετο/Μοντέλο)',
           ),
           IconButton(
             icon: const Icon(Icons.refresh_rounded),

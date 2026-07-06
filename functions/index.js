@@ -3734,3 +3734,109 @@ exports.backfillDefaultTenantId = onCall(
     return { ok: true, results };
   }
 );
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  fixCapitalization — εφάπαξ διόρθωση Κεφαλαίο/πεζά (Όνομα/Επίθετο/Μοντέλο)
+//  για ΗΔΗ εγγεγραμμένους χρήστες. Μόνο ο super-admin το καλεί. Ασφαλές να
+//  τρέξει πολλές φορές (idempotent).
+// ═══════════════════════════════════════════════════════════════════════════
+
+function properCaseJS(input) {
+  const trimmed = String(input || "").trim();
+  if (!trimmed) return trimmed;
+  return trimmed
+    .split(/\s+/)
+    .map((w) => {
+      if (!w) return w;
+      const lower = w.toLowerCase();
+      return lower.charAt(0).toUpperCase() + lower.slice(1);
+    })
+    .join(" ");
+}
+
+exports.fixCapitalization = onCall(
+  { region: "us-central1", timeoutSeconds: 300 },
+  async (request) => {
+    if (!request.auth || request.auth.token.email !== "techtacy@gmail.com") {
+      throw new HttpsError("permission-denied", "Μόνο ο super-admin.");
+    }
+
+    const db = getFirestore();
+    const snap = await db.collection("presence").get();
+    let updated = 0;
+    let batch = db.batch();
+    let inBatch = 0;
+
+    for (const doc of snap.docs) {
+      const d = doc.data();
+      const fixedName  = properCaseJS(d.displayName);
+      const fixedLast  = properCaseJS(d.lastName);
+      const fixedModel = properCaseJS(d.vehicleModel);
+      const changes = {};
+      if (d.displayName && d.displayName !== fixedName) changes.displayName = fixedName;
+      if (d.lastName && d.lastName !== fixedLast) changes.lastName = fixedLast;
+      if (d.vehicleModel && d.vehicleModel !== fixedModel) changes.vehicleModel = fixedModel;
+      if (Object.keys(changes).length > 0) {
+        batch.update(doc.ref, changes);
+        updated++;
+        inBatch++;
+        if (inBatch >= 450) {
+          await batch.commit();
+          batch = db.batch();
+          inBatch = 0;
+        }
+      }
+    }
+    if (inBatch > 0) await batch.commit();
+
+    console.log("fixCapitalization:", { total: snap.size, updated });
+    return { ok: true, total: snap.size, updated };
+  }
+);
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  listClients — δημόσιο endpoint (booking.html/booking2.html): «Συχνές
+//  διαδρομές». Επιστρέφει τη λίστα γνωστών πελατών (clients) ενός tenant,
+//  ΧΩΡΙΣ ευαίσθητα εσωτερικά στοιχεία (τιμές/προμήθειες) — μόνο ονόματα και
+//  συντεταγμένες, ώστε ο πελάτης της φόρμας να μπορεί να επιλέξει γρήγορα
+//  «AIRSTAY» κλπ αντί να πληκτρολογήσει τη διεύθυνση.
+// ═══════════════════════════════════════════════════════════════════════════
+
+exports.listClients = onRequest(
+  { region: "us-central1", cors: BOOKING_ALLOWED_ORIGINS, memory: "256MiB" },
+  async (req, res) => {
+    try {
+      const tenantId = s(req.method === "POST" ? (req.body || {}).tenantId : req.query.tenantId) || "default";
+      const db = getFirestore();
+      const snap = await db.collection("clients")
+        .where("tenantId", "==", tenantId)
+        .get();
+
+      const clients = snap.docs.map((doc) => {
+        const d = doc.data();
+        const routes = Array.isArray(d.routes)
+          ? d.routes
+              .filter((r) => r && r.toName)
+              .map((r) => ({
+                toName: r.toName,
+                toLat: r.toLat != null ? r.toLat : null,
+                toLng: r.toLng != null ? r.toLng : null,
+              }))
+          : [];
+        return {
+          id: doc.id,
+          name: d.name || "",
+          fromName: d.fromName || "",
+          fromLat: d.fromLat != null ? d.fromLat : null,
+          fromLng: d.fromLng != null ? d.fromLng : null,
+          routes,
+        };
+      }).filter((c) => c.name && c.fromLat != null && c.fromLng != null);
+
+      return res.status(200).json({ ok: true, clients });
+    } catch (e) {
+      console.error("listClients error:", e);
+      return res.status(500).json({ ok: false, error: "server_error" });
+    }
+  }
+);

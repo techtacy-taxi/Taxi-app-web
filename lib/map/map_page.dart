@@ -18,6 +18,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../models.dart';
 import '../fcm_service.dart';
 import '../owner_alerts.dart';
+import '../owner_home_page.dart';
 import '../public_booking_alert.dart';
 import '../permissions.dart';
 import '../profile_form.dart';
@@ -68,6 +69,8 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
   bool   _isMaster          = false;
   bool   _isTenantOwner     = false; // multi-tenant: βλέπει μόνο Ζώνες & Τιμές (δικές του)
   bool   _isHomeOwner       = false; // Home Owner (ιδιοκτήτης καταλύματος): βλέπει μόνο τις δουλειές του πελάτη του
+  String _ownerOfClientId   = '';
+  String _ownerOfClientName = '';
   bool   _calendarEnabled   = false; // master controls per-admin calendar access
   bool   _isMuted           = false;
   List<String> _managedGroupIds = []; // ομάδες που διαχειρίζεται ο admin
@@ -143,6 +146,8 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
             _isMaster     = data['master']       ?? false;
             _isTenantOwner = data['tenantOwner'] ?? false;
             _isHomeOwner   = data['homeOwner'] ?? false;
+            _ownerOfClientId   = data['ownerOfClientId'] ?? '';
+            _ownerOfClientName = data['ownerOfClientName'] ?? '';
             _calendarEnabled = data['calendarEnabled'] ?? false;
             _managedGroupIds = List<String>.from(data['managedGroupIds'] ?? []);
             if ((data['vehicleType'] as String?) == VehicleType.van.name) {
@@ -270,6 +275,8 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
           _isMaster        = doc.data()?['master']            ?? false;
           _isTenantOwner   = doc.data()?['tenantOwner']        ?? false;
           _isHomeOwner     = doc.data()?['homeOwner']          ?? false;
+          _ownerOfClientId   = doc.data()?['ownerOfClientId'] ?? '';
+          _ownerOfClientName = doc.data()?['ownerOfClientName'] ?? '';
           _calendarEnabled = doc.data()?['calendarEnabled']   ?? false;
           _managedGroupIds = List<String>.from(
               doc.data()?['managedGroupIds'] ?? []);
@@ -923,6 +930,17 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
           ),
         ]),
       )));
+    }
+
+    // Home Owner (ιδιοκτήτης καταλύματος) — ΔΕΝ βλέπει χάρτη/κανονική
+    // εφαρμογή οδηγού· περιορισμένη οθόνη (Ανοιχτές/Αποθηκευμένες/Ιστορικό).
+    if (_isHomeOwner && !_isAdmin && !_isMaster) {
+      return OwnerHomePage(
+        uid: _uid ?? '',
+        displayName: _displayName,
+        ownerOfClientId: _ownerOfClientId,
+        ownerOfClientName: _ownerOfClientName,
+      );
     }
 
     final userLatLng = _currentPosition == null

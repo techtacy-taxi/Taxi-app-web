@@ -84,6 +84,12 @@ class BillingPage extends StatelessWidget {
         actions: [
           if (isMaster)
             IconButton(
+              tooltip: 'Χρεώσεις Home Owners',
+              icon: const Icon(Icons.home_work_rounded),
+              onPressed: () => _showHomeOwnersBillingDialog(context),
+            ),
+          if (isMaster)
+            IconButton(
               tooltip: 'Άνοιγμα φακέλου Google Drive',
               icon: const Icon(Icons.folder_open_rounded),
               onPressed: () => _openReportsFolder(context),
@@ -135,6 +141,130 @@ class BillingPage extends StatelessWidget {
       'Οκτώβριος', 'Νοέμβριος', 'Δεκέμβριος'];
     final p = key.split('-');
     return '${months[int.parse(p[1])]} ${p[0]}';
+  }
+
+  // ─── Χρεώσεις Home Owners — λίστα με ό,τι χρωστάει ο καθένας ─────────────
+  Future<void> _showHomeOwnersBillingDialog(BuildContext context) async {
+    await showDialog<void>(
+      context: context,
+      builder: (dctx) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 480, maxHeight: 640),
+          child: Padding(
+            padding: const EdgeInsets.all(18),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(children: [
+                  const Icon(Icons.home_work_rounded, color: Color(0xFF3F51B5)),
+                  const SizedBox(width: 8),
+                  const Text('Χρεώσεις Home Owners',
+                      style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+                  const Spacer(),
+                  IconButton(
+                    icon: const Icon(Icons.close_rounded),
+                    onPressed: () => Navigator.of(dctx).pop(),
+                  ),
+                ]),
+                const SizedBox(height: 4),
+                Text(
+                  'Τι χρωστάει κάθε ιδιοκτήτης καταλύματος (βάσει της περιόδου '
+                  'χρέωσης που έχεις ορίσει στο «Διαχειριστές»).',
+                  style: TextStyle(fontSize: 11.5, color: Colors.grey[600]),
+                ),
+                const SizedBox(height: 12),
+                Flexible(
+                  child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+                    stream: FirebaseFirestore.instance
+                        .collection('presence')
+                        .where('homeOwner', isEqualTo: true)
+                        .snapshots(),
+                    builder: (context, snap) {
+                      if (!snap.hasData) {
+                        return const Center(
+                            child: Padding(
+                                padding: EdgeInsets.all(20),
+                                child: CircularProgressIndicator()));
+                      }
+                      final owners = snap.data!.docs;
+                      if (owners.isEmpty) {
+                        return const Padding(
+                          padding: EdgeInsets.all(20),
+                          child: Text('Δεν υπάρχει ακόμα κανένας Home Owner.'),
+                        );
+                      }
+                      double totalMonthly = 0, totalYearly = 0;
+                      for (final o in owners) {
+                        final d = o.data();
+                        final amt = (d['homeOwnerBillingAmount'] as num?)?.toDouble() ?? 0;
+                        final period = (d['homeOwnerBillingPeriod'] as String?) ?? 'month';
+                        if (period == 'year') {
+                          totalYearly += amt;
+                        } else {
+                          totalMonthly += amt;
+                        }
+                      }
+                      return ListView(
+                        shrinkWrap: true,
+                        children: [
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.all(10),
+                            margin: const EdgeInsets.only(bottom: 10),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF3F51B5).withValues(alpha: 0.08),
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Row(children: [
+                              Expanded(
+                                child: Text(
+                                  'Σύνολο μηνιαίων: ${totalMonthly.toStringAsFixed(2)}€\n'
+                                  'Σύνολο ετήσιων: ${totalYearly.toStringAsFixed(2)}€',
+                                  style: const TextStyle(
+                                      fontSize: 12.5, fontWeight: FontWeight.w600),
+                                ),
+                              ),
+                            ]),
+                          ),
+                          for (final o in owners)
+                            Builder(builder: (context) {
+                              final d = o.data();
+                              final name = [d['displayName'], d['lastName']]
+                                  .where((s) => (s as String?)?.isNotEmpty == true)
+                                  .join(' ');
+                              final client = d['ownerOfClientName'] as String? ?? '—';
+                              final amt = (d['homeOwnerBillingAmount'] as num?)?.toDouble() ?? 0;
+                              final period = (d['homeOwnerBillingPeriod'] as String?) ?? 'month';
+                              return Card(
+                                margin: const EdgeInsets.only(bottom: 8),
+                                child: ListTile(
+                                  leading: const Icon(Icons.home_work_rounded,
+                                      color: Color(0xFF3F51B5)),
+                                  title: Text(name.isEmpty ? '(χωρίς όνομα)' : name),
+                                  subtitle: Text('Κατάλυμα: $client'),
+                                  trailing: Text(
+                                    '${amt.toStringAsFixed(2)}€ / '
+                                    '${period == 'year' ? 'έτος' : 'μήνα'}',
+                                    style: const TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        color: Color(0xFF3F51B5)),
+                                  ),
+                                ),
+                              );
+                            }),
+                        ],
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   // ─── Άνοιγμα φακέλου Drive (χωρίς νέο PDF) — μόνο master ──────────────────

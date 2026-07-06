@@ -81,6 +81,13 @@ service cloud.firestore {
       return signedIn() && presenceExists() && myPresence().get('tenantOwner', false) == true;
     }
 
+    // Home Owner (ιδιοκτήτης καταλύματος) — ΝΕΟΣ ρόλος, ξεχωριστός από
+    // admin/master. Βλέπει ΜΟΝΟ jobs/saved_jobs (φιλτραρισμένα client-side
+    // στην εφαρμογή βάσει from/to) — ΔΕΝ έχει καμία άλλη πρόσβαση διαχείρισης.
+    function isHomeOwner() {
+      return isApproved() && signedIn() && presenceExists() && myPresence().get('homeOwner', false) == true;
+    }
+
     // ── Multi-tenant helpers (ΝΕΟ) ───────────────────────────────────────────
 
     // Ο tenant του τρέχοντος συνδεδεμένου χρήστη. Λείπει το πεδίο στο
@@ -262,7 +269,7 @@ service cloud.firestore {
     // διαχωρισμός «ποιος βλέπει ποιανού» γίνεται μέσω groups.savedJobShares.
     // ΑΣΦΑΛΕΙΑ: σε update ΔΕΝ επιτρέπεται αλλαγή ιδιοκτησίας/tenantId.
     match /saved_jobs/{id} {
-      allow read:   if isAdmin() && sameTenantAsResource();
+      allow read:   if (isAdmin() || isHomeOwner()) && sameTenantAsResource();
       allow create: if isAdmin() && sameTenantAsNewDoc();
       allow update: if isAdmin() && sameTenantAsResource()
         && (isMaster()
