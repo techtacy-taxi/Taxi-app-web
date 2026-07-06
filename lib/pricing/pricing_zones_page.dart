@@ -930,10 +930,10 @@ class _RoutesTab extends StatelessWidget {
   Widget build(BuildContext context) {
     return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
       stream: db.collection('pricing_zones')
-          .where('tenantId', isEqualTo: tenantId)
-          .orderBy('name').snapshots(),
+          .where('tenantId', isEqualTo: tenantId).snapshots(),
       builder: (context, zoneSnap) {
-        final zones = (zoneSnap.data?.docs ?? []).map(PricingZone.fromDoc).toList();
+        final zones = (zoneSnap.data?.docs ?? []).map(PricingZone.fromDoc).toList()
+          ..sort((a, b) => a.name.compareTo(b.name));
         final zoneName = {for (final z in zones) z.id: z.name};
         return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
           stream: db.collection('pricing_routes')

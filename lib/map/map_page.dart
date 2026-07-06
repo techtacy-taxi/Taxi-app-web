@@ -67,6 +67,7 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
   bool   _isAdmin           = false;
   bool   _isMaster          = false;
   bool   _isTenantOwner     = false; // multi-tenant: βλέπει μόνο Ζώνες & Τιμές (δικές του)
+  bool   _isHomeOwner       = false; // Home Owner (ιδιοκτήτης καταλύματος): βλέπει μόνο τις δουλειές του πελάτη του
   bool   _calendarEnabled   = false; // master controls per-admin calendar access
   bool   _isMuted           = false;
   List<String> _managedGroupIds = []; // ομάδες που διαχειρίζεται ο admin
@@ -141,6 +142,7 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
             _isAdmin      = data['admin']        ?? false;
             _isMaster     = data['master']       ?? false;
             _isTenantOwner = data['tenantOwner'] ?? false;
+            _isHomeOwner   = data['homeOwner'] ?? false;
             _calendarEnabled = data['calendarEnabled'] ?? false;
             _managedGroupIds = List<String>.from(data['managedGroupIds'] ?? []);
             if ((data['vehicleType'] as String?) == VehicleType.van.name) {
@@ -267,6 +269,7 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
           _isAdmin         = doc.data()?['admin']             ?? false;
           _isMaster        = doc.data()?['master']            ?? false;
           _isTenantOwner   = doc.data()?['tenantOwner']        ?? false;
+          _isHomeOwner     = doc.data()?['homeOwner']          ?? false;
           _calendarEnabled = doc.data()?['calendarEnabled']   ?? false;
           _managedGroupIds = List<String>.from(
               doc.data()?['managedGroupIds'] ?? []);
@@ -644,10 +647,13 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
       vehicleModel: _vehicleModel, referredBy: _referredBy,
       plateNumber: _plateNumber, vehicleType: _vehicleType,
       onSaved: ({required name, required lastName, required phone,
-          required vehicleModel, required referredBy, required plateNumber, required vehicleType}) {
+          required vehicleModel, required referredBy, required plateNumber, required vehicleType,
+          required homeOwner, required ownerOfClientId, required ownerOfClientName}) {
         _saveProfile(name: name, lastName: lastName, phone: phone,
             vehicleModel: vehicleModel, referredBy: referredBy,
-            plateNumber: plateNumber, vehicleType: vehicleType);
+            plateNumber: plateNumber, vehicleType: vehicleType,
+            homeOwner: homeOwner, ownerOfClientId: ownerOfClientId,
+            ownerOfClientName: ownerOfClientName);
       },
     );
   }
@@ -656,6 +662,8 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
     required String name, required String lastName, required String phone,
     required String vehicleModel, required String referredBy,
     required String plateNumber, required VehicleType vehicleType,
+    required bool homeOwner, required String? ownerOfClientId,
+    required String? ownerOfClientName,
   }) async {
     bool currentApproval = _isApproved;
     if (_uid != null) {
@@ -669,14 +677,19 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
     _plateNumber = plateNumber; _vehicleType = vehicleType;
 
     await _saveSettings();
-    await _refreshVehicleIcon();
-    try {
-      final freshPos = await Geolocator.getCurrentPosition(
-          locationSettings: const LocationSettings(accuracy: LocationAccuracy.best));
-      _currentPosition = freshPos;
-    } catch (_) {}
-    _lastPublishedPosition = null;
-    await _publishMyLocation(force: true);
+
+    // ── Home Owner: ΔΕΝ έχει όχημα — δεν δημοσιεύει θέση/διαθεσιμότητα.
+    if (!homeOwner) {
+      await _refreshVehicleIcon();
+      try {
+        final freshPos = await Geolocator.getCurrentPosition(
+            locationSettings: const LocationSettings(accuracy: LocationAccuracy.best));
+        _currentPosition = freshPos;
+      } catch (_) {}
+      _lastPublishedPosition = null;
+      await _publishMyLocation(force: true);
+    }
+
     if (_uid != null) {
       await FirebaseFirestore.instance.collection('presence').doc(_uid).set({
         'displayName': _displayName, 'lastName': _lastName, 'phone': _phone,
@@ -684,10 +697,14 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
         'referredBy': _referredBy, 'plateNumber': _plateNumber,
         'appVersion': _appVersion, 'isApproved': currentApproval,
         'admin': _isAdmin, 'email': FirebaseAuth.instance.currentUser?.email,
+        'homeOwner': homeOwner,
+        if (homeOwner) 'ownerOfClientId': ownerOfClientId,
+        if (homeOwner) 'ownerOfClientName': ownerOfClientName,
+        if (homeOwner) 'available': false, // Home Owner: πάντα «Μη Διαθέσιμος», δεν έχει όχημα
       }, SetOptions(merge: true));
     }
     if (!mounted) return;
-    setState(() { _isApproved = currentApproval; _dialogShown = true; });
+    setState(() { _isApproved = currentApproval; _dialogShown = true; _isHomeOwner = homeOwner; });
   }
 
   Future<void> _toggleAvailability() async {

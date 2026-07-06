@@ -313,6 +313,12 @@ class _AdminDriverCard extends StatelessWidget {
     final managedGroupIds = List<String>.from(data['managedGroupIds'] ?? []);
     final tenantOwner = data['tenantOwner'] == true;
     final tenantId    = data['tenantId'] as String? ?? '';
+    final homeOwner        = data['homeOwner'] == true;
+    final ownerOfClientName = data['ownerOfClientName'] as String? ?? '';
+    final homeOwnerBillingPeriod =
+        (data['homeOwnerBillingPeriod'] as String?) ?? 'month';
+    final homeOwnerBillingAmount =
+        (data['homeOwnerBillingAmount'] as num?)?.toDouble() ?? 0.0;
 
     Color roleColor;
     String roleLabel;
@@ -399,7 +405,11 @@ class _AdminDriverCard extends StatelessWidget {
                       icsPrice: icsPrice,
                       managedGroupIds: managedGroupIds,
                       tenantOwner: tenantOwner,
-                      tenantId: tenantId),
+                      tenantId: tenantId,
+                      homeOwner: homeOwner,
+                      ownerOfClientName: ownerOfClientName,
+                      homeOwnerBillingPeriod: homeOwnerBillingPeriod,
+                      homeOwnerBillingAmount: homeOwnerBillingAmount),
                 ),
             ]),
 
@@ -613,6 +623,10 @@ class _AdminDriverCard extends StatelessWidget {
     required List<String> managedGroupIds,
     required bool         tenantOwner,
     required String       tenantId,
+    required bool         homeOwner,
+    required String       ownerOfClientName,
+    required String       homeOwnerBillingPeriod,
+    required double       homeOwnerBillingAmount,
   }) async {
     final groupsSnap = await FirebaseFirestore.instance
         .collection('groups')
@@ -633,6 +647,9 @@ class _AdminDriverCard extends StatelessWidget {
     bool   selTenantOwner = tenantOwner;
     final  selGroupIds = <String>{...managedGroupIds};
     final  tenantIdCtrl = TextEditingController(text: tenantId);
+    String selHomeOwnerPeriod = homeOwnerBillingPeriod;
+    final  homeOwnerPriceCtrl = TextEditingController(
+        text: homeOwnerBillingAmount.toStringAsFixed(2));
 
     // Κουτάκια τιμής (€/μήνα) — ένα ανά διακόπτη.
     final calPriceCtrl = TextEditingController(
@@ -808,6 +825,80 @@ class _AdminDriverCard extends StatelessWidget {
                   ),
                 ],
 
+                // ── Home Owner (ιδιοκτήτης καταλύματος) — ΧΡΕΩΣΗ ──────────
+                if (homeOwner) ...[
+                  const SizedBox(height: 16),
+                  const Divider(height: 1),
+                  const SizedBox(height: 10),
+                  Row(children: [
+                    Icon(Icons.home_work_rounded, size: 16, color: Colors.indigo[700]),
+                    const SizedBox(width: 6),
+                    const Text('Home Owner — Χρέωση',
+                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                  ]),
+                  const SizedBox(height: 4),
+                  Text('Κατάλυμα: ${ownerOfClientName.isEmpty ? "—" : ownerOfClientName}',
+                      style: TextStyle(fontSize: 11.5, color: Colors.grey[600])),
+                  const SizedBox(height: 8),
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: Colors.indigo.withValues(alpha: 0.06),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: Colors.indigo.withValues(alpha: 0.3)),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text('Περίοδος χρέωσης',
+                            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+                        const SizedBox(height: 6),
+                        Row(children: [
+                          Expanded(
+                            child: RadioListTile<String>(
+                              dense: true,
+                              contentPadding: EdgeInsets.zero,
+                              title: const Text('Μηνιαία', style: TextStyle(fontSize: 12.5)),
+                              value: 'month',
+                              // ignore: deprecated_member_use
+                              groupValue: selHomeOwnerPeriod,
+                              onChanged: (v) => setS(() => selHomeOwnerPeriod = v!),
+                            ),
+                          ),
+                          Expanded(
+                            child: RadioListTile<String>(
+                              dense: true,
+                              contentPadding: EdgeInsets.zero,
+                              title: const Text('Ετήσια', style: TextStyle(fontSize: 12.5)),
+                              value: 'year',
+                              // ignore: deprecated_member_use
+                              groupValue: selHomeOwnerPeriod,
+                              onChanged: (v) => setS(() => selHomeOwnerPeriod = v!),
+                            ),
+                          ),
+                        ]),
+                        const SizedBox(height: 6),
+                        TextField(
+                          controller: homeOwnerPriceCtrl,
+                          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                          style: const TextStyle(fontSize: 13),
+                          decoration: InputDecoration(
+                            isDense: true,
+                            labelText: selHomeOwnerPeriod == 'year'
+                                ? 'Ποσό ανά έτος (€)'
+                                : 'Ποσό ανά μήνα (€)',
+                            labelStyle: const TextStyle(fontSize: 12),
+                            prefixIcon: const Icon(Icons.euro_rounded, size: 18, color: Colors.indigo),
+                            border: const OutlineInputBorder(),
+                            contentPadding:
+                                const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+
                 // ── Κουμπί ICS «στο ημερολόγιό μου» — ΓΙΑ ΟΛΟΥΣ, ακόμα και
                 // απλούς οδηγούς (όχι μόνο admin/master). Αυτό είναι απλή
                 // εξαγωγή .ics ανά δουλειά — ΔΕΝ είναι η πλήρης σύνδεση
@@ -901,6 +992,9 @@ class _AdminDriverCard extends StatelessWidget {
                   icsPrice:         parsePrice(icsPriceCtrl),
                   tenantOwner:      selTenantOwner,
                   tenantId:         tenantIdCtrl.text.trim(),
+                  homeOwnerBillingPeriod: selHomeOwnerPeriod,
+                  homeOwnerBillingAmount:
+                      double.tryParse(homeOwnerPriceCtrl.text.replaceAll(',', '.')) ?? 0.0,
                   managedGroupIds:  selGroupIds.toList(),
                 );
               },
@@ -1037,6 +1131,8 @@ class _AdminDriverCard extends StatelessWidget {
     required List<String> managedGroupIds,
     required bool         tenantOwner,
     required String       tenantId,
+    required String       homeOwnerBillingPeriod,
+    required double       homeOwnerBillingAmount,
   }) async {
     final fs = FirebaseFirestore.instance;
 
@@ -1058,6 +1154,11 @@ class _AdminDriverCard extends StatelessWidget {
       // Ζώνες & Τιμές χωρίς να χαλάσεις τίποτα άλλο).
       'tenantOwner': tenantOwner,
       if (tenantId.isNotEmpty) 'tenantId': tenantId,
+      // Home Owner (ιδιοκτήτης καταλύματος) — χρέωση μήνα/έτος. Αυτά τα
+      // πεδία γράφονται πάντα (ακόμα κι αν homeOwner==false στο presence
+      // του, δεν πειράζει — απλά δεν χρησιμοποιούνται).
+      'homeOwnerBillingPeriod': homeOwnerBillingPeriod,
+      'homeOwnerBillingAmount': homeOwnerBillingAmount,
     });
 
     // 2. Συγχρόνισε adminUids σε όλες τις ομάδες
