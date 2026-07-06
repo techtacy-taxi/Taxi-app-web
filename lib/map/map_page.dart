@@ -41,6 +41,7 @@ import '../jobs/job_service.dart';
 import '../masters/masters_admin_page.dart';
 import '../calendar/calendar_page.dart';
 import '../pricing/pricing_zones_page.dart';
+import '../tenants/tenant_admin_page.dart';
 
 class HomeMapPage extends StatefulWidget {
   const HomeMapPage({super.key});
@@ -764,6 +765,12 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
           builder: (_) => const PricingZonesPage(),
         ));
         return;
+      case MenuAction.tenants:
+        if (!mounted) return;
+        Navigator.of(context).push(MaterialPageRoute(
+          builder: (_) => const TenantAdminPage(),
+        ));
+        return;
       case MenuAction.calendar:
         if (!mounted) return;
         Navigator.of(context).push(MaterialPageRoute(
@@ -1110,6 +1117,30 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
                         ]),
                       ),
                     if (_isMaster) const PopupMenuDivider(),
+                    // Πελάτες (Tenants) — ΜΟΝΟ ο πραγματικός super-admin (εσύ).
+                    if (FirebaseAuth.instance.currentUser?.email == 'techtacy@gmail.com')
+                      PopupMenuItem(
+                        value: MenuAction.tenants,
+                        child: Row(children: [
+                          const Icon(Icons.storefront_rounded, color: Colors.indigo),
+                          const SizedBox(width: 12),
+                          const Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text('Πελάτες',
+                                  style: TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.indigo)),
+                              Text('Διαχείριση multi-tenant',
+                                  style: TextStyle(
+                                      fontSize: 10, color: Colors.grey)),
+                            ],
+                          ),
+                        ]),
+                      ),
+                    if (FirebaseAuth.instance.currentUser?.email == 'techtacy@gmail.com')
+                      const PopupMenuDivider(),
                     // Όχημα
                     PopupMenuItem(
                       value: MenuAction.taxi,

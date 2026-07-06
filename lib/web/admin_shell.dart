@@ -26,6 +26,7 @@ import '../calendar/calendar_page.dart';
 import '../voice/groups_admin.dart';
 import '../masters/masters_admin_page.dart';
 import '../pricing/pricing_zones_page.dart';
+import '../tenants/tenant_admin_page.dart';
 import 'auth_gateway_web.dart';
 import 'ics_upload_web.dart';
 import 'map_web_page.dart';
@@ -130,6 +131,17 @@ class _AdminShellState extends State<AdminShell> {
         label: 'Ζώνες & Τιμές',
         icon: Icons.price_change_rounded,
         page: PricingZonesPage(),
+      ));
+    }
+
+    // Πελάτες (Tenants) — ΜΟΝΟ ο πραγματικός super-admin (εσύ). Ο έλεγχος
+    // email είναι ΕΠΙΠΛΕΟΝ ασφαλιστική δικλείδα — η ίδια η TenantAdminPage
+    // κάνει ξανά τον ίδιο έλεγχο εσωτερικά.
+    if (FirebaseAuth.instance.currentUser?.email == 'techtacy@gmail.com') {
+      sections.add(const _Section(
+        label: 'Πελάτες',
+        icon: Icons.storefront_rounded,
+        page: TenantAdminPage(),
       ));
     }
 

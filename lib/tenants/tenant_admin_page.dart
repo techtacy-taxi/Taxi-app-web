@@ -33,6 +33,7 @@ class _TenantAdminPageState extends State<TenantAdminPage> {
   bool _loading = true;
   String? _error;
   List<Map<String, dynamic>> _tenants = [];
+  bool _backfilling = false;
 
   bool get _isSuperAdmin =>
       FirebaseAuth.instance.currentUser?.email == kSuperAdminEmail;
@@ -55,6 +56,76 @@ class _TenantAdminPageState extends State<TenantAdminPage> {
       });
     } catch (e) {
       setState(() { _error = 'Σφάλμα φόρτωσης: $e'; _loading = false; });
+    }
+  }
+
+  // ── Εφάπαξ «γέμισμα» tenantId:'default' σε ό,τι δεν το έχει ──────────────
+  Future<void> _runBackfillPrompt() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dctx) => AlertDialog(
+        title: const Text('Επισκευή ζωνών/δουλειών'),
+        content: const Text(
+          'Αυτό γράφει tenantId:"default" σε κάθε δικό σου δεδομένο (ζώνες, '
+          'διαδρομές, δουλειές, αποθηκευμένες, πελάτες, πηγές, χρεώσεις) που '
+          'δεν το έχει ήδη — π.χ. αν οι Ζώνες & Τιμές σου εμφανίζονται άδειες. '
+          'Ασφαλές να το τρέξεις, δεν διαγράφει/αλλάζει τίποτα άλλο.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dctx).pop(false),
+            child: const Text('Άκυρο'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dctx).pop(true),
+            child: const Text('Εκτέλεση'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    setState(() => _backfilling = true);
+    try {
+      final callable = FirebaseFunctions.instance.httpsCallable(
+        'backfillDefaultTenantId',
+        options: HttpsCallableOptions(timeout: const Duration(seconds: 120)),
+      );
+      final res = await callable.call();
+      final results = Map<String, dynamic>.from(res.data['results'] ?? {});
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (dctx) => AlertDialog(
+          title: const Text('Ολοκληρώθηκε'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: results.entries.map((e) {
+                final v = Map<String, dynamic>.from(e.value as Map);
+                return Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 3),
+                  child: Text('${e.key}: ${v['updated']} / ${v['total']} ενημερώθηκαν'),
+                );
+              }).toList(),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dctx).pop(),
+              child: const Text('ΟΚ'),
+            ),
+          ],
+        ),
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Σφάλμα: $e'), backgroundColor: Colors.red.shade700));
+      }
+    } finally {
+      if (mounted) setState(() => _backfilling = false);
     }
   }
 
@@ -136,6 +207,16 @@ class _TenantAdminPageState extends State<TenantAdminPage> {
       appBar: AppBar(
         title: const Text('Πελάτες (Tenants)'),
         actions: [
+          IconButton(
+            icon: _backfilling
+                ? const SizedBox(
+                    width: 20, height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                  )
+                : const Icon(Icons.build_circle_rounded),
+            onPressed: _backfilling ? null : _runBackfillPrompt,
+            tooltip: 'Επισκευή ζωνών/δουλειών (backfill tenantId)',
+          ),
           IconButton(
             icon: const Icon(Icons.refresh_rounded),
             onPressed: _loadTenants,
