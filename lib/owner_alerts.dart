@@ -28,7 +28,7 @@ import 'jobs/job_details_sheet.dart';
 import 'notifications_service.dart';
 import 'alert_gate.dart';
 
-enum OwnerEventKind { taken, stageAdvance, expired }
+enum OwnerEventKind { taken, boarded, stageAdvance, expired }
 
 class OwnerAlert {
   final Job            job;
@@ -139,6 +139,21 @@ class OwnerAlerts {
         continue;
       }
 
+      // (1β) Επιβίβαση — ο οδηγός πάτησε «Επιβίβαση», ο πελάτης μπήκε στο όχημα
+      if (prev.status == JobStatus.taken && j.status == JobStatus.boarded) {
+        final driver = (j.takenByName ?? '').trim();
+        _enqueue(OwnerAlert(
+          job:   j,
+          kind:  OwnerEventKind.boarded,
+          title: 'Επιβίβαση πελάτη',
+          body:  driver.isNotEmpty
+              ? 'Ο/Η $driver επιβίβασε τον πελάτη.'
+              : 'Ο οδηγός επιβίβασε τον πελάτη.',
+          at:    DateTime.now(),
+        ));
+        continue;
+      }
+
       // (2) Καμία εξυπηρέτηση
       if (prev.status == JobStatus.open && j.status == JobStatus.expired) {
         _enqueue(OwnerAlert(
@@ -201,6 +216,8 @@ class OwnerAlerts {
     switch (k) {
       case OwnerEventKind.taken:
         return (icon: Icons.check_circle_rounded,  color: Colors.green);
+      case OwnerEventKind.boarded:
+        return (icon: Icons.directions_car_rounded, color: Colors.blue);
       case OwnerEventKind.stageAdvance:
         return (icon: Icons.timer_rounded,         color: Colors.orange);
       case OwnerEventKind.expired:

@@ -808,6 +808,33 @@ class _AdminDriverCard extends StatelessWidget {
                   ),
                 ],
 
+                // ── Κουμπί ICS «στο ημερολόγιό μου» — ΓΙΑ ΟΛΟΥΣ, ακόμα και
+                // απλούς οδηγούς (όχι μόνο admin/master). Αυτό είναι απλή
+                // εξαγωγή .ics ανά δουλειά — ΔΕΝ είναι η πλήρης σύνδεση
+                // Google Calendar (αυτή παραμένει μόνο για admin/master).
+                const SizedBox(height: 16),
+                const Divider(height: 1),
+                const SizedBox(height: 10),
+                Row(children: [
+                  Icon(Icons.event_available_rounded,
+                      size: 16, color: const Color(0xFF1A73E8)),
+                  const SizedBox(width: 6),
+                  const Text('Ημερολόγιο δουλειάς',
+                      style: TextStyle(
+                          fontWeight: FontWeight.bold, fontSize: 13)),
+                ]),
+                const SizedBox(height: 8),
+                _accessRow(
+                  setS: setS,
+                  icon: Icons.event_available_rounded,
+                  color: const Color(0xFF1A73E8),
+                  title: 'Κουμπί «στο ημερολόγιό μου»',
+                  subtitle: 'Προσθήκη δουλειάς στο ημερολόγιό του',
+                  value: selIcs,
+                  onChanged: (v) => setS(() => selIcs = v),
+                  priceCtrl: icsPriceCtrl,
+                ),
+
                 // ── Πρόσβαση (admin ή master) ────────────────────
                 if (selAdmin || selMaster) ...[
                   const SizedBox(height: 16),
@@ -823,7 +850,7 @@ class _AdminDriverCard extends StatelessWidget {
                   ]),
                   const SizedBox(height: 8),
 
-                  // Ημερολόγιο
+                  // Ημερολόγιο (πλήρης σύνδεση Google Calendar) — μόνο admin/master
                   _accessRow(
                     setS: setS,
                     icon: Icons.calendar_month_rounded,
@@ -846,19 +873,6 @@ class _AdminDriverCard extends StatelessWidget {
                     value: selWeb,
                     onChanged: (v) => setS(() => selWeb = v),
                     priceCtrl: webPriceCtrl,
-                  ),
-                  const SizedBox(height: 8),
-
-                  // Κουμπί ICS «στο ημερολόγιό μου»
-                  _accessRow(
-                    setS: setS,
-                    icon: Icons.event_available_rounded,
-                    color: const Color(0xFF1A73E8),
-                    title: 'Κουμπί «στο ημερολόγιό μου»',
-                    subtitle: 'Προσθήκη δουλειάς στο ημερολόγιό του',
-                    value: selIcs,
-                    onChanged: (v) => setS(() => selIcs = v),
-                    priceCtrl: icsPriceCtrl,
                   ),
                 ],
               ],

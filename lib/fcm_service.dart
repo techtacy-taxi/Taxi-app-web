@@ -88,6 +88,7 @@ Future<void> _displayFromMessage(
       await _showUpgradeBg(fln, data);
       break;
     case 'owner_taken':
+    case 'owner_boarded':
     case 'owner_stage':
     case 'owner_expired':
       await _showOwnerBg(fln, data);

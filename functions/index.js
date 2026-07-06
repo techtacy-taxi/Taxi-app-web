@@ -394,26 +394,17 @@ exports.onJobBoarded = onDocumentUpdated("jobs/{jobId}", async (event) => {
   if (!before || !after) return;
   if (before.status === "boarded" || after.status !== "boarded") return;
 
-  const tokens = await getTokensForUid(after.createdBy);
-  if (!tokens.length) {
-    console.log("onJobBoarded: no token for admin", after.createdBy);
-    return;
-  }
-
-  await sendDataOnly(tokens, {
-    type:        "boarded",
-    jobId:       String(event.params.jobId),
-    title:       "🚗 Επιβίβαση πελάτη",
-    driverName:  String(after.takenByName || ""),
-    fromAddr:    String(after.from || ""),
-    toAddr:      String(after.to   || ""),
-    price:       String(after.price != null ? after.price : ""),
-    scheduledAt: after.scheduledAt
-      ? String(after.scheduledAt.toMillis())
-      : "",
-    click_action: "FLUTTER_NOTIFICATION_CLICK",
-  });
-  console.log("onJobBoarded: notified admin", after.createdBy);
+  const driver = String(after.takenByName || "ένας οδηγός");
+  // ΣΗΜΑΝΤΙΚΟ: χρησιμοποιούμε το ΙΔΙΟ notifyOwner() που ήδη χρησιμοποιεί το
+  // onJobTaken — ίδιο ακριβώς στυλ ειδοποίησης (native insistent notification
+  // + το ίδιο in-app popup με ΟΚ, βλ. owner_alerts.dart) σε κάθε σελίδα.
+  await notifyOwner(
+    event.params.jobId,
+    after,
+    "owner_boarded",
+    "🚗 Επιβίβαση πελάτη",
+    `Ο/Η ${driver} επιβίβασε τον πελάτη.`
+  );
 });
 
 // ─── Δουλειά πιάστηκε: ειδοποίηση στον owner (createdBy) ─────────────────────
