@@ -476,7 +476,8 @@ class JobDetailsSheet extends StatelessWidget {
                       const SizedBox(width: 8),
                       phoneBtn(
                         context: context,
-                        icon: FontAwesomeIcons.whatsapp,
+                        iconOverride: const FaIcon(FontAwesomeIcons.whatsapp,
+                            size: 20, color: Color(0xFF25D366)),
                         color: const Color(0xFF25D366),
                         tooltip: 'WhatsApp',
                         onTap: () async {
@@ -848,7 +849,8 @@ class JobDetailsSheet extends StatelessWidget {
 
 Widget phoneBtn({
   required BuildContext context,
-  required IconData     icon,
+  IconData?             icon,
+  Widget?               iconOverride,
   required Color        color,
   required String       tooltip,
   required VoidCallback onTap,
@@ -864,7 +866,7 @@ Widget phoneBtn({
             color:        color.withValues(alpha: 0.1),
             borderRadius: BorderRadius.circular(8),
           ),
-          child: Icon(icon, size: 20, color: color),
+          child: iconOverride ?? Icon(icon, size: 20, color: color),
         ),
       ),
     );

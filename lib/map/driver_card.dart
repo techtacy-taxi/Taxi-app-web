@@ -107,7 +107,8 @@ void showDriverCard({
               )),
               const SizedBox(width: 12),
               Expanded(child: _actionButton(
-                icon: FontAwesomeIcons.whatsapp, label: 'WhatsApp',
+                iconOverride: const FaIcon(FontAwesomeIcons.whatsapp, color: Colors.white, size: 20),
+                label: 'WhatsApp',
                 color: const Color(0xFF25D366),
                 onTap: () => _launch('https://wa.me/$waPhone'),
               )),
@@ -292,18 +293,21 @@ Widget _infoRow(IconData icon, String label, String value) => Row(children: [
 ]);
 
 Widget _actionButton({
-  required IconData     icon,
+  IconData?             icon,
+  Widget?               iconOverride,
   required String       label,
   required Color        color,
   required VoidCallback onTap,
 }) {
+  assert(icon != null || iconOverride != null,
+      '_actionButton: δώσε είτε icon είτε iconOverride');
   return GestureDetector(
     onTap: onTap,
     child: Container(
       padding: const EdgeInsets.symmetric(vertical: 14),
       decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(14)),
       child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-        Icon(icon, color: Colors.white, size: 20),
+        iconOverride ?? Icon(icon, color: Colors.white, size: 20),
         const SizedBox(width: 8),
         Text(label, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 15)),
       ]),

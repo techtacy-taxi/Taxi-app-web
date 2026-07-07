@@ -1067,7 +1067,8 @@ class MyJobTile extends StatelessWidget {
                         launchUrl(Uri.parse('https://wa.me/$digits'),
                             mode: LaunchMode.externalApplication);
                       },
-                      child: _chip(FontAwesomeIcons.whatsapp, 'WhatsApp', const Color(0xFF25D366)),
+                      child: _chip(Icons.chat_rounded, 'WhatsApp', const Color(0xFF25D366),
+                          iconOverride: const FaIcon(FontAwesomeIcons.whatsapp, size: 10, color: Color(0xFF25D366))),
                     ),
                   if (job.flightOrShip != null && job.flightOrShip!.isNotEmpty)
                     _chip(Icons.flight_rounded, job.flightOrShip!, Colors.indigo),
@@ -1157,14 +1158,14 @@ class MyJobTile extends StatelessWidget {
         maxLines: 1, overflow: TextOverflow.ellipsis)),
   ]);
 
-  Widget _chip(IconData icon, String label, Color color) => Container(
+  Widget _chip(IconData icon, String label, Color color, {Widget? iconOverride}) => Container(
     padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
     decoration: BoxDecoration(
       color:        color.withValues(alpha: 0.1),
       borderRadius: BorderRadius.circular(6),
     ),
     child: Row(mainAxisSize: MainAxisSize.min, children: [
-      Icon(icon, size: 10, color: color),
+      iconOverride ?? Icon(icon, size: 10, color: color),
       const SizedBox(width: 3),
       Flexible(child: Text(label,
           style: TextStyle(fontSize: 10, color: color,
