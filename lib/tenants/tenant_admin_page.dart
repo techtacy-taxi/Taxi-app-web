@@ -650,7 +650,7 @@ class _CreateTenantDialogState extends State<_CreateTenantDialog> {
                   TextFormField(
                     controller: _tenantIdCtrl,
                     decoration: const InputDecoration(
-                        labelText: 'Αναγνωριστικό (tenantId) *',
+                        labelText: 'Αναγνωριστικό (EformID) *',
                         helperText: 'Μόνο λατινικά/αριθμοί/underscore, μοναδικό',
                         border: OutlineInputBorder()),
                     validator: (v) {

@@ -3935,6 +3935,79 @@ exports.updateTenantVivaCredentials = onCall(
 // αποθηκευμένα credentials ενός tenant, ΜΟΝΟ στον ίδιο τον tenant-owner ή
 // στον super-admin — ώστε να τα βλέπει στη φόρμα του (π.χ. για να τα
 // επιβεβαιώσει), χωρίς να εκτίθεται ολόκληρο το Client Secret/API Key.
+// ── updateTenantBusinessInfo: τηλέφωνο/email/λογότυπο/WhatsApp — ΔΕΝ είναι
+// μυστικά στοιχεία, γι' αυτό μένουν απλά πεδία στο Firestore (όχι Secret
+// Manager). Ίδιος έλεγχος πρόσβασης με τα Viva credentials: super-admin ή
+// ο ίδιος ο tenant-owner αυτού του tenant.
+exports.updateTenantBusinessInfo = onCall(
+  { region: "us-central1" },
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Χρειάζεται σύνδεση.");
+    const d = request.data || {};
+    const tenantId = s(d.tenantId);
+    if (!tenantId || tenantId === "default") {
+      throw new HttpsError("invalid-argument", "Μη έγκυρο tenantId.");
+    }
+
+    const isSuperAdmin = request.auth.token.email === "techtacy@gmail.com";
+    if (!isSuperAdmin) {
+      const db0 = getFirestore();
+      const presDoc = await db0.collection("presence").doc(request.auth.uid).get();
+      const pres = presDoc.data() || {};
+      if (!(pres.tenantOwner === true && pres.tenantId === tenantId)) {
+        throw new HttpsError("permission-denied",
+          "Μόνο ο super-admin ή ο tenant-owner αυτού του tenant μπορεί να το αλλάξει.");
+      }
+    }
+
+    const db = getFirestore();
+    const tenantDoc = await db.collection("tenants").doc(tenantId).get();
+    if (!tenantDoc.exists) throw new HttpsError("not-found", "Άγνωστο tenant.");
+
+    const updates = {};
+    if (d.contactPhone != null)   updates.contactPhone   = s(d.contactPhone) || null;
+    if (d.contactEmail != null)   updates.contactEmail   = s(d.contactEmail) || null;
+    if (d.whatsappNumber != null) updates.whatsappNumber = s(d.whatsappNumber) || null;
+    if (d.logoUrl != null)        updates.logoUrl        = s(d.logoUrl) || null;
+    if (Object.keys(updates).length) {
+      await db.collection("tenants").doc(tenantId).update(updates);
+    }
+    return { ok: true };
+  }
+);
+
+// ── getTenantBusinessInfo: δημόσιο endpoint (booking2.html το φορτώνει
+// αυτόματα στο άνοιγμα της σελίδας) — επιστρέφει τηλέφωνο/email/λογότυπο/
+// WhatsApp/όνομα επιχείρησης ενός tenant. ΔΕΝ χρειάζεται authentication —
+// είναι δημόσια στοιχεία επικοινωνίας (ίδια που θα έβλεπε ο πελάτης έτσι
+// κι αλλιώς μέσα στη σελίδα).
+exports.getTenantBusinessInfo = onRequest(
+  { region: "us-central1", cors: BOOKING_ALLOWED_ORIGINS, memory: "256MiB" },
+  async (req, res) => {
+    try {
+      const tenantId = s(req.method === "POST" ? (req.body || {}).tenantId : req.query.tenantId) || "default";
+      const db = getFirestore();
+      const doc = await db.collection("tenants").doc(tenantId).get();
+      if (!doc.exists) {
+        return res.status(200).json({ ok: true, businessName: null, contactPhone: null,
+          contactEmail: null, whatsappNumber: null, logoUrl: null });
+      }
+      const t = doc.data();
+      return res.status(200).json({
+        ok: true,
+        businessName:   t.businessName   || null,
+        contactPhone:   t.contactPhone   || null,
+        contactEmail:   t.contactEmail   || null,
+        whatsappNumber: t.whatsappNumber || null,
+        logoUrl:        t.logoUrl        || null,
+      });
+    } catch (e) {
+      console.error("getTenantBusinessInfo error:", e);
+      return res.status(500).json({ ok: false, error: "server_error" });
+    }
+  }
+);
+
 exports.getTenantVivaCredentialsForOwner = onCall(
   { region: "us-central1" },
   async (request) => {

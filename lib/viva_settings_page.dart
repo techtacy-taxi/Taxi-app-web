@@ -12,11 +12,14 @@
 //
 // Δουλεύει ΚΑΙ στο Android app ΚΑΙ στο web app (ίδιο Flutter codebase).
 
+import 'dart:convert';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show Clipboard, ClipboardData;
+import 'package:http/http.dart' as http;
 
 // ── Χρώμα «φυστικί» — ίδιο με το φόντο του μενού (βλ. εικόνα μενού) ────────
 const Color kPistachio       = Color(0xFFF3ECD9); // φόντο πάνω μπάρα προειδοποίησης
@@ -42,6 +45,12 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
   final _merchantIdCtrl   = TextEditingController();
   final _apiKeyCtrl       = TextEditingController();
   final _sourceCodeCtrl   = TextEditingController();
+
+  // ── Στοιχεία επιχείρησης (μόνο για tenants, όχι για το δικό σου default)
+  final _contactPhoneCtrl   = TextEditingController();
+  final _contactEmailCtrl   = TextEditingController();
+  final _whatsappNumberCtrl = TextEditingController();
+  final _logoUrlCtrl        = TextEditingController();
 
   bool _demo = true;
   bool _loading = true;
@@ -96,6 +105,10 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
     _merchantIdCtrl.dispose();
     _apiKeyCtrl.dispose();
     _sourceCodeCtrl.dispose();
+    _contactPhoneCtrl.dispose();
+    _contactEmailCtrl.dispose();
+    _whatsappNumberCtrl.dispose();
+    _logoUrlCtrl.dispose();
     super.dispose();
   }
 
@@ -120,6 +133,26 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
           _demo = data['vivaDemo'] != false;
           _hasCredentials = data['hasVivaCredentials'] == true;
         });
+        // Στοιχεία επιχείρησης (τηλέφωνο/email/λογότυπο/WhatsApp) — δημόσιο
+        // endpoint, απλά ξαναφορτώνουμε ό,τι υπάρχει ήδη αποθηκευμένο.
+        try {
+          final biRes = await http.post(
+            Uri.parse('https://us-central1-my-taxi-app-bbc7c.cloudfunctions.net/getTenantBusinessInfo'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({'tenantId': _tenantId}),
+          );
+          final bi = jsonDecode(biRes.body) as Map<String, dynamic>;
+          if (bi['ok'] == true) {
+            setState(() {
+              _contactPhoneCtrl.text   = bi['contactPhone'] as String? ?? '';
+              _contactEmailCtrl.text   = bi['contactEmail'] as String? ?? '';
+              _whatsappNumberCtrl.text = bi['whatsappNumber'] as String? ?? '';
+              _logoUrlCtrl.text        = bi['logoUrl'] as String? ?? '';
+            });
+          }
+        } catch (_) {
+          // Μη κρίσιμο — απλά δεν προσυμπληρώνονται, ο tenant τα ξαναγράφει.
+        }
       }
     } catch (e) {
       setState(() => _error = 'Σφάλμα φόρτωσης: $e');
@@ -246,6 +279,17 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
           'vivaSourceCode': _sourceCodeCtrl.text.trim(),
           'vivaDemo': _demo,
         });
+        // Στοιχεία επιχείρησης — τηλέφωνο/email/λογότυπο/WhatsApp. Αυτά ΔΕΝ
+        // είναι μυστικά, γι' αυτό ξεχωριστό, απλό callable (χωρίς Secret Manager).
+        final biCallable =
+            FirebaseFunctions.instance.httpsCallable('updateTenantBusinessInfo');
+        await biCallable.call({
+          'tenantId': _tenantId,
+          'contactPhone': _contactPhoneCtrl.text.trim(),
+          'contactEmail': _contactEmailCtrl.text.trim(),
+          'whatsappNumber': _whatsappNumberCtrl.text.trim(),
+          'logoUrl': _logoUrlCtrl.text.trim(),
+        });
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
             content: Text('Αποθηκεύτηκε.'),
@@ -341,6 +385,76 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
                       style: const TextStyle(fontSize: 12.5, color: Colors.grey),
                     ),
                     const SizedBox(height: 8),
+
+                    if (!_isDefault) ...[
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(12),
+                        margin: const EdgeInsets.only(bottom: 16),
+                        decoration: BoxDecoration(
+                          color: Colors.indigo.withValues(alpha: 0.06),
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: Colors.indigo.withValues(alpha: 0.3)),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(children: [
+                              Icon(Icons.storefront_rounded, size: 16, color: Colors.indigo[700]),
+                              const SizedBox(width: 6),
+                              const Text('Στοιχεία Επιχείρησης',
+                                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                            ]),
+                            const SizedBox(height: 4),
+                            Text(
+                              'Εμφανίζονται αυτόματα στη δική σου φόρμα κράτησης '
+                              '(booking2.html) — δεν χρειάζεται να επεξεργαστείς κώδικα.',
+                              style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+                            ),
+                            const SizedBox(height: 10),
+                            TextField(
+                              controller: _contactPhoneCtrl,
+                              keyboardType: TextInputType.phone,
+                              decoration: const InputDecoration(
+                                  isDense: true,
+                                  labelText: 'Τηλέφωνο επικοινωνίας',
+                                  hintText: '+30 6900000000',
+                                  border: OutlineInputBorder()),
+                            ),
+                            const SizedBox(height: 10),
+                            TextField(
+                              controller: _contactEmailCtrl,
+                              keyboardType: TextInputType.emailAddress,
+                              decoration: const InputDecoration(
+                                  isDense: true,
+                                  labelText: 'Email επικοινωνίας',
+                                  hintText: 'info@τοδικοσουdomain.com',
+                                  border: OutlineInputBorder()),
+                            ),
+                            const SizedBox(height: 10),
+                            TextField(
+                              controller: _whatsappNumberCtrl,
+                              keyboardType: TextInputType.phone,
+                              decoration: const InputDecoration(
+                                  isDense: true,
+                                  labelText: 'Αριθμός WhatsApp',
+                                  helperText: 'Μόνο αριθμοί, με κωδικό χώρας — π.χ. 306900000000 (χωρίς +)',
+                                  border: OutlineInputBorder()),
+                            ),
+                            const SizedBox(height: 10),
+                            TextField(
+                              controller: _logoUrlCtrl,
+                              decoration: const InputDecoration(
+                                  isDense: true,
+                                  labelText: 'Link λογότυπου (εικόνα)',
+                                  helperText: 'Ανέβασε το λογότυπό σου κάπου (π.χ. imgur.com) '
+                                      'και επικόλλησε εδώ το link της εικόνας',
+                                  border: OutlineInputBorder()),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
 
                     if (!_isDefault) ...[
                       OutlinedButton.icon(
