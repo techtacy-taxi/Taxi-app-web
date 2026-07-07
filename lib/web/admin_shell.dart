@@ -144,12 +144,12 @@ class _AdminShellState extends State<AdminShell> {
       ));
     }
 
-    // Πελάτες (Tenants) — ΜΟΝΟ ο πραγματικός super-admin (εσύ). Ο έλεγχος
-    // email είναι ΕΠΙΠΛΕΟΝ ασφαλιστική δικλείδα — η ίδια η TenantAdminPage
-    // κάνει ξανά τον ίδιο έλεγχο εσωτερικά.
+    // Online Φόρμα (πρώην «Πελάτες/Tenants») — ΜΟΝΟ ο πραγματικός super-admin
+    // (εσύ). Ο έλεγχος email είναι ΕΠΙΠΛΕΟΝ ασφαλιστική δικλείδα — η ίδια η
+    // TenantAdminPage κάνει ξανά τον ίδιο έλεγχο εσωτερικά.
     if (FirebaseAuth.instance.currentUser?.email == 'techtacy@gmail.com') {
       sections.add(const _Section(
-        label: 'Πελάτες',
+        label: 'Online Φόρμα',
         icon: Icons.storefront_rounded,
         page: TenantAdminPage(),
       ));

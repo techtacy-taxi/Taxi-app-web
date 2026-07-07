@@ -2,6 +2,7 @@
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../models.dart';
 import '../voice/voice_models.dart' show VoiceGroup;
@@ -106,7 +107,7 @@ void showDriverCard({
               )),
               const SizedBox(width: 12),
               Expanded(child: _actionButton(
-                icon: Icons.message_rounded, label: 'WhatsApp',
+                icon: FontAwesomeIcons.whatsapp, label: 'WhatsApp',
                 color: const Color(0xFF25D366),
                 onTap: () => _launch('https://wa.me/$waPhone'),
               )),

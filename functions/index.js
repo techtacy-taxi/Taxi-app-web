@@ -3117,6 +3117,20 @@ exports.createVivaOrder = onRequest(
       const email = s(b.email), flight = s(b.flight), note = s(b.note);
       const lang = s(b.lang) || "el";
 
+      // ── Πάνω από 8 άτομα: το Βαν παίρνει ΜΕΧΡΙ 8 — χρειάζεται Mini Bus,
+      // που ΔΕΝ διαχειρίζεται η φόρμα online. ΠΟΤΕ δεν επιτρέπουμε online
+      // πληρωμή σε αυτή την περίπτωση — ασφάλεια server-side, ανεξάρτητα
+      // από το αν παρακάμφθηκε ο έλεγχος στο client (JavaScript της φόρμας).
+      if (persons > 8) {
+        return res.status(400).json({
+          ok: false,
+          error: "van_capacity",
+          message: lang === "el"
+            ? "Πάνω από 8 άτομα χρειάζονται Mini Bus — επικοινωνήστε μαζί μας μέσω WhatsApp."
+            : "More than 8 people need a Mini Bus — please contact us via WhatsApp.",
+        });
+      }
+
       const num = (v) => (v == null || v === "" || isNaN(Number(v))) ? null : Number(v);
       const fromLat = num(b.fromLat), fromLng = num(b.fromLng);
       const toLat = num(b.toLat), toLng = num(b.toLng);
@@ -3187,10 +3201,20 @@ exports.createVivaOrder = onRequest(
         createdAt: FieldValue.serverTimestamp(),
       });
 
-      const demo = tenantCfg ? tenantCfg.vivaDemo !== false : vivaIsDemo(VIVA_DEMO.value());
+      // ΝΕΟ: το default (δικός σου) λογαριασμός διαβάζεται ΖΩΝΤΑΝΑ από το
+      // Secret Manager (readSecret) — ΟΧΙ πια από το deployment-locked
+      // defineSecret().value(). Έτσι, όταν αλλάζεις τα δικά σου credentials
+      // μέσω της σελίδας «Ρυθμίσεις Viva», ισχύουν αμέσως χωρίς deploy.
+      const demo = tenantCfg
+        ? tenantCfg.vivaDemo !== false
+        : vivaIsDemo(await readSecret("VIVA_DEMO"));
       const hosts = vivaHosts(demo);
-      const vClientId = tenantViva ? tenantViva.clientId : VIVA_CLIENT_ID.value();
-      const vClientSecret = tenantViva ? tenantViva.clientSecret : VIVA_CLIENT_SECRET.value();
+      const vClientId = tenantViva
+        ? tenantViva.clientId
+        : await readSecret("VIVA_CLIENT_ID");
+      const vClientSecret = tenantViva
+        ? tenantViva.clientSecret
+        : await readSecret("VIVA_CLIENT_SECRET");
       const accessToken = await getVivaAccessToken(demo, vClientId, vClientSecret);
       if (!accessToken) {
         await pendingRef.delete().catch(() => {});
@@ -3254,9 +3278,9 @@ exports.vivaWebhook = onRequest(
     // χρησιμοποιήσουμε για την επαλήθευση GET. Ο δικός σου ("default")
     // tenant συνεχίζει να δουλεύει ΧΩΡΙΣ τίποτα στο URL, όπως πάντα.
     const webhookTenantId = s(req.query && req.query.tenantId) || "default";
-    let vMerchantId = VIVA_MERCHANT_ID.value();
-    let vApiKey = VIVA_API_KEY.value();
-    let demo = vivaIsDemo(VIVA_DEMO.value());
+    let vMerchantId = await readSecret("VIVA_MERCHANT_ID");
+    let vApiKey = await readSecret("VIVA_API_KEY");
+    let demo = vivaIsDemo(await readSecret("VIVA_DEMO"));
     if (webhookTenantId !== "default") {
       const tDoc = await getFirestore().collection("tenants").doc(webhookTenantId).get();
       if (tDoc.exists) {
@@ -3953,7 +3977,7 @@ exports.getTenantVivaCredentialsForOwner = onCall(
 // Σκοπός: νέος tenant να μπορεί να δοκιμάσει όλη τη ροή πληρωμής χρησιμοποιώντας
 // τον ΔΙΚΟ ΣΟΥ demo λογαριασμό, πριν αποκτήσει τον δικό του.
 exports.getSharedDemoVivaCredentials = onCall(
-  { region: "us-central1", secrets: [VIVA_CLIENT_ID, VIVA_CLIENT_SECRET, VIVA_MERCHANT_ID, VIVA_API_KEY, VIVA_DEMO] },
+  { region: "us-central1" },
   async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Χρειάζεται σύνδεση.");
     const db = getFirestore();
@@ -3963,24 +3987,24 @@ exports.getSharedDemoVivaCredentials = onCall(
     if (!isSuperAdmin && pres.tenantOwner !== true) {
       throw new HttpsError("permission-denied", "Μόνο για tenant-owners.");
     }
-    if (!vivaIsDemo(VIVA_DEMO.value())) {
+    const defaultDemo = await readSecret("VIVA_DEMO");
+    if (!vivaIsDemo(defaultDemo)) {
       throw new HttpsError("failed-precondition",
         "Ο κύριος λογαριασμός δεν είναι αυτή τη στιγμή σε demo mode — δεν μοιράζονται στοιχεία.");
     }
     return {
       ok: true,
-      vivaClientId:     VIVA_CLIENT_ID.value(),
-      vivaClientSecret: VIVA_CLIENT_SECRET.value(),
-      vivaMerchantId:   VIVA_MERCHANT_ID.value(),
-      vivaApiKey:       VIVA_API_KEY.value(),
+      vivaClientId:     await readSecret("VIVA_CLIENT_ID"),
+      vivaClientSecret: await readSecret("VIVA_CLIENT_SECRET"),
+      vivaMerchantId:   await readSecret("VIVA_MERCHANT_ID"),
+      vivaApiKey:       await readSecret("VIVA_API_KEY"),
     };
   }
 );
 
 // ── updateDefaultVivaCredentials: ενημέρωση των ΔΙΚΩΝ ΣΟΥ (Konstantinos)
-// Viva credentials — ΜΟΝΟ super-admin. ⚠️ ΠΡΟΣΟΧΗ: Επειδή αυτά τα secrets
-// είναι δεμένα στο deployment (defineSecret), η αλλαγή τιμής ΔΕΝ ισχύει
-// αυτόματα — χρειάζεται `firebase deploy --only functions` μετά.
+// Viva credentials — ΜΟΝΟ super-admin. Πλέον διαβάζονται ΖΩΝΤΑΝΑ (readSecret)
+// σε όλο το σύστημα, άρα ισχύουν ΑΜΕΣΩΣ — ΔΕΝ χρειάζεται πια deploy.
 exports.updateDefaultVivaCredentials = onCall(
   { region: "us-central1" },
   async (request) => {
@@ -4013,8 +4037,8 @@ exports.updateDefaultVivaCredentials = onCall(
     }
     return {
       ok: true,
-      needsRedeploy: true,
-      message: "Αποθηκεύτηκε. ΧΡΕΙΑΖΕΤΑΙ 'firebase deploy --only functions' για να ισχύσει.",
+      needsRedeploy: false,
+      message: "Αποθηκεύτηκε και ισχύει ήδη — καμία ανάγκη για deploy.",
     };
   }
 );

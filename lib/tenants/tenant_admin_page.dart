@@ -196,6 +196,20 @@ class _TenantAdminPageState extends State<TenantAdminPage> {
     }
   }
 
+  // Αντιγράφει ΜΟΝΟ την τιμή του eformId (π.χ. "rhodes_taxi") — έτοιμη να
+  // επικολληθεί απευθείας στη γραμμή `const EFORM_ID = "...";` μέσα στο
+  // booking2.html (ή EL/booking2.html) του συγκεκριμένου πελάτη.
+  Future<void> _copyEformId(String tenantId) async {
+    await Clipboard.setData(ClipboardData(text: tenantId));
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('Αντιγράφηκε: $tenantId — βάλ\' το στη γραμμή EFORM_ID του booking2.html'),
+        duration: const Duration(seconds: 3),
+        backgroundColor: Colors.indigo,
+      ));
+    }
+  }
+
   Future<void> _toggleActive(String tenantId, bool newActive) async {
     // Αισιόδοξη ενημέρωση UI, με επαναφορά αν αποτύχει.
     setState(() {
@@ -329,7 +343,7 @@ class _TenantAdminPageState extends State<TenantAdminPage> {
                                               style: TextStyle(
                                                   fontSize: 12.5, color: Colors.grey[600])),
                                           const SizedBox(height: 3),
-                                          Text('tenantId: ${t['tenantId']}',
+                                          Text('eformId: ${t['tenantId']}',
                                               style: TextStyle(
                                                   fontSize: 11, color: Colors.grey[400])),
                                           const SizedBox(height: 6),
@@ -350,30 +364,113 @@ class _TenantAdminPageState extends State<TenantAdminPage> {
                                                 style: const TextStyle(fontSize: 11.5)),
                                           ]),
                                           const SizedBox(height: 8),
-                                          // ── Κουμπί αντιγραφής webhook URL — έτοιμο με
-                                          // το σωστό tenantId, για να το επικολλήσεις
-                                          // απευθείας στο Viva dashboard του πελάτη.
-                                          InkWell(
-                                            onTap: () => _copyWebhookUrl(t['tenantId'] as String),
-                                            borderRadius: BorderRadius.circular(8),
-                                            child: Container(
-                                              padding: const EdgeInsets.symmetric(
-                                                  horizontal: 10, vertical: 7),
-                                              decoration: BoxDecoration(
-                                                color: Colors.blue.shade50,
+                                          // ── Κουμπιά αντιγραφής — webhook URL (έτοιμο για
+                                          // Viva dashboard) και eformId (έτοιμο για να το
+                                          // βάλεις στη γραμμή EFORM_ID του booking2.html).
+                                          // Row με Expanded (ΟΧΙ Wrap) ώστε να έχουν ΙΣΟ
+                                          // πλάτος 50/50 — αλλιώς το κοντύτερο κείμενο
+                                          // «EformID» έκανε το κουμπί ασύμμετρα μικρότερο.
+                                          Row(children: [
+                                            Expanded(
+                                              child: InkWell(
+                                                onTap: () => _copyWebhookUrl(t['tenantId'] as String),
                                                 borderRadius: BorderRadius.circular(8),
-                                                border: Border.all(color: Colors.blue.shade200),
+                                                child: Container(
+                                                  padding: const EdgeInsets.symmetric(
+                                                      horizontal: 10, vertical: 7),
+                                                  decoration: BoxDecoration(
+                                                    color: Colors.blue.shade50,
+                                                    borderRadius: BorderRadius.circular(8),
+                                                    border: Border.all(color: Colors.blue.shade200),
+                                                  ),
+                                                  child: Row(
+                                                    mainAxisAlignment: MainAxisAlignment.center,
+                                                    mainAxisSize: MainAxisSize.max,
+                                                    children: [
+                                                      Icon(Icons.copy_rounded,
+                                                          size: 14, color: Colors.blue.shade700),
+                                                      const SizedBox(width: 6),
+                                                      Flexible(
+                                                        child: Text('Αντιγραφή Webhook URL',
+                                                            textAlign: TextAlign.center,
+                                                            overflow: TextOverflow.ellipsis,
+                                                            style: TextStyle(
+                                                                fontSize: 11.5,
+                                                                fontWeight: FontWeight.w600,
+                                                                color: Colors.blue.shade700)),
+                                                      ),
+                                                    ],
+                                                  ),
+                                                ),
                                               ),
-                                              child: Row(mainAxisSize: MainAxisSize.min, children: [
-                                                Icon(Icons.copy_rounded,
-                                                    size: 14, color: Colors.blue.shade700),
-                                                const SizedBox(width: 6),
-                                                Text('Αντιγραφή Webhook URL',
-                                                    style: TextStyle(
-                                                        fontSize: 11.5,
-                                                        fontWeight: FontWeight.w600,
-                                                        color: Colors.blue.shade700)),
-                                              ]),
+                                            ),
+                                            const SizedBox(width: 8),
+                                            Expanded(
+                                              child: InkWell(
+                                                onTap: () => _copyEformId(t['tenantId'] as String),
+                                                borderRadius: BorderRadius.circular(8),
+                                                child: Container(
+                                                  padding: const EdgeInsets.symmetric(
+                                                      horizontal: 10, vertical: 7),
+                                                  decoration: BoxDecoration(
+                                                    color: Colors.indigo.shade50,
+                                                    borderRadius: BorderRadius.circular(8),
+                                                    border: Border.all(color: Colors.indigo.shade200),
+                                                  ),
+                                                  child: Row(
+                                                    mainAxisAlignment: MainAxisAlignment.center,
+                                                    mainAxisSize: MainAxisSize.max,
+                                                    children: [
+                                                      Icon(Icons.badge_rounded,
+                                                          size: 14, color: Colors.indigo.shade700),
+                                                      const SizedBox(width: 6),
+                                                      Flexible(
+                                                        child: Text('Αντιγραφή EformID',
+                                                            textAlign: TextAlign.center,
+                                                            overflow: TextOverflow.ellipsis,
+                                                            style: TextStyle(
+                                                                fontSize: 11.5,
+                                                                fontWeight: FontWeight.w600,
+                                                                color: Colors.indigo.shade700)),
+                                                      ),
+                                                    ],
+                                                  ),
+                                                ),
+                                              ),
+                                            ),
+                                          ]),
+                                          const SizedBox(height: 8),
+                                          // ── Οδηγίες «πού το βάζεις» — μέσα στην ίδια την
+                                          // εφαρμογή, ώστε να μη χρειάζεται να θυμάσαι/ψάχνεις.
+                                          Container(
+                                            width: double.infinity,
+                                            padding: const EdgeInsets.all(8),
+                                            decoration: BoxDecoration(
+                                              color: Colors.grey.shade50,
+                                              borderRadius: BorderRadius.circular(8),
+                                              border: Border.all(color: Colors.grey.shade200),
+                                            ),
+                                            child: Column(
+                                              crossAxisAlignment: CrossAxisAlignment.start,
+                                              children: [
+                                                _WhereToPutRow(
+                                                  color: Colors.blue.shade700,
+                                                  label: 'Webhook URL:',
+                                                  text: 'στο Viva dashboard του πελάτη → '
+                                                      'Ειδοποίηση πληρωμής → νέο webhook, '
+                                                      'Event «Νέα Πληρωμή».',
+                                                ),
+                                                const SizedBox(height: 6),
+                                                _WhereToPutRow(
+                                                  color: Colors.indigo.shade700,
+                                                  label: 'EformID:',
+                                                  text: 'στη γραμμή const EFORM_ID = "..."; '
+                                                      'μέσα στο booking2.html (ή '
+                                                      'EL/booking2.html) — αντικατέστησε το '
+                                                      '"CHANGE_ME_EFORM_ID" με ό,τι μόλις '
+                                                      'αντέγραψες.',
+                                                ),
+                                              ],
                                             ),
                                           ),
                                         ],
@@ -641,6 +738,34 @@ class _CreateTenantDialogState extends State<_CreateTenantDialog> {
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+// ─── Μία γραμμή οδηγιών «πού το βάζεις» — «Ετικέτα: κείμενο» ─────────────────
+class _WhereToPutRow extends StatelessWidget {
+  final Color color;
+  final String label;
+  final String text;
+  const _WhereToPutRow({
+    required this.color,
+    required this.label,
+    required this.text,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return RichText(
+      text: TextSpan(
+        style: TextStyle(fontSize: 10.5, color: Colors.grey[700], height: 1.35),
+        children: [
+          TextSpan(
+            text: 'Πού το βάζεις — $label ',
+            style: TextStyle(fontWeight: FontWeight.bold, color: color),
+          ),
+          TextSpan(text: text),
+        ],
       ),
     );
   }

@@ -2,6 +2,7 @@
 // Sheet λεπτομερειών δουλειάς — ανοίγει από "Λεπτομέρειες" στο MyJobTile
 
 import 'package:flutter/material.dart';
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:vibration/vibration.dart';
 import 'job_shared_widgets.dart';
 import 'package:intl/intl.dart';
@@ -475,7 +476,7 @@ class JobDetailsSheet extends StatelessWidget {
                       const SizedBox(width: 8),
                       phoneBtn(
                         context: context,
-                        icon: Icons.chat_rounded,
+                        icon: FontAwesomeIcons.whatsapp,
                         color: const Color(0xFF25D366),
                         tooltip: 'WhatsApp',
                         onTap: () async {

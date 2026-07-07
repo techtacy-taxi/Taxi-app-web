@@ -1182,7 +1182,8 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
                         ]),
                       ),
                     if (_isMaster) const PopupMenuDivider(),
-                    // Πελάτες (Tenants) — ΜΟΝΟ ο πραγματικός super-admin (εσύ).
+                    // Online Φόρμα (πρώην «Πελάτες/Tenants») — ΜΟΝΟ ο
+                    // πραγματικός super-admin (εσύ).
                     if (FirebaseAuth.instance.currentUser?.email == 'techtacy@gmail.com')
                       PopupMenuItem(
                         value: MenuAction.tenants,
@@ -1193,11 +1194,11 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              Text('Πελάτες',
+                              Text('Online Φόρμα',
                                   style: TextStyle(
                                       fontWeight: FontWeight.bold,
                                       color: Colors.indigo)),
-                              Text('Διαχείριση multi-tenant',
+                              Text('Διαχείριση online φορμών',
                                   style: TextStyle(
                                       fontSize: 10, color: Colors.grey)),
                             ],

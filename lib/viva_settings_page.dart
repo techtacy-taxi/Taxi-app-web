@@ -4,8 +4,8 @@
 //   • Tenant-owner: βάζει τα ΔΙΚΑ ΤΟΥ Viva credentials (Client ID/Secret/
 //     Merchant ID/API Key/Source Code) για τον ΔΙΚΟ ΤΟΥ tenant.
 //   • Master (εσύ, tenant "default"): το ίδιο για τον ΔΙΚΟ ΣΟΥ λογαριασμό.
-//     ⚠️ Εδώ χρειάζεται `firebase deploy --only functions` μετά την αλλαγή
-//     (τα secrets είναι δεμένα στο deployment — defineSecret).
+//     Πλέον διαβάζεται ΖΩΝΤΑΝΑ (readSecret στο backend) — ΔΕΝ χρειάζεται
+//     πια `firebase deploy --only functions` μετά την αλλαγή.
 //
 // Demo/Live διακόπτης: ΠΑΝΤΑ με διπλή επιβεβαίωση (dialog), ώστε να μην
 // αλλάξει κατά λάθος κανείς από demo σε live (ή αντίστροφα).
@@ -16,6 +16,12 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show Clipboard, ClipboardData;
+
+// ── Χρώμα «φυστικί» — ίδιο με το φόντο του μενού (βλ. εικόνα μενού) ────────
+const Color kPistachio       = Color(0xFFF3ECD9); // φόντο πάνω μπάρα προειδοποίησης
+const Color kPistachioAccent = Color(0xFFD9C89A); // κουμπί Αποθήκευση + διακόπτης
+const Color kPistachioText   = Color(0xFF6B5A2E); // σκούρο κείμενο πάνω σε φυστικί
 
 class VivaSettingsPage extends StatefulWidget {
   const VivaSettingsPage({super.key});
@@ -64,7 +70,7 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
         final doc = await FirebaseFirestore.instance.collection('presence').doc(uid).get();
         final data = doc.data();
         _tenantId = (data?['tenantId'] as String?) ?? 'default';
-        // Το όνομα του tenant (business name) — προαιρετική ωραιοποίηση,
+        // Το όνομα της Online Φόρμας (business name) — προαιρετική ωραιοποίηση,
         // αν αποτύχει απλά δείχνει το tenantId.
         if (_tenantId != 'default') {
           try {
@@ -157,12 +163,12 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
           Icon(Icons.warning_amber_rounded,
               color: newDemo ? Colors.orange : Colors.red),
           const SizedBox(width: 8),
-          Text(newDemo ? 'Αλλαγή σε DEMO' : 'Αλλαγή σε LIVE (πραγματικές πληρωμές)'),
+          Expanded(child: Text(
+              newDemo ? 'Αλλαγή σε DEMO' : 'Αλλαγή σε LIVE (πραγματικές πληρωμές)')),
         ]),
         content: Text(newDemo
             ? 'Θα σταματήσουν να γίνονται πραγματικές χρεώσεις πελατών — μόνο δοκιμαστικές.'
-            : 'Από εδώ και πέρα ΘΑ γίνονται ΠΡΑΓΜΑΤΙΚΕΣ χρεώσεις σε πραγματικές κάρτες πελατών. '
-              '${_isDefault ? "\n\nΧρειάζεται επίσης deploy functions μετά." : ""}'),
+            : 'Από εδώ και πέρα ΘΑ γίνονται ΠΡΑΓΜΑΤΙΚΕΣ χρεώσεις σε πραγματικές κάρτες πελατών.'),
         actions: [
           TextButton(onPressed: () => Navigator.of(dctx).pop(false), child: const Text('Άκυρο')),
           FilledButton(
@@ -218,7 +224,7 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
             builder: (dctx) => AlertDialog(
               title: const Text('Αποθηκεύτηκε'),
               content: Text(data['message'] as String? ??
-                  'Χρειάζεται deploy functions για να ισχύσει.'),
+                  'Αποθηκεύτηκε και ισχύει ήδη.'),
               actions: [
                 FilledButton(
                   onPressed: () => Navigator.of(dctx).pop(),
@@ -259,10 +265,34 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
     }
   }
 
+  // Το ακριβές webhook URL — με ?tenantId=... για κάθε Online Φόρμα εκτός
+  // από τη δική σου (default, που δεν χρειάζεται τίποτα στο URL).
+  String get _webhookUrl {
+    const base = 'https://us-central1-my-taxi-app-bbc7c.cloudfunctions.net/vivaWebhook';
+    return _isDefault ? base : '$base?tenantId=$_tenantId';
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text('Ρυθμίσεις Viva — $_tenantName')),
+      appBar: AppBar(
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(mainAxisSize: MainAxisSize.min, children: [
+              // Λογότυπο Viva — assets/viva_logo.png (πρόσθεσέ το στο pubspec.yaml)
+              Image.asset('assets/viva_logo.png', width: 18, height: 18),
+              const SizedBox(width: 6),
+              const Text('Ρυθμίσεις Viva', style: TextStyle(fontSize: 17)),
+            ]),
+            Text(_tenantName,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 11, fontWeight: FontWeight.normal)),
+          ],
+        ),
+      ),
       body: SafeArea(
         child: (_loading || !_tenantResolved)
             ? const Center(child: CircularProgressIndicator())
@@ -277,15 +307,14 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
                         padding: const EdgeInsets.all(12),
                         margin: const EdgeInsets.only(bottom: 16),
                         decoration: BoxDecoration(
-                          color: Colors.orange.shade50,
+                          color: kPistachio,
                           borderRadius: BorderRadius.circular(10),
-                          border: Border.all(color: Colors.orange.shade200),
+                          border: Border.all(color: kPistachioAccent),
                         ),
                         child: const Text(
                           '⚠️ Αυτά είναι ΤΑ ΔΙΚΑ ΣΟΥ credentials (default λογαριασμός). '
-                          'Μετά την αποθήκευση χρειάζεται "firebase deploy --only '
-                          'functions" για να ισχύσει η αλλαγή.',
-                          style: TextStyle(fontSize: 12.5),
+                          'Ισχύουν αμέσως μόλις πατήσεις Αποθήκευση — καμία ανάγκη για deploy.',
+                          style: TextStyle(fontSize: 12.5, color: kPistachioText),
                         ),
                       ),
 
@@ -348,15 +377,13 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
                       decoration: const InputDecoration(
                           labelText: 'Viva API Key', border: OutlineInputBorder()),
                     ),
-                    if (!_isDefault) ...[
-                      const SizedBox(height: 10),
-                      TextField(
-                        controller: _sourceCodeCtrl,
-                        decoration: const InputDecoration(
-                            labelText: 'Viva Source Code (4ψήφιο)',
-                            border: OutlineInputBorder()),
-                      ),
-                    ],
+                    const SizedBox(height: 10),
+                    TextField(
+                      controller: _sourceCodeCtrl,
+                      decoration: const InputDecoration(
+                          labelText: 'Viva Source Code (4ψήφιο)',
+                          border: OutlineInputBorder()),
+                    ),
                     const SizedBox(height: 16),
 
                     SwitchListTile(
@@ -366,7 +393,7 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
                           ? 'Δοκιμαστικός — καμία πραγματική χρέωση'
                           : 'LIVE — πραγματικές χρεώσεις!'),
                       value: _demo,
-                      activeThumbColor: Colors.orange,
+                      activeThumbColor: kPistachioAccent,
                       onChanged: (v) async {
                         if (v == _demo) return;
                         final ok = await _confirmDemoLiveChange(v);
@@ -400,6 +427,9 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
                       ),
                     ),
 
+                    const SizedBox(height: 16),
+                    _buildSetupInstructions(),
+
                     if (_error != null) ...[
                       const SizedBox(height: 12),
                       Text(_error!, style: const TextStyle(color: Colors.red)),
@@ -409,17 +439,90 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
                     SizedBox(
                       width: double.infinity,
                       child: FilledButton(
+                        style: FilledButton.styleFrom(
+                          backgroundColor: kPistachioAccent,
+                          foregroundColor: kPistachioText,
+                        ),
                         onPressed: _saving ? null : _save,
                         child: _saving
                             ? const SizedBox(
                                 width: 20, height: 20,
-                                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                                child: CircularProgressIndicator(
+                                    strokeWidth: 2, color: kPistachioText))
                             : const Text('Αποθήκευση'),
                       ),
                     ),
                   ],
                 ),
               ),
+      ),
+    );
+  }
+
+  // ── Οδηγίες: πού βρίσκει ο καθένας το webhook URL και πώς φτιάχνει το
+  // Source Code (Κωδικό) στο δικό του Viva dashboard. ─────────────────────
+  Widget _buildSetupInstructions() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.grey.shade50,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.grey.shade300),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            Icon(Icons.info_outline_rounded, size: 16, color: Colors.grey[700]),
+            const SizedBox(width: 6),
+            const Text('Πώς ρυθμίζεις το Webhook & το Source Code',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12.5)),
+          ]),
+          const SizedBox(height: 10),
+
+          const Text('1. Webhook (Ειδοποίηση πληρωμής)',
+              style: TextStyle(fontWeight: FontWeight.w600, fontSize: 12)),
+          const SizedBox(height: 4),
+          const Text(
+            'Στο Viva dashboard: πάνω μενού → «Ειδοποίηση πληρωμής» → '
+            'πρόσθεσε νέο webhook, Event: «Νέα Πληρωμή» (Transaction Payment '
+            'Created), και βάλε ακριβώς αυτό το URL:',
+            style: TextStyle(fontSize: 12),
+          ),
+          const SizedBox(height: 6),
+          _CopyableCode(text: _webhookUrl),
+
+          const SizedBox(height: 12),
+          const Text('2. Source Code (Κωδικός)',
+              style: TextStyle(fontWeight: FontWeight.w600, fontSize: 12)),
+          const SizedBox(height: 4),
+          const Text(
+            'Πλαϊνό μενού → «Λογαριασμοί» → βρες την ενότητα «Websites / '
+            'Apps» → πάτα «Προσθήκη Website/App» → δώσε ένα όνομα (π.χ. το '
+            'όνομα της επιχείρησης). Μόλις δημιουργηθεί, εμφανίζεται ένας '
+            '4ψήφιος «Κωδικός» στη λίστα — αυτό είναι το Source Code που '
+            'βάζεις παραπάνω.',
+            style: TextStyle(fontSize: 12),
+          ),
+
+          if (_isDefault) ...[
+            const SizedBox(height: 10),
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: Colors.amber.shade50,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Text(
+                'Αν το κάνεις εσύ για λογαριασμό κάποιου tenant, ακολούθησε τα '
+                'ίδια 2 βήματα μέσα στο δικό ΤΟΥ Viva dashboard (όχι στο δικό '
+                'σου) — το webhook URL του θα έχει το δικό του tenantId.',
+                style: TextStyle(fontSize: 11.5),
+              ),
+            ),
+          ],
+        ],
       ),
     );
   }
@@ -432,4 +535,40 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
               style: const TextStyle(fontSize: 12.5, fontFamily: 'monospace')),
         ]),
       );
+}
+
+/// Κουτί με κείμενο + κουμπί αντιγραφής — για το webhook URL.
+class _CopyableCode extends StatelessWidget {
+  final String text;
+  const _CopyableCode({required this.text});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.grey.shade300),
+      ),
+      child: Row(children: [
+        Expanded(
+          child: Text(text,
+              style: const TextStyle(fontSize: 11, fontFamily: 'monospace')),
+        ),
+        IconButton(
+          icon: const Icon(Icons.copy_rounded, size: 16),
+          padding: EdgeInsets.zero,
+          constraints: const BoxConstraints(),
+          onPressed: () {
+            Clipboard.setData(ClipboardData(text: text));
+            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+              content: Text('Αντιγράφηκε'),
+              duration: Duration(seconds: 1),
+            ));
+          },
+        ),
+      ]),
+    );
+  }
 }
