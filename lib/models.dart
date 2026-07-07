@@ -7,7 +7,7 @@ import 'package:google_maps_flutter/google_maps_flutter.dart';
 enum VehicleType { taxi, van }
 
 // ─── Menu actions ─────────────────────────────────────────────────────────────
-enum MenuAction { editName, jobs, taxi, van, groups, mute, checkUpdate, broadcastUpdate, billing, masters, calendar, pricingZones, tenants }
+enum MenuAction { editName, jobs, taxi, van, groups, mute, checkUpdate, broadcastUpdate, billing, masters, calendar, pricingZones, tenants, vivaSettings }
 
 // ─── SharedPreferences key για broadcast αναβάθμισης ──────────────────────────
 const kPrefsLastBroadcast = 'last_seen_broadcast_v1';

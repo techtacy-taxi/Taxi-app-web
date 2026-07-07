@@ -3202,9 +3202,11 @@ exports.createVivaOrder = onRequest(
         headers: { "Authorization": "Bearer " + accessToken, "Content-Type": "application/json" },
         body: JSON.stringify({
           amount: depositCents,
-          customerTrns: (payFull ? "Πλήρης πληρωμή · " : "Προκαταβολή 10% · ") + from + " → " + to +
-            " · " + date + " " + time +
-            (vehicleType === "van" ? " · Βαν" : " · Ταξί"),
+          customerTrns: (lang === "el"
+            ? (payFull ? "Πλήρης πληρωμή · " : "Προκαταβολή 10% · ") + from + " → " + to +
+              " · " + date + " " + time + (vehicleType === "van" ? " · Βαν" : " · Ταξί")
+            : (payFull ? "Full payment · " : "10% deposit · ") + from + " → " + to +
+              " · " + date + " " + time + (vehicleType === "van" ? " · Van" : " · Taxi")),
           customer: {
             email: email || undefined,
             fullName: name,
@@ -3838,5 +3840,181 @@ exports.listClients = onRequest(
       console.error("listClients error:", e);
       return res.status(500).json({ ok: false, error: "server_error" });
     }
+  }
+);
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Viva credentials — αυτοεξυπηρέτηση από τον ίδιο τον tenant
+//
+//  updateTenantVivaCredentials: μπορεί να το καλέσει είτε ο super-admin
+//  (για ΟΠΟΙΟΝΔΗΠΟΤΕ tenant), είτε ο ίδιος ο tenant-owner (μόνο για τον
+//  ΔΙΚΟ ΤΟΥ tenant — ελέγχεται μέσω presence.tenantId + presence.tenantOwner).
+// ═══════════════════════════════════════════════════════════════════════════
+
+exports.updateTenantVivaCredentials = onCall(
+  { region: "us-central1" },
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Χρειάζεται σύνδεση.");
+    const d = request.data || {};
+    const tenantId = s(d.tenantId);
+    if (!tenantId || tenantId === "default") {
+      throw new HttpsError("invalid-argument", "Μη έγκυρο tenantId.");
+    }
+
+    const isSuperAdmin = request.auth.token.email === "techtacy@gmail.com";
+    if (!isSuperAdmin) {
+      // Έλεγχος: είναι ο tenant-owner ΑΥΤΟΥ ΤΟΥ tenant;
+      const db0 = getFirestore();
+      const presDoc = await db0.collection("presence").doc(request.auth.uid).get();
+      const pres = presDoc.data() || {};
+      if (!(pres.tenantOwner === true && pres.tenantId === tenantId)) {
+        throw new HttpsError("permission-denied",
+          "Μόνο ο super-admin ή ο tenant-owner αυτού του tenant μπορεί να το αλλάξει.");
+      }
+    }
+
+    const db = getFirestore();
+    const tenantDoc = await db.collection("tenants").doc(tenantId).get();
+    if (!tenantDoc.exists) throw new HttpsError("not-found", "Άγνωστο tenant.");
+
+    const vivaFields = {
+      "viva-client-id":     s(d.vivaClientId),
+      "viva-client-secret": s(d.vivaClientSecret),
+      "viva-merchant-id":   s(d.vivaMerchantId),
+      "viva-api-key":       s(d.vivaApiKey),
+    };
+    let anySet = false;
+    for (const [field, value] of Object.entries(vivaFields)) {
+      if (value) {
+        anySet = true;
+        try {
+          await upsertSecret(tenantSecretId(tenantId, field), value);
+        } catch (e) {
+          throw new HttpsError("internal", "Αποτυχία αποθήκευσης: " + e.message);
+        }
+      }
+    }
+
+    const updates = {};
+    if (d.vivaSourceCode != null) updates.vivaSourceCode = s(d.vivaSourceCode) || null;
+    if (d.vivaDemo != null) updates.vivaDemo = d.vivaDemo !== false;
+    if (anySet) updates.hasVivaCredentials = true;
+    if (Object.keys(updates).length) {
+      await db.collection("tenants").doc(tenantId).update(updates);
+    }
+
+    return { ok: true };
+  }
+);
+
+// ── getTenantVivaCredentialsForOwner: επιστρέφει (μερικώς κρυμμένα) τα ήδη
+// αποθηκευμένα credentials ενός tenant, ΜΟΝΟ στον ίδιο τον tenant-owner ή
+// στον super-admin — ώστε να τα βλέπει στη φόρμα του (π.χ. για να τα
+// επιβεβαιώσει), χωρίς να εκτίθεται ολόκληρο το Client Secret/API Key.
+exports.getTenantVivaCredentialsForOwner = onCall(
+  { region: "us-central1" },
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Χρειάζεται σύνδεση.");
+    const tenantId = s((request.data || {}).tenantId);
+    if (!tenantId || tenantId === "default") {
+      throw new HttpsError("invalid-argument", "Μη έγκυρο tenantId.");
+    }
+    const isSuperAdmin = request.auth.token.email === "techtacy@gmail.com";
+    const db = getFirestore();
+    if (!isSuperAdmin) {
+      const presDoc = await db.collection("presence").doc(request.auth.uid).get();
+      const pres = presDoc.data() || {};
+      if (!(pres.tenantOwner === true && pres.tenantId === tenantId)) {
+        throw new HttpsError("permission-denied", "Δεν έχεις πρόσβαση σε αυτόν τον tenant.");
+      }
+    }
+    const tenantDoc = await db.collection("tenants").doc(tenantId).get();
+    if (!tenantDoc.exists) throw new HttpsError("not-found", "Άγνωστο tenant.");
+    const t = tenantDoc.data();
+
+    const mask = (v) => (v ? v.slice(0, 4) + "••••••••" : "");
+    const creds = await getTenantVivaCredentials(tenantId);
+    return {
+      ok: true,
+      vivaClientIdMasked:     mask(creds.clientId),
+      vivaClientSecretMasked: mask(creds.clientSecret),
+      vivaMerchantIdMasked:   mask(creds.merchantId),
+      vivaApiKeyMasked:       mask(creds.apiKey),
+      vivaSourceCode:         t.vivaSourceCode || "",
+      vivaDemo:               t.vivaDemo !== false,
+      hasVivaCredentials:     t.hasVivaCredentials === true,
+    };
+  }
+);
+
+// ── getSharedDemoVivaCredentials: επιστρέφει τα ΔΙΚΑ ΣΟΥ (Konstantinos)
+// demo Viva credentials, ΜΟΝΟ αν ο δικός σου λογαριασμός είναι ήδη σε demo
+// mode (ασφαλιστική δικλείδα — ΠΟΤΕ δεν εκθέτει live/πραγματικά στοιχεία).
+// Σκοπός: νέος tenant να μπορεί να δοκιμάσει όλη τη ροή πληρωμής χρησιμοποιώντας
+// τον ΔΙΚΟ ΣΟΥ demo λογαριασμό, πριν αποκτήσει τον δικό του.
+exports.getSharedDemoVivaCredentials = onCall(
+  { region: "us-central1", secrets: [VIVA_CLIENT_ID, VIVA_CLIENT_SECRET, VIVA_MERCHANT_ID, VIVA_API_KEY, VIVA_DEMO] },
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Χρειάζεται σύνδεση.");
+    const db = getFirestore();
+    const presDoc = await db.collection("presence").doc(request.auth.uid).get();
+    const pres = presDoc.data() || {};
+    const isSuperAdmin = request.auth.token.email === "techtacy@gmail.com";
+    if (!isSuperAdmin && pres.tenantOwner !== true) {
+      throw new HttpsError("permission-denied", "Μόνο για tenant-owners.");
+    }
+    if (!vivaIsDemo(VIVA_DEMO.value())) {
+      throw new HttpsError("failed-precondition",
+        "Ο κύριος λογαριασμός δεν είναι αυτή τη στιγμή σε demo mode — δεν μοιράζονται στοιχεία.");
+    }
+    return {
+      ok: true,
+      vivaClientId:     VIVA_CLIENT_ID.value(),
+      vivaClientSecret: VIVA_CLIENT_SECRET.value(),
+      vivaMerchantId:   VIVA_MERCHANT_ID.value(),
+      vivaApiKey:       VIVA_API_KEY.value(),
+    };
+  }
+);
+
+// ── updateDefaultVivaCredentials: ενημέρωση των ΔΙΚΩΝ ΣΟΥ (Konstantinos)
+// Viva credentials — ΜΟΝΟ super-admin. ⚠️ ΠΡΟΣΟΧΗ: Επειδή αυτά τα secrets
+// είναι δεμένα στο deployment (defineSecret), η αλλαγή τιμής ΔΕΝ ισχύει
+// αυτόματα — χρειάζεται `firebase deploy --only functions` μετά.
+exports.updateDefaultVivaCredentials = onCall(
+  { region: "us-central1" },
+  async (request) => {
+    if (!request.auth || request.auth.token.email !== "techtacy@gmail.com") {
+      throw new HttpsError("permission-denied", "Μόνο ο super-admin.");
+    }
+    const d = request.data || {};
+    const fieldMap = {
+      vivaClientId:     "VIVA_CLIENT_ID",
+      vivaClientSecret: "VIVA_CLIENT_SECRET",
+      vivaMerchantId:   "VIVA_MERCHANT_ID",
+      vivaApiKey:       "VIVA_API_KEY",
+    };
+    for (const [key, secretId] of Object.entries(fieldMap)) {
+      const value = s(d[key]);
+      if (value) {
+        try {
+          await upsertSecret(secretId, value);
+        } catch (e) {
+          throw new HttpsError("internal", "Αποτυχία αποθήκευσης " + secretId + ": " + e.message);
+        }
+      }
+    }
+    if (d.vivaDemo != null) {
+      try {
+        await upsertSecret("VIVA_DEMO", d.vivaDemo ? "true" : "false");
+      } catch (e) {
+        throw new HttpsError("internal", "Αποτυχία αποθήκευσης VIVA_DEMO: " + e.message);
+      }
+    }
+    return {
+      ok: true,
+      needsRedeploy: true,
+      message: "Αποθηκεύτηκε. ΧΡΕΙΑΖΕΤΑΙ 'firebase deploy --only functions' για να ισχύσει.",
+    };
   }
 );

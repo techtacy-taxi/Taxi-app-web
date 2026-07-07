@@ -26,6 +26,7 @@ import '../calendar/calendar_page.dart';
 import '../voice/groups_admin.dart';
 import '../masters/masters_admin_page.dart';
 import '../pricing/pricing_zones_page.dart';
+import '../viva_settings_page.dart';
 import '../tenants/tenant_admin_page.dart';
 import 'auth_gateway_web.dart';
 import 'ics_upload_web.dart';
@@ -131,6 +132,15 @@ class _AdminShellState extends State<AdminShell> {
         label: 'Ζώνες & Τιμές',
         icon: Icons.price_change_rounded,
         page: PricingZonesPage(),
+      ));
+    }
+
+    // Ρυθμίσεις Viva (credentials — αυτοεξυπηρέτηση) — master ή tenantOwner.
+    if (s.isMaster || s.isTenantOwner) {
+      sections.add(const _Section(
+        label: 'Ρυθμίσεις Viva',
+        icon: Icons.payment_rounded,
+        page: VivaSettingsPage(),
       ));
     }
 

@@ -43,6 +43,7 @@ import '../masters/masters_admin_page.dart';
 import '../calendar/calendar_page.dart';
 import '../pricing/pricing_zones_page.dart';
 import '../tenants/tenant_admin_page.dart';
+import '../viva_settings_page.dart';
 
 class HomeMapPage extends StatefulWidget {
   const HomeMapPage({super.key});
@@ -795,6 +796,12 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
           builder: (_) => const TenantAdminPage(),
         ));
         return;
+      case MenuAction.vivaSettings:
+        if (!mounted) return;
+        Navigator.of(context).push(MaterialPageRoute(
+          builder: (_) => const VivaSettingsPage(),
+        ));
+        return;
       case MenuAction.calendar:
         if (!mounted) return;
         Navigator.of(context).push(MaterialPageRoute(
@@ -1145,6 +1152,29 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
                                       fontWeight: FontWeight.bold,
                                       color: Colors.teal)),
                               Text('Τιμοκατάλογος δημόσιας φόρμας',
+                                  style: TextStyle(
+                                      fontSize: 10, color: Colors.grey)),
+                            ],
+                          ),
+                        ]),
+                      ),
+                    if (_isMaster || _isTenantOwner) const PopupMenuDivider(),
+                    // Ρυθμίσεις Viva (credentials — αυτοεξυπηρέτηση) — master ή tenantOwner.
+                    if (_isMaster || _isTenantOwner)
+                      PopupMenuItem(
+                        value: MenuAction.vivaSettings,
+                        child: Row(children: [
+                          const Icon(Icons.payment_rounded, color: Colors.teal),
+                          const SizedBox(width: 12),
+                          const Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text('Ρυθμίσεις Viva',
+                                  style: TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.teal)),
+                              Text('Στοιχεία πληρωμών',
                                   style: TextStyle(
                                       fontSize: 10, color: Colors.grey)),
                             ],
