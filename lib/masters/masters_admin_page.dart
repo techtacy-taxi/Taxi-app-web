@@ -772,7 +772,7 @@ class _AdminDriverCard extends StatelessWidget {
                   Row(children: [
                     Icon(Icons.storefront_rounded, size: 16, color: Colors.teal[700]),
                     const SizedBox(width: 6),
-                    const Text('Multi-tenant',
+                    const Text('Online Φόρμα',
                         style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
                   ]),
                   const SizedBox(height: 8),
@@ -794,7 +794,7 @@ class _AdminDriverCard extends StatelessWidget {
                         activeThumbColor: Colors.teal,
                         secondary: Icon(Icons.price_change_rounded,
                             color: selTenantOwner ? Colors.teal : Colors.grey),
-                        title: const Text('Tenant Owner',
+                        title: const Text('Ιδιοκτήτης Online Φόρμας',
                             style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
                         subtitle: const Text(
                             'Βλέπει επιπλέον «Ζώνες & Τιμές» — μόνο τις δικές του',
@@ -810,9 +810,9 @@ class _AdminDriverCard extends StatelessWidget {
                             style: const TextStyle(fontSize: 13),
                             decoration: const InputDecoration(
                               isDense: true,
-                              labelText: 'Tenant ID',
+                              labelText: 'EformID',
                               labelStyle: TextStyle(fontSize: 12),
-                              helperText: 'π.χ. rhodes_taxi — από το Create Tenant',
+                              helperText: 'π.χ. rhodes_taxi — από τη «Νέα Online Φόρμα»',
                               helperStyle: TextStyle(fontSize: 10),
                               prefixIcon: Icon(Icons.badge_rounded, size: 18, color: Colors.teal),
                               border: OutlineInputBorder(),
