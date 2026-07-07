@@ -2,14 +2,14 @@ name: taxi_athens_driver
 description: "Taxi Athens Driver"
 publish_to: 'none'
 
-version: 1.0.0+202607071304
+version: 1.0.0+202607071323
 
 environment:
   sdk: ^3.11.5
 
 dependencies:
   google_sign_in: ^7.2.0
-  font_awesome_flutter: ^10.7.0
+  font_awesome_flutter: ^11.0.0
   flutter_foreground_task: ^9.2.2
   flutter:
     sdk: flutter
