@@ -20,7 +20,7 @@ import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 
 // ── Χρώμα «φυστικί» — ίδιο με το φόντο του μενού (βλ. εικόνα μενού) ────────
 const Color kPistachio       = Color(0xFFF3ECD9); // φόντο πάνω μπάρα προειδοποίησης
-const Color kPistachioAccent = Color(0xFFD9C89A); // κουμπί Αποθήκευση + διακόπτης
+const Color kPistachioAccent = Colors.teal; // κουμπί Αποθήκευση + διακόπτης — ίδιο με την πάνω μπάρα
 const Color kPistachioText   = Color(0xFF6B5A2E); // σκούρο κείμενο πάνω σε φυστικί
 
 class VivaSettingsPage extends StatefulWidget {
@@ -276,20 +276,23 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
+        backgroundColor: Colors.teal,
+        foregroundColor: Colors.white,
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
             Row(mainAxisSize: MainAxisSize.min, children: [
               // Λογότυπο Viva — assets/viva_logo.png (πρόσθεσέ το στο pubspec.yaml)
-              Image.asset('assets/viva_logo.png', width: 18, height: 18),
-              const SizedBox(width: 6),
-              const Text('Ρυθμίσεις Viva', style: TextStyle(fontSize: 17)),
+              Image.asset('assets/viva_logo.png', width: 40, height: 40),
+              const SizedBox(width: 10),
+              const Text('Ρυθμίσεις Viva',
+                  style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold, color: Colors.white)),
             ]),
             Text(_tenantName,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontSize: 11, fontWeight: FontWeight.normal)),
+                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.normal, color: Colors.white70)),
           ],
         ),
       ),
@@ -441,14 +444,14 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
                       child: FilledButton(
                         style: FilledButton.styleFrom(
                           backgroundColor: kPistachioAccent,
-                          foregroundColor: kPistachioText,
+                          foregroundColor: Colors.white,
                         ),
                         onPressed: _saving ? null : _save,
                         child: _saving
                             ? const SizedBox(
                                 width: 20, height: 20,
                                 child: CircularProgressIndicator(
-                                    strokeWidth: 2, color: kPistachioText))
+                                    strokeWidth: 2, color: Colors.white))
                             : const Text('Αποθήκευση'),
                       ),
                     ),
@@ -464,65 +467,72 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
   Widget _buildSetupInstructions() {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: Colors.grey.shade50,
         borderRadius: BorderRadius.circular(10),
         border: Border.all(color: Colors.grey.shade300),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(children: [
-            Icon(Icons.info_outline_rounded, size: 16, color: Colors.grey[700]),
-            const SizedBox(width: 6),
-            const Text('Πώς ρυθμίζεις το Webhook & το Source Code',
-                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12.5)),
-          ]),
-          const SizedBox(height: 10),
-
-          const Text('1. Webhook (Ειδοποίηση πληρωμής)',
-              style: TextStyle(fontWeight: FontWeight.w600, fontSize: 12)),
-          const SizedBox(height: 4),
-          const Text(
-            'Στο Viva dashboard: πάνω μενού → «Ειδοποίηση πληρωμής» → '
-            'πρόσθεσε νέο webhook, Event: «Νέα Πληρωμή» (Transaction Payment '
-            'Created), και βάλε ακριβώς αυτό το URL:',
-            style: TextStyle(fontSize: 12),
-          ),
-          const SizedBox(height: 6),
-          _CopyableCode(text: _webhookUrl),
-
-          const SizedBox(height: 12),
-          const Text('2. Source Code (Κωδικός)',
-              style: TextStyle(fontWeight: FontWeight.w600, fontSize: 12)),
-          const SizedBox(height: 4),
-          const Text(
-            'Πλαϊνό μενού → «Λογαριασμοί» → βρες την ενότητα «Websites / '
-            'Apps» → πάτα «Προσθήκη Website/App» → δώσε ένα όνομα (π.χ. το '
-            'όνομα της επιχείρησης). Μόλις δημιουργηθεί, εμφανίζεται ένας '
-            '4ψήφιος «Κωδικός» στη λίστα — αυτό είναι το Source Code που '
-            'βάζεις παραπάνω.',
-            style: TextStyle(fontSize: 12),
-          ),
-
-          if (_isDefault) ...[
-            const SizedBox(height: 10),
-            Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: Colors.amber.shade50,
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: const Text(
-                'Αν το κάνεις εσύ για λογαριασμό κάποιου tenant, ακολούθησε τα '
-                'ίδια 2 βήματα μέσα στο δικό ΤΟΥ Viva dashboard (όχι στο δικό '
-                'σου) — το webhook URL του θα έχει το δικό του tenantId.',
-                style: TextStyle(fontSize: 11.5),
-              ),
+      child: Theme(
+        // Αφαιρούμε τις προεπιλεγμένες γραμμές διαχωρισμού του ExpansionTile
+        // ώστε να ταιριάζει οπτικά με το υπόλοιπο κουτί.
+        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+        child: ExpansionTile(
+          tilePadding: const EdgeInsets.symmetric(horizontal: 12),
+          childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+          leading: Icon(Icons.info_outline_rounded, size: 16, color: Colors.grey[700]),
+          title: const Text('Πώς ρυθμίζεις το Webhook & το Source Code',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12.5)),
+          children: [
+            const Align(
+              alignment: Alignment.centerLeft,
+              child: Text('1. Webhook (Ειδοποίηση πληρωμής)',
+                  style: TextStyle(fontWeight: FontWeight.w600, fontSize: 12)),
             ),
+            const SizedBox(height: 4),
+            const Text(
+              'Στο Viva dashboard: πάνω μενού → «Ειδοποίηση πληρωμής» → '
+              'πρόσθεσε νέο webhook, Event: «Νέα Πληρωμή» (Transaction Payment '
+              'Created), και βάλε ακριβώς αυτό το URL:',
+              style: TextStyle(fontSize: 12),
+            ),
+            const SizedBox(height: 6),
+            _CopyableCode(text: _webhookUrl),
+
+            const SizedBox(height: 12),
+            const Align(
+              alignment: Alignment.centerLeft,
+              child: Text('2. Source Code (Κωδικός)',
+                  style: TextStyle(fontWeight: FontWeight.w600, fontSize: 12)),
+            ),
+            const SizedBox(height: 4),
+            const Text(
+              'Πλαϊνό μενού → «Λογαριασμοί» → βρες την ενότητα «Websites / '
+              'Apps» → πάτα «Προσθήκη Website/App» → δώσε ένα όνομα (π.χ. το '
+              'όνομα της επιχείρησης). Μόλις δημιουργηθεί, εμφανίζεται ένας '
+              '4ψήφιος «Κωδικός» στη λίστα — αυτό είναι το Source Code που '
+              'βάζεις παραπάνω.',
+              style: TextStyle(fontSize: 12),
+            ),
+
+            if (_isDefault) ...[
+              const SizedBox(height: 10),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.amber.shade50,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Text(
+                  'Αν το κάνεις εσύ για λογαριασμό κάποιου tenant, ακολούθησε τα '
+                  'ίδια 2 βήματα μέσα στο δικό ΤΟΥ Viva dashboard (όχι στο δικό '
+                  'σου) — το webhook URL του θα έχει το δικό του tenantId.',
+                  style: TextStyle(fontSize: 11.5),
+                ),
+              ),
+            ],
           ],
-        ],
+        ),
       ),
     );
   }

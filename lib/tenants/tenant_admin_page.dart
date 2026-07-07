@@ -253,7 +253,11 @@ class _TenantAdminPageState extends State<TenantAdminPage> {
     // ── Ασφάλεια: κανείς άλλος δεν βλέπει τίποτα από αυτή τη σελίδα ──
     if (!_isSuperAdmin) {
       return Scaffold(
-        appBar: AppBar(title: const Text('Πελάτες (Tenants)')),
+        appBar: AppBar(
+          backgroundColor: Colors.indigo,
+          foregroundColor: Colors.white,
+          title: const Text('Online Φόρμα'),
+        ),
         body: const Center(
           child: Padding(
             padding: EdgeInsets.all(24),
@@ -267,7 +271,9 @@ class _TenantAdminPageState extends State<TenantAdminPage> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Πελάτες (Tenants)'),
+        backgroundColor: Colors.indigo,
+        foregroundColor: Colors.white,
+        title: const Text('Online Φόρμα'),
         actions: [
           IconButton(
             icon: _backfilling
@@ -502,9 +508,11 @@ class _TenantAdminPageState extends State<TenantAdminPage> {
       ),
       floatingActionButton: _isSuperAdmin
           ? FloatingActionButton.extended(
+              backgroundColor: Colors.indigo,
+              foregroundColor: Colors.white,
               onPressed: _openCreateDialog,
               icon: const Icon(Icons.add_business_rounded),
-              label: const Text('Νέος Πελάτης'),
+              label: const Text('Νέα Online Φόρμα'),
             )
           : null,
     );
@@ -607,7 +615,7 @@ class _CreateTenantDialogState extends State<_CreateTenantDialog> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Text('Νέος Πελάτης (Tenant)',
+                  const Text('Νέα Online Φόρμα',
                       style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                   const SizedBox(height: 4),
                   Text(
