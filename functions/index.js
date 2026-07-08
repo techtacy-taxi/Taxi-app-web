@@ -3268,7 +3268,18 @@ exports.createVivaOrder = onRequest(
           },
           paymentTimeout: 1800, // 30 λεπτά — μετά λήγει το order (καμία χρέωση)
           merchantTrns: pendingRef.id, // ← ΤΟ ΚΛΕΙΔΙ που συνδέει Viva order ↔ pending_bookings doc
-          sourceCode: tenantCfg ? (tenantCfg.vivaSourceCode || "Default") : "1325",
+          // ── Το Source Code καθορίζει ΠΟΙΟ success/failure URL θα
+          // χρησιμοποιήσει η Viva μετά την πληρωμή (ρυθμίζεται ΜΕΣΑ στο
+          // Viva dashboard, ανά Source — βλ. σχόλιο πιο κάτω). Χρειάζονται
+          // ΔΥΟ ξεχωριστά Sources στο Viva dashboard, ένα με success/failure
+          // URL → .../index.html (Αγγλικά) και ένα → .../el/booking2.html
+          // (Ελληνικά) — αλλιώς ο πελάτης της αγγλικής φόρμας θα γυρνάει σε
+          // ελληνική σελίδα (ή αντίστροφα) μετά την πληρωμή.
+          sourceCode: tenantCfg
+            ? (lang === "el"
+                ? (tenantCfg.vivaSourceCode || "Default")
+                : (tenantCfg.vivaSourceCodeEn || tenantCfg.vivaSourceCode || "Default"))
+            : "1325",
         }),
       });
       if (!orderResp.ok) {
@@ -3637,6 +3648,7 @@ exports.createTenant = onCall(
       masterUid,
       active: true, // ⚠️ αν γίνει false, ο tenant ΔΕΝ μπορεί να δεχτεί νέες κρατήσεις/πληρωμές
       vivaSourceCode:   s(d.vivaSourceCode)   || null, // ΔΕΝ είναι μυστικό, μπορεί να μείνει εδώ
+      vivaSourceCodeEn: s(d.vivaSourceCodeEn) || null, // δεύτερο Source — success/failure URL στα Αγγλικά
       vivaDemo:         d.vivaDemo !== false, // default true (ασφαλές, demo)
       hasVivaCredentials: !!(s(d.vivaClientId) && s(d.vivaClientSecret)),
       createdAt: FieldValue.serverTimestamp(),
@@ -4121,6 +4133,7 @@ exports.updateTenantVivaCredentials = onCall(
 
     const updates = {};
     if (d.vivaSourceCode != null) updates.vivaSourceCode = s(d.vivaSourceCode) || null;
+    if (d.vivaSourceCodeEn != null) updates.vivaSourceCodeEn = s(d.vivaSourceCodeEn) || null;
     if (d.vivaDemo != null) updates.vivaDemo = d.vivaDemo !== false;
     if (anySet) updates.hasVivaCredentials = true;
     if (Object.keys(updates).length) {
@@ -4330,6 +4343,7 @@ exports.getTenantVivaCredentialsForOwner = onCall(
       vivaMerchantIdMasked:   mask(creds.merchantId),
       vivaApiKeyMasked:       mask(creds.apiKey),
       vivaSourceCode:         t.vivaSourceCode || "",
+      vivaSourceCodeEn:       t.vivaSourceCodeEn || "",
       vivaDemo:               t.vivaDemo !== false,
       hasVivaCredentials:     t.hasVivaCredentials === true,
     };

@@ -53,6 +53,7 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
   final _merchantIdCtrl   = TextEditingController();
   final _apiKeyCtrl       = TextEditingController();
   final _sourceCodeCtrl   = TextEditingController();
+  final _sourceCodeEnCtrl = TextEditingController();
 
   // ── Στοιχεία επιχείρησης (μόνο για tenants, όχι για το δικό σου default)
   final _businessNameCtrl   = TextEditingController();
@@ -110,6 +111,7 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
     _merchantIdCtrl.clear();
     _apiKeyCtrl.clear();
     _sourceCodeCtrl.clear();
+    _sourceCodeEnCtrl.clear();
     _businessNameCtrl.clear();
     _contactPhoneCtrl.clear();
     _contactEmailCtrl.clear();
@@ -157,6 +159,7 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
     _merchantIdCtrl.dispose();
     _apiKeyCtrl.dispose();
     _sourceCodeCtrl.dispose();
+    _sourceCodeEnCtrl.dispose();
     _businessNameCtrl.dispose();
     _contactPhoneCtrl.dispose();
     _contactEmailCtrl.dispose();
@@ -184,6 +187,7 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
           _maskedMerchantId   = data['vivaMerchantIdMasked'] as String?;
           _maskedApiKey       = data['vivaApiKeyMasked'] as String?;
           _sourceCodeCtrl.text = data['vivaSourceCode'] as String? ?? '';
+          _sourceCodeEnCtrl.text = data['vivaSourceCodeEn'] as String? ?? '';
           _demo = data['vivaDemo'] != false;
           _hasCredentials = data['hasVivaCredentials'] == true;
         });
@@ -333,6 +337,7 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
           if (_merchantIdCtrl.text.trim().isNotEmpty) 'vivaMerchantId': _merchantIdCtrl.text.trim(),
           if (_apiKeyCtrl.text.trim().isNotEmpty) 'vivaApiKey': _apiKeyCtrl.text.trim(),
           'vivaSourceCode': _sourceCodeCtrl.text.trim(),
+          'vivaSourceCodeEn': _sourceCodeEnCtrl.text.trim(),
           'vivaDemo': _demo,
         });
         // Στοιχεία επιχείρησης — τηλέφωνο/email/λογότυπο/WhatsApp. Αυτά ΔΕΝ
@@ -600,7 +605,20 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
           TextField(
             controller: _sourceCodeCtrl,
             decoration: const InputDecoration(
-                labelText: 'Viva Source Code (4ψήφιο)',
+                labelText: 'Viva Source Code — Ελληνικά (4ψήφιο)',
+                helperText: 'Το Source στο Viva dashboard πρέπει να έχει Success/Failure URL '
+                    'προς τη ΔΙΚΙΑ ΣΟΥ ελληνική σελίδα (π.χ. el/booking2.html)',
+                border: OutlineInputBorder()),
+          ),
+          const SizedBox(height: 10),
+          TextField(
+            controller: _sourceCodeEnCtrl,
+            decoration: const InputDecoration(
+                labelText: 'Viva Source Code — Αγγλικά (4ψήφιο, προαιρετικό)',
+                helperText: 'Χρειάζεται ΔΕΥΤΕΡΟ, ξεχωριστό Source στο Viva dashboard, με '
+                    'Success/Failure URL προς την αγγλική σελίδα (index.html) — αλλιώς ο '
+                    'πελάτης της αγγλικής φόρμας γυρνάει σε ελληνική σελίδα μετά την πληρωμή. '
+                    'Αν το αφήσεις κενό, χρησιμοποιείται το ελληνικό Source και για τα δύο.',
                 border: OutlineInputBorder()),
           ),
           const SizedBox(height: 16),
