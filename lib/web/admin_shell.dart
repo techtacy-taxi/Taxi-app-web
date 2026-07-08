@@ -17,6 +17,9 @@
 //   Εισαγωγή   → ICS upload
 //   Διαχείριση → MastersAdminPage (μόνο master)
 
+import 'dart:async';
+
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
@@ -52,10 +55,82 @@ class AdminShell extends StatefulWidget {
 
 class _AdminShellState extends State<AdminShell> {
   int _index = 0;
-  late final List<_Section> _sections = _buildSections();
+  late AdminSession _session = widget.session;
+  late List<_Section> _sections = _buildSections();
+  StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _presenceSub;
+
+  @override
+  void initState() {
+    super.initState();
+    // ── Ζωντανή παρακολούθηση του δικού μας presence — ΑΚΑΡΙΑΙΑ αντίδραση
+    // αν ο master αλλάξει δικαιώματα ΕΝΩ είμαστε ήδη μέσα στο web panel: το
+    // μενού ανανεώνεται αμέσως (νέες ενότητες εμφανίζονται/εξαφανίζονται),
+    // και αν χαθεί εντελώς η πρόσβαση, μας βγάζει έξω από τη σύνδεση.
+    _presenceSub = FirebaseFirestore.instance
+        .collection('presence')
+        .doc(_session.uid)
+        .snapshots()
+        .listen((doc) {
+      if (!mounted) return;
+      final data = doc.data();
+      if (data == null) return;
+
+      final isMaster       = data['master']       == true;
+      final isAdmin        = data['admin']        == true;
+      final isTenantOwner  = data['tenantOwner']  == true;
+      final isHomeOwner    = data['homeOwner']    == true;
+      final isApproved     = data['isApproved']   == true;
+      final webEnabled     = data['webEnabled']   == true;
+
+      // ── Πλήρης απώλεια πρόσβασης — ίδιοι κανόνες με την πύλη σύνδεσης
+      // (auth_gateway_web). Αν παύει να πληρούνται, βγαίνει αμέσως έξω.
+      final stillAllowed = isMaster ||
+          ((isAdmin || isHomeOwner) && isApproved &&
+              (isTenantOwner || webEnabled));
+      if (!stillAllowed) {
+        _forceSignOut();
+        return;
+      }
+
+      setState(() {
+        _session = AdminSession(
+          uid:             _session.uid,
+          displayName:     _session.displayName,
+          lastName:        _session.lastName,
+          isMaster:        isMaster,
+          isAdmin:         isAdmin,
+          isTenantOwner:   isTenantOwner,
+          isHomeOwner:     isHomeOwner,
+          ownerOfClientId:   data['ownerOfClientId'] as String?,
+          ownerOfClientName: data['ownerOfClientName'] as String?,
+          calendarEnabled: data['calendarEnabled'] == true,
+          managedGroupIds:
+              List<String>.from(data['managedGroupIds'] ?? const []),
+        );
+        _sections = _buildSections();
+        // Αν η ενότητα που έβλεπε μόλις εξαφανίστηκε (π.χ. έκλεισε το
+        // Ημερολόγιο ενώ ήταν μέσα), γύρνα τον στην πρώτη διαθέσιμη.
+        if (_index >= _sections.length) _index = 0;
+      });
+    });
+  }
+
+  Future<void> _forceSignOut() async {
+    await FirebaseAuth.instance.signOut();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+      content: Text('Η πρόσβασή σου αφαιρέθηκε από τον master.'),
+      backgroundColor: Colors.red,
+      duration: Duration(seconds: 4),
+    ));
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const WebAuthGateway()),
+      (_) => false,
+    );
+  }
 
   List<_Section> _buildSections() {
-    final s = widget.session;
+    final s = _session;
     final sections = <_Section>[
       _Section(
         label: 'Δουλειές',
@@ -158,6 +233,12 @@ class _AdminShellState extends State<AdminShell> {
     return sections;
   }
 
+  @override
+  void dispose() {
+    _presenceSub?.cancel();
+    super.dispose();
+  }
+
   Future<void> _signOut() async {
     await FirebaseAuth.instance.signOut();
     if (!mounted) return;
@@ -193,7 +274,7 @@ class _AdminShellState extends State<AdminShell> {
             sections: _sections,
             index: _index,
             onSelect: (i) => setState(() => _index = i),
-            session: widget.session,
+            session: _session,
             onSignOut: _signOut,
           ),
           const VerticalDivider(width: 1),
@@ -226,7 +307,7 @@ class _AdminShellState extends State<AdminShell> {
           sections: _sections,
           index: _index,
           onSelect: _select,
-          session: widget.session,
+          session: _session,
           onSignOut: _signOut,
         ),
       ),

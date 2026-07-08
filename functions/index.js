@@ -2123,17 +2123,43 @@ function isNightWindow(naiveDate) {
   return mins >= 23 * 60 + 30 || mins < 5 * 60 + 30;
 }
 
-// ── Μπλάκαουτ: μόνο το ΑΜΕΣΩΣ επόμενο παράθυρο [startH:startM–endH:endM] από
-// «τώρα» — προεπιλογή 22:30–08:00, πλέον ρυθμιζόμενο ανά tenant.
-function nearestBlackoutWindow(simNaive, startH, startM, endH, endM) {
-  const mins = simNaive.getUTCHours() * 60 + simNaive.getUTCMinutes();
-  const start = new Date(simNaive);
-  start.setUTCHours(startH, startM, 0, 0);
-  if (mins < endH * 60 + endM) start.setUTCDate(start.getUTCDate() - 1);
-  const end = new Date(start);
-  end.setUTCDate(end.getUTCDate() + 1);
-  end.setUTCHours(endH, endM, 0, 0);
-  return { start, end };
+// ── Μπλάκαουτ ξημερωμάτων — ΣΩΣΤΗ λογική:
+// Το μπλοκάρισμα έχει νόημα ΜΟΝΟ όταν το ΤΩΡΑ είναι ήδη μέσα στο παράθυρο
+// ξημερώματος (δηλ. ο πελάτης/οδηγός είναι ήδη σε ώρα ύπνου) ΚΑΙ η ζητούμενη
+// ώρα πέφτει πριν τελειώσει αυτή η ΤΡΕΧΟΥΣΑ βάρδια ξημερώματος — δεν υπάρχει
+// αρκετός χρόνος να το δει/προετοιμαστεί.
+// Αν το ΤΩΡΑ είναι ΕΚΤΟΣ παραθύρου (δηλ. είναι μέρα), ΠΑΝΤΑ επιτρέπεται —
+// υπάρχει όλη η μέρα μπροστά για προετοιμασία, ακόμα κι αν η διαδρομή πέφτει
+// μέσα στο επερχόμενο βραδινό παράθυρο.
+// Αν το ΤΩΡΑ είναι ΜΕΣΑ στο παράθυρο, αλλά η ζητούμενη ώρα είναι για την
+// ΕΠΟΜΕΝΗ βάρδια ξημερώματος (π.χ. αύριο βράδυ) — πάλι επιτρέπεται, γιατί
+// θα έχει ξυπνήσει και θα προλάβει.
+//
+// Παραδείγματα (παράθυρο 22:30–08:00):
+//   τώρα 21:00, ζητά 03:00 (ίδια νύχτα)     → ΕΠΙΤΡΕΠΕΤΑΙ (τώρα εκτός παραθύρου)
+//   τώρα 22:30, ζητά 03:00 (ίδια νύχτα)     → ΜΠΛΟΚΑΡΕΤΑΙ (τώρα μέσα, πολύ κοντά)
+//   τώρα 23:30, ζητά αύριο 22:30            → ΕΠΙΤΡΕΠΕΤΑΙ (επόμενη βάρδια, θα ξυπνήσει)
+//   τώρα 06:00, ζητά σήμερα 22:30           → ΕΠΙΤΡΕΠΕΤΑΙ (επόμενη βάρδια, θα ξυπνήσει)
+function isBlackedOut(simNaive, scheduledNaive, startH, startM, endH, endM) {
+  const nowMins = simNaive.getUTCHours() * 60 + simNaive.getUTCMinutes();
+  const startMins = startH * 60 + startM;
+  const endMins = endH * 60 + endM;
+
+  // Το παράθυρο διασχίζει τα μεσάνυχτα (π.χ. 22:30–08:00) — αυτή είναι η
+  // μόνη περίπτωση που υποστηρίζεται (ο διακόπτης είναι για ξημερώματα).
+  const nowInsideWindow = nowMins >= startMins || nowMins < endMins;
+  if (!nowInsideWindow) return false; // είναι μέρα — πάντα επιτρέπεται
+
+  // Βρες πότε ΤΕΛΕΙΩΝΕΙ η βάρδια ξημερώματος που είναι ΕΝΕΡΓΗ τώρα.
+  const occurrenceEnd = new Date(simNaive);
+  occurrenceEnd.setUTCHours(endH, endM, 0, 0);
+  if (nowMins >= startMins) {
+    // Είμαστε στο βραδινό κομμάτι (π.χ. 22:30–23:59) → το τέλος είναι ΑΥΡΙΟ.
+    occurrenceEnd.setUTCDate(occurrenceEnd.getUTCDate() + 1);
+  }
+  // Αν nowMins < endMins (π.χ. 03:00), το occurrenceEnd μένει ΣΗΜΕΡΑ endH:endM.
+
+  return scheduledNaive < occurrenceEnd;
 }
 
 // ── Λόγοι μπλοκαρίσματος υποβολής (μπλάκαουτ / προθεσμία / μεγάλη παραγγελία)
@@ -2143,12 +2169,12 @@ function computeGate(simNaive, scheduledNaive, persons, luggage, cfg) {
   if (!scheduledNaive) return reasons;
   const c = cfg || {};
   if (c.blackoutEnabled !== false) {
-    const bw = nearestBlackoutWindow(
-      simNaive,
+    const blocked = isBlackedOut(
+      simNaive, scheduledNaive,
       c.blackoutStartHour ?? 22, c.blackoutStartMinute ?? 30,
       c.blackoutEndHour ?? 8, c.blackoutEndMinute ?? 0,
     );
-    if (scheduledNaive >= bw.start && scheduledNaive < bw.end) reasons.push("blackout");
+    if (blocked) reasons.push("blackout");
   }
   const leadMinutes = (scheduledNaive - simNaive) / 60000;
   const minLeadMinutes = c.leadTimeMinutes ?? 120;

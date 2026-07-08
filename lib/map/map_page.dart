@@ -21,6 +21,7 @@ import '../owner_alerts.dart';
 import '../owner_home_page.dart';
 import '../public_booking_alert.dart';
 import '../permissions.dart';
+import '../access_guard.dart';
 import '../profile_form.dart';
 import '../voice/voice_inbox.dart';
 import '../voice/voice_models.dart';
@@ -781,13 +782,23 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
       case MenuAction.masters:
         if (!mounted) return;
         Navigator.of(context).push(MaterialPageRoute(
-          builder: (_) => MastersAdminPage(masterUid: _uid ?? ''),
+          builder: (_) => AccessGuard(
+            uid: _uid ?? '',
+            hasAccess: (d) => d['master'] == true,
+            deniedMessage: 'Η πρόσβαση στους Διαχειριστές αφαιρέθηκε.',
+            child: MastersAdminPage(masterUid: _uid ?? ''),
+          ),
         ));
         return;
       case MenuAction.pricingZones:
         if (!mounted) return;
         Navigator.of(context).push(MaterialPageRoute(
-          builder: (_) => const PricingZonesPage(),
+          builder: (_) => AccessGuard(
+            uid: _uid ?? '',
+            hasAccess: (d) => d['master'] == true || d['tenantOwner'] == true,
+            deniedMessage: 'Η πρόσβαση στις Ζώνες & Τιμές αφαιρέθηκε.',
+            child: const PricingZonesPage(),
+          ),
         ));
         return;
       case MenuAction.tenants:
@@ -799,16 +810,26 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
       case MenuAction.vivaSettings:
         if (!mounted) return;
         Navigator.of(context).push(MaterialPageRoute(
-          builder: (_) => const VivaSettingsPage(),
+          builder: (_) => AccessGuard(
+            uid: _uid ?? '',
+            hasAccess: (d) => d['master'] == true || d['tenantOwner'] == true,
+            deniedMessage: 'Η πρόσβαση στις Ρυθμίσεις Viva αφαιρέθηκε.',
+            child: const VivaSettingsPage(),
+          ),
         ));
         return;
       case MenuAction.calendar:
         if (!mounted) return;
         Navigator.of(context).push(MaterialPageRoute(
-          builder: (_) => CalendarPage(
-            adminUid:  _uid ?? '',
-            adminName: '$_displayName $_lastName'.trim(),
-            isMaster:  _isMaster,
+          builder: (_) => AccessGuard(
+            uid: _uid ?? '',
+            hasAccess: (d) => d['master'] == true || d['calendarEnabled'] == true,
+            deniedMessage: 'Η πρόσβαση στο Ημερολόγιο αφαιρέθηκε.',
+            child: CalendarPage(
+              adminUid:  _uid ?? '',
+              adminName: '$_displayName $_lastName'.trim(),
+              isMaster:  _isMaster,
+            ),
           ),
         ));
         return;

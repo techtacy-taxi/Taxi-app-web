@@ -1,6 +1,7 @@
 // lib/profile_form.dart
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import 'models.dart';
@@ -425,6 +426,39 @@ Future<void> showProfileForm({
               ),
             ),
             actions: [
+              TextButton.icon(
+                onPressed: saving
+                    ? null
+                    : () async {
+                        final confirmed = await showDialog<bool>(
+                          context: ctx,
+                          builder: (dctx) => AlertDialog(
+                            title: const Text('Αποσύνδεση'),
+                            content: const Text(
+                              'Θα αποσυνδεθείς από τον λογαριασμό Google — '
+                              'θα χρειαστεί να ξανακάνεις σύνδεση για να μπεις ξανά.',
+                            ),
+                            actions: [
+                              TextButton(
+                                onPressed: () => Navigator.of(dctx).pop(false),
+                                child: const Text('Άκυρο'),
+                              ),
+                              FilledButton(
+                                style: FilledButton.styleFrom(backgroundColor: Colors.red),
+                                onPressed: () => Navigator.of(dctx).pop(true),
+                                child: const Text('Αποσύνδεση'),
+                              ),
+                            ],
+                          ),
+                        );
+                        if (confirmed == true) {
+                          await FirebaseAuth.instance.signOut();
+                          if (ctx.mounted) Navigator.of(ctx).pop();
+                        }
+                      },
+                icon: const Icon(Icons.logout_rounded, color: Colors.red),
+                label: const Text('Αποσύνδεση', style: TextStyle(color: Colors.red)),
+              ),
               FilledButton(
                 onPressed: saving
                     ? null
