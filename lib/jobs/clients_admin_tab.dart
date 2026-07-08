@@ -40,12 +40,33 @@ class ClientsTab extends StatefulWidget {
 
 class _ClientsTabState extends State<ClientsTab> {
   String _query = '';
+  String? _tenantId;
+  bool _tenantLoaded = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadTenant();
+  }
+
+  Future<void> _loadTenant() async {
+    if (widget.isMaster) {
+      if (mounted) setState(() => _tenantLoaded = true);
+      return;
+    }
+    final tid = await JobService.myTenantId();
+    if (mounted) setState(() { _tenantId = tid; _tenantLoaded = true; });
+  }
 
   @override
   Widget build(BuildContext context) {
+    if (!_tenantLoaded) {
+      return const Center(child: CircularProgressIndicator());
+    }
     return StreamBuilder<List<Client>>(
       stream: JobService.clients(
-          createdBy: widget.isMaster ? null : widget.adminUid),
+          createdBy: widget.isMaster ? null : widget.adminUid,
+          tenantId:  widget.isMaster ? null : _tenantId),
       builder: (context, snap) {
         var clients = snap.data ?? [];
         final q = _query.trim().toLowerCase();

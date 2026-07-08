@@ -3,6 +3,7 @@
 import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'client_model.dart';
 import 'job_model.dart';
@@ -12,6 +13,34 @@ class JobService {
   static final _fs      = FirebaseFirestore.instance;
   static const _jobs    = 'jobs';
   static const _sources = 'sources';
+
+  // ── Multi-tenant: το tenantId του τρέχοντος χρήστη, από το presence του.
+  // Cached ώστε να μη γίνεται read σε κάθε write. Τα rules απαιτούν ΚΑΘΕ νέο
+  // doc (clients/sources/jobs) να έχει tenantId ίδιο με του δημιουργού
+  // (sameTenantAsNewDoc) — αλλιώς permission-denied. Ο super-admin/master
+  // στο "default" tenant γράφει 'default' (καμία αλλαγή στη δική σου ροή).
+  static String? _cachedTenantId;
+  static String? _cachedForUid;
+
+  static Future<String> myTenantId() async {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    // Αν άλλαξε ο χρήστης (logout/login άλλου), αγνόησε το παλιό cache.
+    if (_cachedTenantId != null && _cachedForUid == uid) return _cachedTenantId!;
+    try {
+      if (uid == null) return 'default';
+      final doc = await _fs.collection('presence').doc(uid).get();
+      _cachedTenantId = (doc.data()?['tenantId'] as String?) ?? 'default';
+      _cachedForUid = uid;
+    } catch (_) {
+      _cachedTenantId = 'default';
+      _cachedForUid = uid;
+    }
+    return _cachedTenantId!;
+  }
+
+  /// Καθαρίζει το cache — καλείται στο logout ώστε ο επόμενος χρήστης να μην
+  /// κληρονομήσει το tenantId του προηγούμενου.
+  static void clearTenantCache() { _cachedTenantId = null; _cachedForUid = null; }
 
   // ─── Jobs ─────────────────────────────────────────────────────────────────
 
@@ -957,11 +986,11 @@ class JobService {
   /// Stream πελατών.
   ///   • createdBy == null  → όλοι (master)
   ///   • createdBy != null  → μόνο οι δικοί του (admin)
-  static Stream<List<Client>> clients({String? createdBy}) {
-    return _fs
-        .collection(_clients)
-        .snapshots()
-        .map((snap) {
+  ///   • tenantId           → φιλτράρισμα στο query (multi-tenant, non-master)
+  static Stream<List<Client>> clients({String? createdBy, String? tenantId}) {
+    Query<Map<String, dynamic>> q = _fs.collection(_clients);
+    if (tenantId != null) q = q.where('tenantId', isEqualTo: tenantId);
+    return q.snapshots().map((snap) {
       var all = snap.docs.map((d) => Client.fromDoc(d)).toList();
       if (createdBy != null && createdBy.isNotEmpty) {
         all = all.where((c) => c.createdBy == createdBy).toList();
@@ -973,8 +1002,10 @@ class JobService {
   }
 
   /// Όλοι οι πελάτες που μπορεί να δει ο χρήστης — μία φορά (για auto-suggest).
-  static Future<List<Client>> clientsOnce({String? createdBy}) async {
-    final snap = await _fs.collection(_clients).get();
+  static Future<List<Client>> clientsOnce({String? createdBy, String? tenantId}) async {
+    Query<Map<String, dynamic>> q = _fs.collection(_clients);
+    if (tenantId != null) q = q.where('tenantId', isEqualTo: tenantId);
+    final snap = await q.get();
     var all = snap.docs.map((d) => Client.fromDoc(d)).toList();
     if (createdBy != null && createdBy.isNotEmpty) {
       all = all.where((c) => c.createdBy == createdBy).toList();
@@ -985,12 +1016,18 @@ class JobService {
   }
 
   static Future<String> createClient(Client client) async {
-    final ref = await _fs.collection(_clients).add(client.toMap());
+    final tid = await myTenantId();
+    final data = client.toMap()..['tenantId'] = tid;
+    final ref = await _fs.collection(_clients).add(data);
     return ref.id;
   }
 
   static Future<void> updateClient(String id, Client client) async {
-    await _fs.collection(_clients).doc(id).update(client.toMap());
+    // Το tenantId ΔΕΝ αλλάζει σε update — γράφουμε το ίδιο με του χρήστη ώστε
+    // να μη «σπάσει» παλιό doc που τυχόν δεν το είχε.
+    final tid = await myTenantId();
+    final data = client.toMap()..['tenantId'] = tid;
+    await _fs.collection(_clients).doc(id).update(data);
   }
 
   static Future<void> deleteClient(String id) async {
@@ -1003,12 +1040,23 @@ class JobService {
     required String adminUid,
   }) async {
     await ensureStandardRate();
-    final snap = await _fs.collection(_sources).orderBy('name').get();
-    var all = snap.docs.map((d) => JobSource.fromDoc(d)).toList();
-    if (!isMaster) {
-      all = all
-          .where((s) => s.createdBy == adminUid || s.isGlobal)
-          .toList();
+    // ── Multi-tenant: ο master (super-admin) βλέπει όλα τα sources. Ο
+    // tenant-owner/admin ΜΟΝΟ του δικού του tenant — ΠΡΕΠΕΙ να φιλτράρουμε
+    // στο ΙΔΙΟ το query, γιατί τα rules απορρίπτουν ΟΛΟΚΛΗΡΟ query που
+    // αγγίζει έστω ένα doc άλλου tenant (permission-denied).
+    List<JobSource> all;
+    if (isMaster) {
+      final snap = await _fs.collection(_sources).orderBy('name').get();
+      all = snap.docs.map((d) => JobSource.fromDoc(d)).toList();
+    } else {
+      final tid = await myTenantId();
+      final snap = await _fs
+          .collection(_sources)
+          .where('tenantId', isEqualTo: tid)
+          .get();
+      all = snap.docs.map((d) => JobSource.fromDoc(d)).toList()
+        ..sort((a, b) => a.name.compareTo(b.name));
+      all = all.where((s) => s.createdBy == adminUid || s.isGlobal).toList();
     }
     all.sort((a, b) {
       if (a.isGlobal && !b.isGlobal) return -1;
@@ -2358,11 +2406,15 @@ class JobService {
   }
 
   static Future<void> createSource(JobSource source) async {
-    await _fs.collection(_sources).add(source.toMap());
+    final tid = await myTenantId();
+    final data = source.toMap()..['tenantId'] = tid;
+    await _fs.collection(_sources).add(data);
   }
 
   static Future<void> updateSource(String id, JobSource source) async {
-    await _fs.collection(_sources).doc(id).update(source.toMap());
+    final tid = await myTenantId();
+    final data = source.toMap()..['tenantId'] = tid;
+    await _fs.collection(_sources).doc(id).update(data);
   }
 
   static Future<void> deleteSource(String id) async {

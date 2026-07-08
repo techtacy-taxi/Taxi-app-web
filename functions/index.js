@@ -2731,9 +2731,9 @@ exports.submitPublicBooking = onRequest(
         return res.status(400).json({ ok: false, error: "outside_booking_window", reasons: gateReasons });
       }
 
-      const masterUid = await findMasterUid();
+      const masterUid = await findMasterUid(tenantId);
       if (!masterUid) {
-        console.error("submitPublicBooking: δεν βρέθηκε master");
+        console.error("submitPublicBooking: δεν βρέθηκε master", { tenantId });
         return res.status(500).json({ ok: false, error: "no_master" });
       }
       const me = await getFirestore().collection("presence").doc(masterUid).get();
@@ -2766,6 +2766,7 @@ exports.submitPublicBooking = onRequest(
       const { Timestamp } = require("firebase-admin/firestore");
       const savedRef = await getFirestore().collection("saved_jobs").add({
         origin:         "public_form",   // ← ΣΗΜΑΔΙ «ΑΠΟ ΦΟΡΜΑ»
+        tenantId:       tenantId,        // ← ΚΡΙΣΙΜΟ: για tenant isolation (rules + φίλτρα)
         from:           from,
         to:             to,
         fromLat:        fromLat,
@@ -2817,9 +2818,11 @@ exports.submitPublicBooking = onRequest(
       sendBookingEmail(masterUid, masterEmail, summary, emailBody, ics)
         .catch((e) => console.error("booking email failed:", e));
 
-      // ── 3) FCM στον master (ξεχωριστό type/εικονίδιο) ──────────────────────
+      // ── 3) FCM στον master/tenant-owner ΤΟΥ ΣΥΓΚΕΚΡΙΜΕΝΟΥ tenant (ΟΧΙ πάντα
+      // στον super-admin) — ξεχωριστό type/εικονίδιο, πιάνεται από το
+      // public_booking_alert.dart (ownerUid==myUid φίλτρο, βλ. εκεί).
       try {
-        const tokens = await getMasterTokens();
+        const tokens = await getTokensForUid(masterUid);
         await sendDataOnly(tokens, {
           type:       "public_booking",          // ← το owner_alerts το ξεχωρίζει
           savedJobId: savedRef.id,
@@ -3509,7 +3512,10 @@ exports.vivaWebhook = onRequest(
         .catch((e) => console.error("viva booking email failed:", e));
 
       try {
-        const tokens = await getMasterTokens();
+        // ΚΡΙΣΙΜΟ: στέλνουμε ΜΟΝΟ στον master/tenant-owner ΤΟΥ tenant αυτής
+        // της κράτησης — ΟΧΙ σε όλους τους masters (θα χτυπούσε πάντα στον
+        // super-admin ακόμα κι όταν η κράτηση είναι άλλου tenant).
+        const tokens = await getTokensForUid(masterUid);
         await sendDataOnly(tokens, {
           type:       "public_booking",
           savedJobId: savedRef.id,

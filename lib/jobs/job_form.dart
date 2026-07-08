@@ -430,9 +430,11 @@ class _JobFormPageState extends State<JobFormPage> {
   }
 
   Future<void> _loadClients() async {
-    // Master βλέπει όλους, admin μόνο δικούς του
+    // Master βλέπει όλους, admin μόνο δικούς του (& μόνο του tenant του)
+    final tid = widget.isMaster ? null : await JobService.myTenantId();
     final list = await JobService.clientsOnce(
-        createdBy: widget.isMaster ? null : widget.adminUid);
+        createdBy: widget.isMaster ? null : widget.adminUid,
+        tenantId:  tid);
     if (!mounted) return;
     setState(() => _clients = list);
   }
