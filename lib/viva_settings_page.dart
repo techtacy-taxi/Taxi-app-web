@@ -55,6 +55,7 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
   final _sourceCodeCtrl   = TextEditingController();
 
   // ── Στοιχεία επιχείρησης (μόνο για tenants, όχι για το δικό σου default)
+  final _businessNameCtrl   = TextEditingController();
   final _contactPhoneCtrl   = TextEditingController();
   final _contactEmailCtrl   = TextEditingController();
   final _whatsappNumberCtrl = TextEditingController();
@@ -109,6 +110,7 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
     _merchantIdCtrl.clear();
     _apiKeyCtrl.clear();
     _sourceCodeCtrl.clear();
+    _businessNameCtrl.clear();
     _contactPhoneCtrl.clear();
     _contactEmailCtrl.clear();
     _whatsappNumberCtrl.clear();
@@ -155,6 +157,7 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
     _merchantIdCtrl.dispose();
     _apiKeyCtrl.dispose();
     _sourceCodeCtrl.dispose();
+    _businessNameCtrl.dispose();
     _contactPhoneCtrl.dispose();
     _contactEmailCtrl.dispose();
     _whatsappNumberCtrl.dispose();
@@ -195,6 +198,7 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
           final bi = jsonDecode(biRes.body) as Map<String, dynamic>;
           if (bi['ok'] == true) {
             setState(() {
+              _businessNameCtrl.text  = bi['businessName'] as String? ?? _tenantName;
               _contactPhoneCtrl.text   = bi['contactPhone'] as String? ?? '';
               _contactEmailCtrl.text   = bi['contactEmail'] as String? ?? '';
               _whatsappNumberCtrl.text = bi['whatsappNumber'] as String? ?? '';
@@ -337,6 +341,7 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
             FirebaseFunctions.instance.httpsCallable('updateTenantBusinessInfo');
         await biCallable.call({
           'tenantId': _tenantId,
+          'businessName': _businessNameCtrl.text.trim(),
           'contactPhone': _contactPhoneCtrl.text.trim(),
           'contactEmail': _contactEmailCtrl.text.trim(),
           'whatsappNumber': _whatsappNumberCtrl.text.trim(),
@@ -359,6 +364,9 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
           } catch (_) {
             // Μη κρίσιμο — δεν μπλοκάρει την υπόλοιπη αποθήκευση.
           }
+        }
+        if (_businessNameCtrl.text.trim().isNotEmpty) {
+          _tenantName = _businessNameCtrl.text.trim();
         }
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
@@ -563,19 +571,6 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
           ),
           const SizedBox(height: 8),
 
-          if (!_isDefault) ...[
-            OutlinedButton.icon(
-              onPressed: _fillingSharedDemo ? null : _useSharedDemo,
-              icon: _fillingSharedDemo
-                  ? const SizedBox(
-                      width: 16, height: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2))
-                  : const Icon(Icons.science_rounded),
-              label: const Text('Χρήση demo λογαριασμού (για δοκιμή)'),
-            ),
-            const SizedBox(height: 12),
-          ],
-
           TextField(
             controller: _clientIdCtrl,
             decoration: const InputDecoration(
@@ -613,15 +608,25 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
           SwitchListTile(
             contentPadding: EdgeInsets.zero,
             title: const Text('Demo λογαριασμός'),
-            subtitle: Text(_demo
-                ? 'Δοκιμαστικός — καμία πραγματική χρέωση'
-                : 'LIVE — πραγματικές χρεώσεις!'),
+            subtitle: Text(_fillingSharedDemo
+                ? 'Συμπλήρωση δοκιμαστικών στοιχείων...'
+                : (_demo
+                    ? 'Δοκιμαστικός — καμία πραγματική χρέωση'
+                    : 'LIVE — πραγματικές χρεώσεις!')),
             value: _demo,
             activeThumbColor: kPistachioAccent,
             onChanged: (v) async {
               if (v == _demo) return;
               final ok = await _confirmDemoLiveChange(v);
-              if (ok) setState(() => _demo = v);
+              if (!ok) return;
+              setState(() => _demo = v);
+              // Αν ενεργοποιείται DEMO και δεν υπάρχουν ήδη δικά του/αποθηκευμένα
+              // Viva credentials, γεμίζουμε αυτόματα τα κοινόχρηστα demo στοιχεία
+              // ώστε ο διακόπτης να «κάνει τη δουλειά» χωρίς ξεχωριστό κουμπί.
+              if (v == true && !_isDefault && !_hasCredentials &&
+                  _clientIdCtrl.text.trim().isEmpty) {
+                await _useSharedDemo();
+              }
             },
           ),
 
@@ -634,18 +639,23 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
               borderRadius: BorderRadius.circular(10),
               border: Border.all(color: Colors.blue.shade200),
             ),
-            child: const Column(
+            child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Κάρτες δοκιμής (demo)',
+                const Text('Κάρτες δοκιμής (demo)',
                     style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                SizedBox(height: 6),
-                Text('✅ Επιτυχής πληρωμή: 5239 2907 0000 0101',
-                    style: TextStyle(fontSize: 12.5)),
-                Text('❌ Αποτυχημένη πληρωμή: 5188 3400 0000 0060',
-                    style: TextStyle(fontSize: 12.5)),
-                SizedBox(height: 4),
-                Text('Λήξη: 01/31 · CVC: 123 (και για τις δύο)',
+                const SizedBox(height: 6),
+                _CopyableCardNumber(
+                  label: '✅ Επιτυχής πληρωμή:',
+                  number: '5239 2907 0000 0101',
+                ),
+                const SizedBox(height: 4),
+                _CopyableCardNumber(
+                  label: '❌ Αποτυχημένη πληρωμή:',
+                  number: '5188 3400 0000 0060',
+                ),
+                const SizedBox(height: 4),
+                const Text('Λήξη: 01/31 · CVC: 123 (και για τις δύο)',
                     style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600)),
               ],
             ),
@@ -749,6 +759,15 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
               style: TextStyle(fontSize: 11, color: Colors.grey[600]),
             ),
             const SizedBox(height: 12),
+            TextField(
+              controller: _businessNameCtrl,
+              decoration: const InputDecoration(
+                  isDense: true,
+                  labelText: 'Όνομα επιχείρησης',
+                  helperText: 'Εμφανίζεται στη φόρμα κράτησης (footer) — μπορείς να το διορθώσεις όποτε θες',
+                  border: OutlineInputBorder()),
+            ),
+            const SizedBox(height: 10),
             TextField(
               controller: _contactPhoneCtrl,
               keyboardType: TextInputType.phone,
@@ -1012,6 +1031,39 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
               style: const TextStyle(fontSize: 12.5, fontFamily: 'monospace')),
         ]),
       );
+}
+
+/// Γραμμή «ετικέτα + αριθμός κάρτας + κουμπί αντιγραφής» — για τις demo
+/// κάρτες δοκιμής (χωρίς τα κενά, έτοιμη να επικολληθεί στο πεδίο κάρτας).
+class _CopyableCardNumber extends StatelessWidget {
+  final String label;
+  final String number;
+  const _CopyableCardNumber({required this.label, required this.number});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Expanded(
+          child: Text('$label $number', style: const TextStyle(fontSize: 12.5)),
+        ),
+        InkWell(
+          borderRadius: BorderRadius.circular(6),
+          onTap: () {
+            Clipboard.setData(ClipboardData(text: number.replaceAll(' ', '')));
+            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+              content: Text('Αντιγράφηκε ο αριθμός κάρτας'),
+              duration: Duration(seconds: 1),
+            ));
+          },
+          child: const Padding(
+            padding: EdgeInsets.all(4),
+            child: Icon(Icons.copy_rounded, size: 15),
+          ),
+        ),
+      ],
+    );
+  }
 }
 
 /// Κουτί με κείμενο + κουμπί αντιγραφής — για το webhook URL.

@@ -69,6 +69,7 @@ class _WebAuthGatewayState extends State<WebAuthGateway> {
   _Stage  _stage = _Stage.loading;
   String? _error;
   String? _deniedEmail;
+  bool    _webAccessDenied = false;
   User?   _pendingUser;
   AdminSession? _session;
 
@@ -88,7 +89,7 @@ class _WebAuthGatewayState extends State<WebAuthGateway> {
   }
 
   Future<void> _signIn() async {
-    setState(() { _stage = _Stage.loading; _error = null; });
+    setState(() { _stage = _Stage.loading; _error = null; _webAccessDenied = false; });
     try {
       final provider = GoogleAuthProvider()
         ..setCustomParameters({'prompt': 'select_account'});
@@ -130,6 +131,7 @@ class _WebAuthGatewayState extends State<WebAuthGateway> {
       final isTenantOwner = data['tenantOwner'] == true;
       final isHomeOwner   = data['homeOwner'] == true;
       final isApproved    = data['isApproved'] == true;
+      final webEnabled    = data['webEnabled'] == true;
 
       if (!isMaster && !isAdmin && !isHomeOwner) {
         // Ούτε master, ούτε admin, ούτε Home Owner → έξω.
@@ -144,6 +146,22 @@ class _WebAuthGatewayState extends State<WebAuthGateway> {
       if (!isMaster && !isApproved) {
         // Admin ή Home Owner που περιμένει έγκριση από τον master.
         setState(() { _stage = _Stage.pendingApproval; _pendingUser = user; });
+        return;
+      }
+
+      // ── Πρόσβαση web — ΞΕΧΩΡΙΣΤΗ άδεια από το isApproved. Ο master έχει
+      // πάντα πρόσβαση. Ο tenantOwner ΕΠΙΣΗΣ πάντα (χρειάζεται το web panel
+      // για να διαχειρίζεται μόνος του Viva/τιμές/στοιχεία επιχείρησης —
+      // δεν είναι το χρεώσιμο «Web» add-on, είναι μέρος της ίδιας της
+      // Online Φόρμας του). Απλός admin/Home Owner ΜΟΝΟ αν ο master έχει
+      // ενεργοποιήσει ρητά το «Web» switch (masters_admin_page) γι' αυτόν.
+      if (!isMaster && !isTenantOwner && !webEnabled) {
+        await FirebaseAuth.instance.signOut();
+        setState(() {
+          _stage = _Stage.denied;
+          _deniedEmail = user.email;
+          _webAccessDenied = true;
+        });
         return;
       }
 
@@ -221,6 +239,7 @@ class _WebAuthGatewayState extends State<WebAuthGateway> {
       _stage = _Stage.signedOut;
       _deniedEmail = null;
       _error = null;
+      _webAccessDenied = false;
     });
   }
 
@@ -255,7 +274,11 @@ class _WebAuthGatewayState extends State<WebAuthGateway> {
         );
       case _Stage.denied:
         return _CenteredCard(
-          child: _DeniedView(email: _deniedEmail, onRetry: _backToSignIn),
+          child: _DeniedView(
+            email: _deniedEmail,
+            webAccessDenied: _webAccessDenied,
+            onRetry: _backToSignIn,
+          ),
         );
       case _Stage.signedOut:
         return _CenteredCard(
@@ -377,8 +400,13 @@ class _SignInView extends StatelessWidget {
 
 class _DeniedView extends StatelessWidget {
   final String?      email;
+  final bool         webAccessDenied;
   final VoidCallback onRetry;
-  const _DeniedView({required this.email, required this.onRetry});
+  const _DeniedView({
+    required this.email,
+    this.webAccessDenied = false,
+    required this.onRetry,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -391,10 +419,18 @@ class _DeniedView extends StatelessWidget {
             style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
         const SizedBox(height: 10),
         Text(
-          email == null
-              ? 'Ο λογαριασμός δεν έχει δικαιώματα διαχείρισης.'
-              : 'Ο λογαριασμός $email δεν έχει δικαιώματα διαχείρισης.\n'
-                'Αυτός ο πίνακας είναι μόνο για master και εργολάβους.',
+          webAccessDenied
+              ? (email == null
+                  ? 'Ο λογαριασμός έχει δικαιώματα διαχειριστή, αλλά δεν έχει '
+                    'ενεργοποιημένη πρόσβαση στο web panel.'
+                  : 'Ο λογαριασμός $email έχει δικαιώματα διαχειριστή, αλλά δεν έχει '
+                    'ενεργοποιημένη πρόσβαση στο web panel.\n'
+                    'Ζήτησε από τον master να ενεργοποιήσει το «Web» στη σελίδα '
+                    'Διαχείριση.')
+              : (email == null
+                  ? 'Ο λογαριασμός δεν έχει δικαιώματα διαχείρισης.'
+                  : 'Ο λογαριασμός $email δεν έχει δικαιώματα διαχείρισης.\n'
+                    'Αυτός ο πίνακας είναι μόνο για master και εργολάβους.'),
           textAlign: TextAlign.center,
           style: TextStyle(color: Colors.grey[600], fontSize: 14, height: 1.4),
         ),

@@ -844,7 +844,15 @@ class _AdminDriverCard extends StatelessWidget {
                             'Βλέπει επιπλέον «Ζώνες & Τιμές» — μόνο τις δικές του',
                             style: TextStyle(fontSize: 11)),
                         value: selTenantOwner,
-                        onChanged: (v) => setS(() => selTenantOwner = v),
+                        onChanged: (v) => setS(() {
+                          selTenantOwner = v;
+                          // Ο Ιδιοκτήτης Online Φόρμας χρειάζεται το web panel
+                          // εγγενώς (Viva/τιμές/στοιχεία επιχείρησης) — δεν
+                          // είναι το ξεχωριστό χρεώσιμο «Web» add-on, γι' αυτό
+                          // ανάβει μαζί τον διακόπτη «Web» ώστε να ταιριάζει
+                          // με την πραγματική πρόσβαση (βλ. auth_gateway_web).
+                          if (v) selWeb = true;
+                        }),
                       ),
                       if (selTenantOwner)
                         Padding(

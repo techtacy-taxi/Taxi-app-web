@@ -3735,6 +3735,140 @@ exports.listTenants = onCall(
   }
 );
 
+// ── updateTenantOwnerInfo: διόρθωση businessName/masterEmail ενός tenant —
+// ΜΟΝΟ ο super-admin (π.χ. αν έγραψε λάθος το email του πελάτη στη «Νέα
+// Online Φόρμα»). Αν αλλάξει το email, ξαναβρίσκουμε το masterUid από το
+// Firebase Auth (ο πελάτης πρέπει να έχει ήδη κάνει login με το ΝΕΟ email).
+exports.updateTenantOwnerInfo = onCall(
+  { region: "us-central1" },
+  async (request) => {
+    if (!request.auth || request.auth.token.email !== "techtacy@gmail.com") {
+      throw new HttpsError("permission-denied", "Μόνο ο super-admin μπορεί να το αλλάξει.");
+    }
+    const d = request.data || {};
+    const tenantId = s(d.tenantId);
+    if (!tenantId || tenantId === "default") {
+      throw new HttpsError("invalid-argument", "Μη έγκυρο tenantId.");
+    }
+    const db = getFirestore();
+    const ref = db.collection("tenants").doc(tenantId);
+    const doc = await ref.get();
+    if (!doc.exists) throw new HttpsError("not-found", "Δεν βρέθηκε αυτός ο tenant.");
+
+    const updates = {};
+    if (s(d.businessName)) updates.businessName = s(d.businessName);
+
+    const newEmail = s(d.masterEmail);
+    if (newEmail && newEmail !== doc.data().masterEmail) {
+      let userRecord;
+      try {
+        userRecord = await getAuth().getUserByEmail(newEmail);
+      } catch (e) {
+        throw new HttpsError("not-found",
+          "Δεν βρέθηκε λογαριασμός με το νέο email — ο πελάτης πρέπει πρώτα να κάνει login με αυτό.");
+      }
+      const oldUid = doc.data().masterUid;
+      // ⚠️ ΚΡΙΣΙΜΟ: το νέο uid πρέπει να πάρει ΤΑ ΙΔΙΑ δικαιώματα (admin/
+      // tenantOwner/κ.λπ.) που είχε το παλιό — αλλιώς ο πελάτης χάνει
+      // πρόσβαση (π.χ. permission-denied στη δημιουργία πελατών) γιατί το
+      // Firestore isAdmin() ελέγχει το presence.admin του ΝΕΟΥ uid, που θα
+      // ήταν κενό/false αν δεν το μεταφέρουμε ρητά εδώ.
+      let carryOver = {};
+      if (oldUid && oldUid !== userRecord.uid) {
+        const oldPresDoc = await db.collection("presence").doc(oldUid).get();
+        const oldPres = oldPresDoc.data() || {};
+        carryOver = {
+          admin: oldPres.admin === true,
+          tenantOwner: oldPres.tenantOwner === true,
+          webEnabled: oldPres.webEnabled === true,
+          icsExportEnabled: oldPres.icsExportEnabled === true,
+          calendarEnabled: oldPres.calendarEnabled === true,
+        };
+        await db.collection("presence").doc(oldUid).set({ tenantId: null }, { merge: true });
+      }
+      await db.collection("presence").doc(userRecord.uid).set(
+        { tenantId, isApproved: true, ...carryOver }, { merge: true });
+      updates.masterEmail = newEmail;
+      updates.masterUid = userRecord.uid;
+    }
+
+    if (Object.keys(updates).length) await ref.update(updates);
+    return { ok: true, tenantId };
+  }
+);
+
+// ── renameTenantEformId: αλλάζει το ίδιο το EformID (π.χ. διόρθωση typo
+// αμέσως μετά τη δημιουργία). ΠΡΟΣΟΧΗ: το tenantId είναι το ίδιο το
+// Firestore document ID, οπότε «μετακομίζει» το tenants/{tenantId} doc σε
+// νέο ID, μεταφέρει τα Viva secrets, και ενημερώνει το presence του master.
+// ΔΕΝ αγγίζει άλλα collections (jobs/saved_jobs/clients/sources/billing_tx/
+// groups) — γι' αυτό μπλοκάρεται αν ο tenant έχει ήδη πραγματικά δεδομένα
+// εκεί. Ασφαλές μόνο λίγο μετά τη δημιουργία, πριν μπει σε χρήση.
+exports.renameTenantEformId = onCall(
+  { region: "us-central1" },
+  async (request) => {
+    if (!request.auth || request.auth.token.email !== "techtacy@gmail.com") {
+      throw new HttpsError("permission-denied", "Μόνο ο super-admin μπορεί να το αλλάξει.");
+    }
+    const d = request.data || {};
+    const oldId = s(d.tenantId);
+    const newId = s(d.newTenantId);
+    if (!oldId || oldId === "default") throw new HttpsError("invalid-argument", "Μη έγκυρο τρέχον tenantId.");
+    if (!newId || !RegExp("^[a-z0-9_]+$").test(newId)) {
+      throw new HttpsError("invalid-argument", "Το νέο EformID: μόνο a-z, 0-9, _.");
+    }
+    if (newId === "default") throw new HttpsError("invalid-argument", "\"default\" είναι δεσμευμένο.");
+    if (newId === oldId) return { ok: true, tenantId: newId };
+
+    const db = getFirestore();
+    const oldRef = db.collection("tenants").doc(oldId);
+    const oldDoc = await oldRef.get();
+    if (!oldDoc.exists) throw new HttpsError("not-found", "Δεν βρέθηκε ο τρέχων tenant.");
+    const newRef = db.collection("tenants").doc(newId);
+    if ((await newRef.get()).exists) {
+      throw new HttpsError("already-exists", "Υπάρχει ήδη tenant με αυτό το EformID.");
+    }
+
+    // ── Ασφάλεια: μπλοκάρισμα αν υπάρχουν ήδη πραγματικά δεδομένα με το
+    // παλιό tenantId — η μετονομασία δεν τα μεταφέρει (job/πελάτες/χρεώσεις).
+    if (!d.force) {
+      const checks = await Promise.all(
+        ["jobs", "saved_jobs", "clients", "sources", "billing_tx"].map((col) =>
+          db.collection(col).where("tenantId", "==", oldId).limit(1).get())
+      );
+      if (checks.some((snap) => !snap.empty)) {
+        throw new HttpsError("failed-precondition",
+          "Αυτός ο tenant έχει ήδη δεδομένα (δουλειές/πελάτες/χρεώσεις) — η αλλαγή EformID " +
+          "δεν τα μεταφέρει αυτόματα. Ασφαλές μόνο αμέσως μετά τη δημιουργία, πριν μπει σε χρήση.");
+      }
+    }
+
+    // ── 1) Αντιγραφή tenants/{oldId} → tenants/{newId}, μετά διαγραφή του παλιού.
+    await newRef.set(oldDoc.data());
+    await oldRef.delete();
+
+    // ── 2) Μεταφορά Viva secrets (Client ID/Secret/Merchant ID/API Key).
+    for (const field of ["viva-client-id", "viva-client-secret", "viva-merchant-id", "viva-api-key"]) {
+      const value = await readSecret(tenantSecretId(oldId, field));
+      if (value) {
+        try { await upsertSecret(tenantSecretId(newId, field), value); }
+        catch (e) { console.error("renameTenantEformId: αποτυχία μεταφοράς secret", field, e.message); }
+      }
+    }
+
+    // ── 3) presence ΟΛΩΝ όσων ανήκουν σε αυτόν τον tenant (όχι μόνο ο
+    // master) — αλλιώς τυχόν άλλοι admins/οδηγοί του ίδιου tenant μένουν
+    // με το ΠΑΛΙΟ tenantId και «χάνονται» από φίλτρα που βασίζονται σε αυτό.
+    const presSnap = await db.collection("presence").where("tenantId", "==", oldId).get();
+    const batch = db.batch();
+    presSnap.docs.forEach((d2) => batch.update(d2.ref, { tenantId: newId }));
+    if (!presSnap.empty) await batch.commit();
+
+    console.log("renameTenantEformId:", oldId, "→", newId);
+    return { ok: true, tenantId: newId };
+  }
+);
+
 // ═══════════════════════════════════════════════════════════════════════════
 //  MULTI-TENANT — Φάση 2 πρώτο βήμα: εφάπαξ «γέμισμα» tenantId:'default'
 //
@@ -3996,6 +4130,9 @@ exports.updateTenantBusinessInfo = onCall(
     if (!tenantDoc.exists) throw new HttpsError("not-found", "Άγνωστο tenant.");
 
     const updates = {};
+    // Όνομα επιχείρησης — επιτρέπεται και στον ίδιο τον tenant-owner να το
+    // διορθώσει (π.χ. αν το έγραψε λάθος αρχικά), όχι μόνο ο super-admin.
+    if (d.businessName != null)   updates.businessName   = s(d.businessName) || tenantDoc.data().businessName;
     if (d.contactPhone != null)   updates.contactPhone   = s(d.contactPhone) || null;
     if (d.contactEmail != null)   updates.contactEmail   = s(d.contactEmail) || null;
     if (d.whatsappNumber != null) updates.whatsappNumber = s(d.whatsappNumber) || null;

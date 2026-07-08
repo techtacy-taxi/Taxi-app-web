@@ -313,6 +313,16 @@ class _TenantAdminPageState extends State<TenantAdminPage> {
     if (created == true) _loadTenants();
   }
 
+  // Επεξεργασία ήδη υπάρχοντος tenant — διόρθωση Όνομα/Email/EformID σε
+  // περίπτωση λάθους στη δημιουργία.
+  Future<void> _openEditDialog(Map<String, dynamic> tenant) async {
+    final changed = await showDialog<bool>(
+      context: context,
+      builder: (_) => _EditTenantDialog(tenant: tenant),
+    );
+    if (changed == true) _loadTenants();
+  }
+
   @override
   Widget build(BuildContext context) {
     // ── Ασφάλεια: κανείς άλλος δεν βλέπει τίποτα από αυτή τη σελίδα ──
@@ -659,6 +669,12 @@ class _TenantAdminPageState extends State<TenantAdminPage> {
                                     Column(
                                       mainAxisSize: MainAxisSize.min,
                                       children: [
+                                        IconButton(
+                                          icon: const Icon(Icons.edit_rounded, size: 20),
+                                          color: Colors.grey[700],
+                                          tooltip: 'Επεξεργασία (Όνομα/Email/EformID)',
+                                          onPressed: () => _openEditDialog(t),
+                                        ),
                                         Switch(
                                           value: active,
                                           activeThumbColor: const Color(0xFF1E8E3E),
@@ -912,6 +928,202 @@ class _CreateTenantDialogState extends State<_CreateTenantDialog> {
                                 width: 18, height: 18,
                                 child: CircularProgressIndicator(strokeWidth: 2))
                             : const Text('Δημιουργία'),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Dialog επεξεργασίας υπάρχοντος tenant — Όνομα/Email/EformID
+// ─────────────────────────────────────────────────────────────────────────
+class _EditTenantDialog extends StatefulWidget {
+  final Map<String, dynamic> tenant;
+  const _EditTenantDialog({required this.tenant});
+
+  @override
+  State<_EditTenantDialog> createState() => _EditTenantDialogState();
+}
+
+class _EditTenantDialogState extends State<_EditTenantDialog> {
+  final _formKey = GlobalKey<FormState>();
+  late final TextEditingController _businessNameCtrl;
+  late final TextEditingController _masterEmailCtrl;
+  late final TextEditingController _tenantIdCtrl;
+  late final String _originalTenantId;
+  late final String _originalBusinessName;
+  late final String _originalEmail;
+  bool _submitting = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _originalTenantId = widget.tenant['tenantId'] as String? ?? '';
+    _originalBusinessName = widget.tenant['businessName'] as String? ?? '';
+    _originalEmail = widget.tenant['masterEmail'] as String? ?? '';
+    _businessNameCtrl = TextEditingController(text: _originalBusinessName);
+    _masterEmailCtrl = TextEditingController(text: _originalEmail);
+    _tenantIdCtrl = TextEditingController(text: _originalTenantId);
+  }
+
+  @override
+  void dispose() {
+    _businessNameCtrl.dispose();
+    _masterEmailCtrl.dispose();
+    _tenantIdCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    if (!_formKey.currentState!.validate()) return;
+    setState(() { _submitting = true; _error = null; });
+    try {
+      final newBusinessName = _businessNameCtrl.text.trim();
+      final newEmail = _masterEmailCtrl.text.trim();
+      final newTenantId = _tenantIdCtrl.text.trim();
+
+      // 1) Όνομα/Email — απλή ενημέρωση πεδίων.
+      if (newBusinessName != _originalBusinessName || newEmail != _originalEmail) {
+        final callable = FirebaseFunctions.instance.httpsCallable('updateTenantOwnerInfo');
+        await callable.call({
+          'tenantId': _originalTenantId,
+          if (newBusinessName != _originalBusinessName) 'businessName': newBusinessName,
+          if (newEmail != _originalEmail) 'masterEmail': newEmail,
+        });
+      }
+
+      // 2) EformID — πιο ευαίσθητη αλλαγή (είναι το ίδιο το document ID,
+      // χρησιμοποιείται στο webhook URL, στο booking2.html, στα secrets).
+      if (newTenantId != _originalTenantId) {
+        final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (dctx) => AlertDialog(
+            title: const Text('Αλλαγή EformID'),
+            content: Text(
+              'Το EformID «$_originalTenantId» θα γίνει «$newTenantId».\n\n'
+              'Αν ο πελάτης έχει ήδη βάλει το παλιό webhook URL στο Viva dashboard '
+              'ή το παλιό EformID στο booking2.html, θα χρειαστεί να τα ενημερώσεις '
+              'ξανά μετά την αλλαγή. Ασφαλές μόνο αν ο tenant δεν έχει ακόμα '
+              'πραγματικές δουλειές/πελάτες/χρεώσεις.',
+            ),
+            actions: [
+              TextButton(onPressed: () => Navigator.of(dctx).pop(false), child: const Text('Άκυρο')),
+              FilledButton(
+                style: FilledButton.styleFrom(backgroundColor: Colors.red),
+                onPressed: () => Navigator.of(dctx).pop(true),
+                child: const Text('Συνέχεια'),
+              ),
+            ],
+          ),
+        );
+        if (confirmed != true) {
+          if (mounted) setState(() => _submitting = false);
+          return;
+        }
+        final renameCallable = FirebaseFunctions.instance.httpsCallable('renameTenantEformId');
+        await renameCallable.call({
+          'tenantId': _originalTenantId,
+          'newTenantId': newTenantId,
+        });
+      }
+
+      if (mounted) Navigator.of(context).pop(true);
+    } on FirebaseFunctionsException catch (e) {
+      setState(() => _error = e.message ?? e.code);
+    } catch (e) {
+      setState(() => _error = '$e');
+    } finally {
+      if (mounted) setState(() => _submitting = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 460, maxHeight: 560),
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Form(
+            key: _formKey,
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text('Επεξεργασία Online Φόρμας',
+                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 16),
+
+                  TextFormField(
+                    controller: _businessNameCtrl,
+                    decoration: const InputDecoration(
+                        labelText: 'Όνομα επιχείρησης *', border: OutlineInputBorder()),
+                    validator: (v) =>
+                        (v == null || v.trim().isEmpty) ? 'Υποχρεωτικό' : null,
+                  ),
+                  const SizedBox(height: 12),
+
+                  TextFormField(
+                    controller: _masterEmailCtrl,
+                    keyboardType: TextInputType.emailAddress,
+                    decoration: const InputDecoration(
+                        labelText: 'Email πελάτη *',
+                        helperText: 'Αν το αλλάξεις, ο πελάτης πρέπει να έχει ήδη κάνει login με το νέο email',
+                        border: OutlineInputBorder()),
+                    validator: (v) => (v == null || !v.contains('@'))
+                        ? 'Έγκυρο email' : null,
+                  ),
+                  const SizedBox(height: 12),
+
+                  TextFormField(
+                    controller: _tenantIdCtrl,
+                    decoration: const InputDecoration(
+                        labelText: 'Αναγνωριστικό (EformID) *',
+                        helperText: 'Μόνο λατινικά/αριθμοί/underscore — άλλαξέ το μόνο για διόρθωση typo',
+                        border: OutlineInputBorder()),
+                    validator: (v) {
+                      if (v == null || v.trim().isEmpty) return 'Υποχρεωτικό';
+                      if (!RegExp(r'^[a-z0-9_]+$').hasMatch(v.trim())) {
+                        return 'Μόνο a-z, 0-9, _';
+                      }
+                      if (v.trim() == 'default') return '"default" είναι δεσμευμένο';
+                      return null;
+                    },
+                  ),
+
+                  if (_error != null) ...[
+                    const SizedBox(height: 10),
+                    Text(_error!, style: const TextStyle(color: Colors.red, fontSize: 13)),
+                  ],
+
+                  const SizedBox(height: 18),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      TextButton(
+                        onPressed: _submitting
+                            ? null
+                            : () => Navigator.of(context).pop(false),
+                        child: const Text('Άκυρο'),
+                      ),
+                      const SizedBox(width: 8),
+                      FilledButton(
+                        onPressed: _submitting ? null : _submit,
+                        child: _submitting
+                            ? const SizedBox(
+                                width: 18, height: 18,
+                                child: CircularProgressIndicator(strokeWidth: 2))
+                            : const Text('Αποθήκευση'),
                       ),
                     ],
                   ),
