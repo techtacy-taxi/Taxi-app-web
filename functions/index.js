@@ -3706,6 +3706,7 @@ exports.listTenants = onCall(
         hasVivaCredentials: t.hasVivaCredentials === true,
         mapEnabled: t.mapEnabled !== false,
         placesEnabled: t.placesEnabled !== false,
+        hasMapsApiKey: !!(t.mapsApiKey && t.mapsApiKey.trim()),
       };
     });
     return { ok: true, tenants };

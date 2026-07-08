@@ -350,6 +350,7 @@ class _TenantAdminPageState extends State<TenantAdminPage> {
                               final active = t['active'] == true;
                               final mapEnabled = t['mapEnabled'] != false;
                               final placesEnabled = t['placesEnabled'] != false;
+                              final hasMapsApiKey = t['hasMapsApiKey'] == true;
                               return Card(
                                 margin: const EdgeInsets.only(bottom: 10),
                                 shape: RoundedRectangleBorder(
@@ -505,50 +506,78 @@ class _TenantAdminPageState extends State<TenantAdminPage> {
                                           ),
                                           const SizedBox(height: 10),
                                           // ── Έλεγχος master: κόψε/ξανάβαλε χάρτη ή Places
-                                          // στη δημόσια φόρμα αυτού του πελάτη, όποτε θες.
-                                          Container(
-                                            padding: const EdgeInsets.symmetric(
-                                                horizontal: 10, vertical: 6),
-                                            decoration: BoxDecoration(
-                                              color: Colors.grey.shade50,
-                                              borderRadius: BorderRadius.circular(8),
-                                              border: Border.all(color: Colors.grey.shade200),
+                                          // στη δημόσια φόρμα αυτού του πελάτη — ΜΟΝΟ όταν
+                                          // χρησιμοποιείται το δικό ΜΑΣ κλειδί. Αν ο πελάτης
+                                          // έχει βάλει ΔΙΚΟ ΤΟΥ Google Maps key, τα switches
+                                          // δεν έχουν πια νόημα — δείχνουμε απλή ένδειξη.
+                                          if (hasMapsApiKey)
+                                            Container(
+                                              width: double.infinity,
+                                              padding: const EdgeInsets.symmetric(
+                                                  horizontal: 10, vertical: 8),
+                                              decoration: BoxDecoration(
+                                                color: Colors.green.shade50,
+                                                borderRadius: BorderRadius.circular(8),
+                                                border: Border.all(color: Colors.green.shade200),
+                                              ),
+                                              child: Row(children: [
+                                                Icon(Icons.vpn_key_rounded,
+                                                    size: 15, color: Colors.green[700]),
+                                                const SizedBox(width: 6),
+                                                Expanded(
+                                                  child: Text(
+                                                    'Έχει δικό του Google Maps key — χάρτης/Places '
+                                                    'δουλεύουν πάντα, ανεξάρτητα από τα switches',
+                                                    style: TextStyle(
+                                                        fontSize: 11, color: Colors.green[800]),
+                                                  ),
+                                                ),
+                                              ]),
+                                            )
+                                          else
+                                            Container(
+                                              padding: const EdgeInsets.symmetric(
+                                                  horizontal: 10, vertical: 6),
+                                              decoration: BoxDecoration(
+                                                color: Colors.grey.shade50,
+                                                borderRadius: BorderRadius.circular(8),
+                                                border: Border.all(color: Colors.grey.shade200),
+                                              ),
+                                              child: Row(children: [
+                                                Expanded(
+                                                  child: Row(mainAxisSize: MainAxisSize.min, children: [
+                                                    Icon(Icons.map_rounded,
+                                                        size: 15,
+                                                        color: mapEnabled ? Colors.teal : Colors.grey),
+                                                    const SizedBox(width: 4),
+                                                    const Text('Χάρτης', style: TextStyle(fontSize: 11.5)),
+                                                    Switch(
+                                                      value: mapEnabled,
+                                                      activeThumbColor: Colors.teal,
+                                                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                                      onChanged: (v) => _toggleFeatureFlag(
+                                                          t['tenantId'] as String, 'mapEnabled', v),
+                                                    ),
+                                                  ]),
+                                                ),
+                                                Expanded(
+                                                  child: Row(mainAxisSize: MainAxisSize.min, children: [
+                                                    Icon(Icons.location_on_rounded,
+                                                        size: 15,
+                                                        color: placesEnabled ? Colors.teal : Colors.grey),
+                                                    const SizedBox(width: 4),
+                                                    const Text('Places', style: TextStyle(fontSize: 11.5)),
+                                                    Switch(
+                                                      value: placesEnabled,
+                                                      activeThumbColor: Colors.teal,
+                                                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                                      onChanged: (v) => _toggleFeatureFlag(
+                                                          t['tenantId'] as String, 'placesEnabled', v),
+                                                    ),
+                                                  ]),
+                                                ),
+                                              ]),
                                             ),
-                                            child: Row(children: [
-                                              Expanded(
-                                                child: Row(mainAxisSize: MainAxisSize.min, children: [
-                                                  Icon(Icons.map_rounded,
-                                                      size: 15,
-                                                      color: mapEnabled ? Colors.teal : Colors.grey),
-                                                  const SizedBox(width: 4),
-                                                  const Text('Χάρτης', style: TextStyle(fontSize: 11.5)),
-                                                  Switch(
-                                                    value: mapEnabled,
-                                                    activeThumbColor: Colors.teal,
-                                                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                                                    onChanged: (v) => _toggleFeatureFlag(
-                                                        t['tenantId'] as String, 'mapEnabled', v),
-                                                  ),
-                                                ]),
-                                              ),
-                                              Expanded(
-                                                child: Row(mainAxisSize: MainAxisSize.min, children: [
-                                                  Icon(Icons.location_on_rounded,
-                                                      size: 15,
-                                                      color: placesEnabled ? Colors.teal : Colors.grey),
-                                                  const SizedBox(width: 4),
-                                                  const Text('Places', style: TextStyle(fontSize: 11.5)),
-                                                  Switch(
-                                                    value: placesEnabled,
-                                                    activeThumbColor: Colors.teal,
-                                                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                                                    onChanged: (v) => _toggleFeatureFlag(
-                                                        t['tenantId'] as String, 'placesEnabled', v),
-                                                  ),
-                                                ]),
-                                              ),
-                                            ]),
-                                          ),
                                         ],
                                       ),
                                     ),

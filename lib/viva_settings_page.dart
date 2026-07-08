@@ -20,6 +20,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:http/http.dart' as http;
+import 'package:url_launcher/url_launcher.dart';
 
 // ── Χρώμα «φυστικί» — ίδιο με το φόντο του μενού (βλ. εικόνα μενού) ────────
 const Color kPistachio       = Color(0xFFF3ECD9); // φόντο πάνω μπάρα προειδοποίησης
@@ -39,6 +40,13 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
   bool _tenantResolved = false;
 
   bool get _isDefault => _tenantId == 'default';
+  bool get _isSuperAdmin =>
+      FirebaseAuth.instance.currentUser?.email == 'techtacy@gmail.com';
+
+  // Dropdown επιλογής tenant — ΜΟΝΟ για σένα (super-admin), ώστε να μπορείς
+  // να συμπληρώνεις τις ρυθμίσεις για λογαριασμό κάποιου πελάτη.
+  List<Map<String, dynamic>> _allTenants = [];
+  bool _loadingTenants = false;
 
   final _clientIdCtrl     = TextEditingController();
   final _clientSecretCtrl = TextEditingController();
@@ -51,6 +59,7 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
   final _contactEmailCtrl   = TextEditingController();
   final _whatsappNumberCtrl = TextEditingController();
   final _logoUrlCtrl        = TextEditingController();
+  final _mapsApiKeyCtrl     = TextEditingController();
 
   bool _demo = true;
   bool _loading = true;
@@ -66,6 +75,47 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
   void initState() {
     super.initState();
     _resolveTenantThenLoad();
+    if (_isSuperAdmin) _loadAllTenants();
+  }
+
+  Future<void> _loadAllTenants() async {
+    setState(() => _loadingTenants = true);
+    try {
+      final callable = FirebaseFunctions.instance.httpsCallable('listTenants');
+      final res = await callable.call();
+      final list = (res.data['tenants'] as List?) ?? [];
+      setState(() {
+        _allTenants = list.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+      });
+    } catch (_) {
+      // Μη κρίσιμο — απλά δεν εμφανίζεται η λίστα, ο master συνεχίζει με «default».
+    } finally {
+      if (mounted) setState(() => _loadingTenants = false);
+    }
+  }
+
+  // Ο master επιλέγει άλλον tenant από το dropdown — αλλάζει το «πλαίσιο»
+  // της σελίδας και ξαναφορτώνει τα δικά ΤΟΥ δεδομένα.
+  Future<void> _switchToTenant(String tenantId, String tenantName) async {
+    setState(() {
+      _tenantId = tenantId;
+      _tenantName = tenantName;
+      _tenantResolved = false;
+    });
+    // Καθάρισε πεδία πριν φορτώσεις τα νέα, ώστε να μη μείνει κατά λάθος
+    // παλιό κείμενο από τον προηγούμενο tenant.
+    _clientIdCtrl.clear();
+    _clientSecretCtrl.clear();
+    _merchantIdCtrl.clear();
+    _apiKeyCtrl.clear();
+    _sourceCodeCtrl.clear();
+    _contactPhoneCtrl.clear();
+    _contactEmailCtrl.clear();
+    _whatsappNumberCtrl.clear();
+    _logoUrlCtrl.clear();
+    _mapsApiKeyCtrl.clear();
+    if (mounted) setState(() => _tenantResolved = true);
+    await _load();
   }
 
   Future<void> _resolveTenantThenLoad() async {
@@ -109,6 +159,7 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
     _contactEmailCtrl.dispose();
     _whatsappNumberCtrl.dispose();
     _logoUrlCtrl.dispose();
+    _mapsApiKeyCtrl.dispose();
     super.dispose();
   }
 
@@ -148,6 +199,7 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
               _contactEmailCtrl.text   = bi['contactEmail'] as String? ?? '';
               _whatsappNumberCtrl.text = bi['whatsappNumber'] as String? ?? '';
               _logoUrlCtrl.text        = bi['logoUrl'] as String? ?? '';
+              _mapsApiKeyCtrl.text     = bi['mapsApiKey'] as String? ?? '';
             });
           }
         } catch (_) {
@@ -289,7 +341,25 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
           'contactEmail': _contactEmailCtrl.text.trim(),
           'whatsappNumber': _whatsappNumberCtrl.text.trim(),
           'logoUrl': _logoUrlCtrl.text.trim(),
+          'mapsApiKey': _mapsApiKeyCtrl.text.trim(),
         });
+        // Αν μόλις μπήκε ΔΙΚΟ ΤΟΥ Google Maps κλειδί, ο διακόπτης «Χάρτης/
+        // Places» (που αφορά ΜΟΝΟ το δικό ΜΑΣ κλειδί) δεν έχει πια νόημα να
+        // είναι ενεργός — τον σβήνουμε αυτόματα, ώστε η λίστα «Online
+        // Φόρμες» να δείχνει σωστά ότι δεν χρησιμοποιείται πια το δικό μας.
+        if (_mapsApiKeyCtrl.text.trim().isNotEmpty) {
+          try {
+            final flagsCallable =
+                FirebaseFunctions.instance.httpsCallable('updateTenantFeatureFlags');
+            await flagsCallable.call({
+              'tenantId': _tenantId,
+              'mapEnabled': false,
+              'placesEnabled': false,
+            });
+          } catch (_) {
+            // Μη κρίσιμο — δεν μπλοκάρει την υπόλοιπη αποθήκευση.
+          }
+        }
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
             content: Text('Αποθηκεύτηκε.'),
@@ -318,260 +388,412 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        backgroundColor: Colors.teal,
-        foregroundColor: Colors.white,
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Row(mainAxisSize: MainAxisSize.min, children: [
-              // Λογότυπο Viva — assets/viva_logo.png (πρόσθεσέ το στο pubspec.yaml)
-              Image.asset('assets/viva_logo.png', width: 40, height: 40),
-              const SizedBox(width: 10),
-              const Text('Ρυθμίσεις Viva',
-                  style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold, color: Colors.white)),
-            ]),
-            Text(_tenantName,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.normal, color: Colors.white70)),
-          ],
+    if (_loading || !_tenantResolved) {
+      return Scaffold(
+        appBar: AppBar(backgroundColor: Colors.teal, foregroundColor: Colors.white,
+            title: const Text('Ρυθμίσεις (Viva, Google Cloud)')),
+        body: const Center(child: CircularProgressIndicator()),
+      );
+    }
+    return DefaultTabController(
+      length: 3,
+      child: Scaffold(
+        appBar: AppBar(
+          backgroundColor: Colors.teal,
+          foregroundColor: Colors.white,
+          title: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text('Ρυθμίσεις (Viva, Google Cloud)',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white)),
+              Text(_tenantName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.normal, color: Colors.white70)),
+            ],
+          ),
+          bottom: const TabBar(
+            indicatorColor: Colors.white,
+            labelColor: Colors.white,
+            unselectedLabelColor: Colors.white70,
+            tabs: [
+              Tab(icon: Icon(Icons.payment_rounded, size: 20), text: 'Viva'),
+              Tab(icon: Icon(Icons.cloud_rounded, size: 20), text: 'Google Cloud'),
+              Tab(icon: Icon(Icons.storefront_rounded, size: 20), text: 'Επιχείρηση'),
+            ],
+          ),
         ),
-      ),
-      body: SafeArea(
-        child: (_loading || !_tenantResolved)
-            ? const Center(child: CircularProgressIndicator())
-            : SingleChildScrollView(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+        body: SafeArea(
+          child: Column(
+            children: [
+              if (_isSuperAdmin) _buildTenantSwitcher(),
+              Expanded(
+                child: TabBarView(
                   children: [
-                    if (_isDefault)
-                      Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.all(12),
-                        margin: const EdgeInsets.only(bottom: 16),
-                        decoration: BoxDecoration(
-                          color: kPistachio,
-                          borderRadius: BorderRadius.circular(10),
-                          border: Border.all(color: kPistachioAccent),
-                        ),
-                        child: const Text(
-                          '⚠️ Αυτά είναι ΤΑ ΔΙΚΑ ΣΟΥ credentials (default λογαριασμός). '
-                          'Ισχύουν αμέσως μόλις πατήσεις Αποθήκευση — καμία ανάγκη για deploy.',
-                          style: TextStyle(fontSize: 12.5, color: kPistachioText),
-                        ),
-                      ),
-
-                    if (!_isDefault && _hasCredentials) ...[
-                      const Text('Ήδη αποθηκευμένα (κρυμμένα)',
-                          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                      const SizedBox(height: 6),
-                      _maskedRow('Client ID', _maskedClientId),
-                      _maskedRow('Client Secret', _maskedClientSecret),
-                      _maskedRow('Merchant ID', _maskedMerchantId),
-                      _maskedRow('API Key', _maskedApiKey),
-                      const SizedBox(height: 16),
-                      const Divider(),
-                      const SizedBox(height: 8),
-                    ],
-
-                    Text(
-                      _hasCredentials || _isDefault
-                          ? 'Συμπλήρωσε ΜΟΝΟ ό,τι θες να αλλάξεις:'
-                          : 'Συμπλήρωσε τα στοιχεία σου:',
-                      style: const TextStyle(fontSize: 12.5, color: Colors.grey),
-                    ),
-                    const SizedBox(height: 8),
-
-                    if (!_isDefault) ...[
-                      Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.all(12),
-                        margin: const EdgeInsets.only(bottom: 16),
-                        decoration: BoxDecoration(
-                          color: Colors.indigo.withValues(alpha: 0.06),
-                          borderRadius: BorderRadius.circular(10),
-                          border: Border.all(color: Colors.indigo.withValues(alpha: 0.3)),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(children: [
-                              Icon(Icons.storefront_rounded, size: 16, color: Colors.indigo[700]),
-                              const SizedBox(width: 6),
-                              const Text('Στοιχεία Επιχείρησης',
-                                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                            ]),
-                            const SizedBox(height: 4),
-                            Text(
-                              'Εμφανίζονται αυτόματα στη δική σου φόρμα κράτησης '
-                              '(booking2.html) — δεν χρειάζεται να επεξεργαστείς κώδικα.',
-                              style: TextStyle(fontSize: 11, color: Colors.grey[600]),
-                            ),
-                            const SizedBox(height: 10),
-                            TextField(
-                              controller: _contactPhoneCtrl,
-                              keyboardType: TextInputType.phone,
-                              decoration: const InputDecoration(
-                                  isDense: true,
-                                  labelText: 'Τηλέφωνο επικοινωνίας',
-                                  hintText: '+30 6900000000',
-                                  border: OutlineInputBorder()),
-                            ),
-                            const SizedBox(height: 10),
-                            TextField(
-                              controller: _contactEmailCtrl,
-                              keyboardType: TextInputType.emailAddress,
-                              decoration: const InputDecoration(
-                                  isDense: true,
-                                  labelText: 'Email επικοινωνίας',
-                                  hintText: 'info@τοδικοσουdomain.com',
-                                  border: OutlineInputBorder()),
-                            ),
-                            const SizedBox(height: 10),
-                            TextField(
-                              controller: _whatsappNumberCtrl,
-                              keyboardType: TextInputType.phone,
-                              decoration: const InputDecoration(
-                                  isDense: true,
-                                  labelText: 'Αριθμός WhatsApp',
-                                  helperText: 'Μόνο αριθμοί, με κωδικό χώρας — π.χ. 306900000000 (χωρίς +)',
-                                  border: OutlineInputBorder()),
-                            ),
-                            const SizedBox(height: 10),
-                            TextField(
-                              controller: _logoUrlCtrl,
-                              decoration: const InputDecoration(
-                                  isDense: true,
-                                  labelText: 'Link λογότυπου (εικόνα)',
-                                  helperText: 'Ανέβασε το λογότυπό σου κάπου (π.χ. imgur.com) '
-                                      'και επικόλλησε εδώ το link της εικόνας',
-                                  border: OutlineInputBorder()),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-
-                    if (!_isDefault) ...[
-                      OutlinedButton.icon(
-                        onPressed: _fillingSharedDemo ? null : _useSharedDemo,
-                        icon: _fillingSharedDemo
-                            ? const SizedBox(
-                                width: 16, height: 16,
-                                child: CircularProgressIndicator(strokeWidth: 2))
-                            : const Icon(Icons.science_rounded),
-                        label: const Text('Χρήση demo λογαριασμού (για δοκιμή)'),
-                      ),
-                      const SizedBox(height: 12),
-                    ],
-
-                    TextField(
-                      controller: _clientIdCtrl,
-                      decoration: const InputDecoration(
-                          labelText: 'Viva Client ID', border: OutlineInputBorder()),
-                    ),
-                    const SizedBox(height: 10),
-                    TextField(
-                      controller: _clientSecretCtrl,
-                      obscureText: true,
-                      decoration: const InputDecoration(
-                          labelText: 'Viva Client Secret', border: OutlineInputBorder()),
-                    ),
-                    const SizedBox(height: 10),
-                    TextField(
-                      controller: _merchantIdCtrl,
-                      decoration: const InputDecoration(
-                          labelText: 'Viva Merchant ID', border: OutlineInputBorder()),
-                    ),
-                    const SizedBox(height: 10),
-                    TextField(
-                      controller: _apiKeyCtrl,
-                      obscureText: true,
-                      decoration: const InputDecoration(
-                          labelText: 'Viva API Key', border: OutlineInputBorder()),
-                    ),
-                    const SizedBox(height: 10),
-                    TextField(
-                      controller: _sourceCodeCtrl,
-                      decoration: const InputDecoration(
-                          labelText: 'Viva Source Code (4ψήφιο)',
-                          border: OutlineInputBorder()),
-                    ),
-                    const SizedBox(height: 16),
-
-                    SwitchListTile(
-                      contentPadding: EdgeInsets.zero,
-                      title: const Text('Demo λογαριασμός'),
-                      subtitle: Text(_demo
-                          ? 'Δοκιμαστικός — καμία πραγματική χρέωση'
-                          : 'LIVE — πραγματικές χρεώσεις!'),
-                      value: _demo,
-                      activeThumbColor: kPistachioAccent,
-                      onChanged: (v) async {
-                        if (v == _demo) return;
-                        final ok = await _confirmDemoLiveChange(v);
-                        if (ok) setState(() => _demo = v);
-                      },
-                    ),
-
-                    const SizedBox(height: 16),
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: Colors.blue.shade50,
-                        borderRadius: BorderRadius.circular(10),
-                        border: Border.all(color: Colors.blue.shade200),
-                      ),
-                      child: const Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text('Κάρτες δοκιμής (demo)',
-                              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                          SizedBox(height: 6),
-                          Text('✅ Επιτυχής πληρωμή: 5239 2907 0000 0101',
-                              style: TextStyle(fontSize: 12.5)),
-                          Text('❌ Αποτυχημένη πληρωμή: 5188 3400 0000 0060',
-                              style: TextStyle(fontSize: 12.5)),
-                          SizedBox(height: 4),
-                          Text('Λήξη: 01/31 · CVC: 123 (και για τις δύο)',
-                              style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600)),
-                        ],
-                      ),
-                    ),
-
-                    const SizedBox(height: 16),
-                    _buildSetupInstructions(),
-
-                    if (_error != null) ...[
-                      const SizedBox(height: 12),
-                      Text(_error!, style: const TextStyle(color: Colors.red)),
-                    ],
-
-                    const SizedBox(height: 20),
-                    SizedBox(
-                      width: double.infinity,
-                      child: FilledButton(
-                        style: FilledButton.styleFrom(
-                          backgroundColor: kPistachioAccent,
-                          foregroundColor: Colors.white,
-                        ),
-                        onPressed: _saving ? null : _save,
-                        child: _saving
-                            ? const SizedBox(
-                                width: 20, height: 20,
-                                child: CircularProgressIndicator(
-                                    strokeWidth: 2, color: Colors.white))
-                            : const Text('Αποθήκευση'),
-                      ),
-                    ),
+                    _buildVivaTab(),
+                    _buildGoogleCloudTab(),
+                    _buildBusinessTab(),
                   ],
                 ),
               ),
+              if (_error != null)
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Text(_error!, style: const TextStyle(color: Colors.red)),
+                ),
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: FilledButton(
+                    style: FilledButton.styleFrom(
+                      backgroundColor: kPistachioAccent,
+                      foregroundColor: Colors.white,
+                    ),
+                    onPressed: _saving ? null : _save,
+                    child: _saving
+                        ? const SizedBox(
+                            width: 20, height: 20,
+                            child: CircularProgressIndicator(
+                                strokeWidth: 2, color: Colors.white))
+                        : const Text('Αποθήκευση (όλα τα tabs)'),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ─── Tab 1: Viva ──────────────────────────────────────────────────────────
+  // ── Dropdown επιλογής tenant — ΜΟΝΟ για σένα (super-admin). Σου επιτρέπει
+  // να συμπληρώνεις τις ρυθμίσεις Viva/Google Cloud/Στοιχεία Επιχείρησης για
+  // λογαριασμό οποιουδήποτε πελάτη, χωρίς να χρειάζεται να συνδεθείς ως αυτός.
+  Widget _buildTenantSwitcher() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+      color: Colors.teal.withValues(alpha: 0.06),
+      child: Row(children: [
+        Icon(Icons.swap_horiz_rounded, size: 18, color: Colors.teal[700]),
+        const SizedBox(width: 8),
+        const Text('Προβολή για:', style: TextStyle(fontSize: 12.5)),
+        const SizedBox(width: 8),
+        Expanded(
+          child: _loadingTenants
+              ? const LinearProgressIndicator(minHeight: 2)
+              : DropdownButtonHideUnderline(
+                  child: DropdownButton<String>(
+                    isExpanded: true,
+                    value: _tenantId,
+                    items: [
+                      const DropdownMenuItem(
+                        value: 'default',
+                        child: Text('Ο δικός μου λογαριασμός',
+                            style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+                      ),
+                      ..._allTenants.map((t) => DropdownMenuItem<String>(
+                            value: t['tenantId'] as String,
+                            child: Text(
+                                (t['businessName'] as String?) ?? t['tenantId'] as String,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(fontSize: 13)),
+                          )),
+                    ],
+                    onChanged: (v) {
+                      if (v == null || v == _tenantId) return;
+                      if (v == 'default') {
+                        _switchToTenant('default', 'Ο δικός μου λογαριασμός');
+                      } else {
+                        final t = _allTenants.firstWhere((x) => x['tenantId'] == v);
+                        _switchToTenant(v, (t['businessName'] as String?) ?? v);
+                      }
+                    },
+                  ),
+                ),
+        ),
+      ]),
+    );
+  }
+
+  Widget _buildVivaTab() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (_isDefault)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              margin: const EdgeInsets.only(bottom: 16),
+              decoration: BoxDecoration(
+                color: kPistachio,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: kPistachioAccent),
+              ),
+              child: const Text(
+                '⚠️ Αυτά είναι ΤΑ ΔΙΚΑ ΣΟΥ credentials (default λογαριασμός). '
+                'Ισχύουν αμέσως μόλις πατήσεις Αποθήκευση — καμία ανάγκη για deploy.',
+                style: TextStyle(fontSize: 12.5, color: kPistachioText),
+              ),
+            ),
+
+          if (!_isDefault && _hasCredentials) ...[
+            const Text('Ήδη αποθηκευμένα (κρυμμένα)',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+            const SizedBox(height: 6),
+            _maskedRow('Client ID', _maskedClientId),
+            _maskedRow('Client Secret', _maskedClientSecret),
+            _maskedRow('Merchant ID', _maskedMerchantId),
+            _maskedRow('API Key', _maskedApiKey),
+            const SizedBox(height: 16),
+            const Divider(),
+            const SizedBox(height: 8),
+          ],
+
+          Text(
+            _hasCredentials || _isDefault
+                ? 'Συμπλήρωσε ΜΟΝΟ ό,τι θες να αλλάξεις:'
+                : 'Συμπλήρωσε τα στοιχεία σου:',
+            style: const TextStyle(fontSize: 12.5, color: Colors.grey),
+          ),
+          const SizedBox(height: 8),
+
+          if (!_isDefault) ...[
+            OutlinedButton.icon(
+              onPressed: _fillingSharedDemo ? null : _useSharedDemo,
+              icon: _fillingSharedDemo
+                  ? const SizedBox(
+                      width: 16, height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Icon(Icons.science_rounded),
+              label: const Text('Χρήση demo λογαριασμού (για δοκιμή)'),
+            ),
+            const SizedBox(height: 12),
+          ],
+
+          TextField(
+            controller: _clientIdCtrl,
+            decoration: const InputDecoration(
+                labelText: 'Viva Client ID', border: OutlineInputBorder()),
+          ),
+          const SizedBox(height: 10),
+          TextField(
+            controller: _clientSecretCtrl,
+            obscureText: true,
+            decoration: const InputDecoration(
+                labelText: 'Viva Client Secret', border: OutlineInputBorder()),
+          ),
+          const SizedBox(height: 10),
+          TextField(
+            controller: _merchantIdCtrl,
+            decoration: const InputDecoration(
+                labelText: 'Viva Merchant ID', border: OutlineInputBorder()),
+          ),
+          const SizedBox(height: 10),
+          TextField(
+            controller: _apiKeyCtrl,
+            obscureText: true,
+            decoration: const InputDecoration(
+                labelText: 'Viva API Key', border: OutlineInputBorder()),
+          ),
+          const SizedBox(height: 10),
+          TextField(
+            controller: _sourceCodeCtrl,
+            decoration: const InputDecoration(
+                labelText: 'Viva Source Code (4ψήφιο)',
+                border: OutlineInputBorder()),
+          ),
+          const SizedBox(height: 16),
+
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('Demo λογαριασμός'),
+            subtitle: Text(_demo
+                ? 'Δοκιμαστικός — καμία πραγματική χρέωση'
+                : 'LIVE — πραγματικές χρεώσεις!'),
+            value: _demo,
+            activeThumbColor: kPistachioAccent,
+            onChanged: (v) async {
+              if (v == _demo) return;
+              final ok = await _confirmDemoLiveChange(v);
+              if (ok) setState(() => _demo = v);
+            },
+          ),
+
+          const SizedBox(height: 16),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.blue.shade50,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: Colors.blue.shade200),
+            ),
+            child: const Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Κάρτες δοκιμής (demo)',
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                SizedBox(height: 6),
+                Text('✅ Επιτυχής πληρωμή: 5239 2907 0000 0101',
+                    style: TextStyle(fontSize: 12.5)),
+                Text('❌ Αποτυχημένη πληρωμή: 5188 3400 0000 0060',
+                    style: TextStyle(fontSize: 12.5)),
+                SizedBox(height: 4),
+                Text('Λήξη: 01/31 · CVC: 123 (και για τις δύο)',
+                    style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600)),
+              ],
+            ),
+          ),
+
+          const SizedBox(height: 16),
+          _buildSetupInstructions(),
+        ],
+      ),
+    );
+  }
+
+  // ─── Tab 2: Google Cloud ──────────────────────────────────────────────────
+  Widget _buildGoogleCloudTab() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Center(
+            child: Column(children: [
+              Container(
+                width: 64, height: 64,
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: Colors.blue.shade50,
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Image.network(
+                  'https://developers.google.com/identity/images/g-logo.png',
+                  fit: BoxFit.contain,
+                  errorBuilder: (context, error, stackTrace) =>
+                      Icon(Icons.cloud_rounded, size: 38, color: Colors.blue[700]),
+                ),
+              ),
+              const SizedBox(height: 8),
+              const Text('Google Cloud Console',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+            ]),
+          ),
+          const SizedBox(height: 16),
+          if (!_isDefault) ...[
+            const Text(
+              'Εδώ βάζεις το δικό σου Google Maps API key, ώστε το κόστος '
+              'Places/Maps να πηγαίνει σε σένα, όχι στο δικό μας κλειδί.',
+              style: TextStyle(fontSize: 12.5, color: Colors.grey),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _mapsApiKeyCtrl,
+              decoration: const InputDecoration(
+                  isDense: true,
+                  labelText: 'Google Maps API Key (προαιρετικό)',
+                  helperText: 'Χωρίς αυτό, χρησιμοποιείται προσωρινά το δικό '
+                      'μας κλειδί — αλλά τότε το κόστος Google Places/Maps '
+                      'επιβαρύνει εμάς.',
+                  border: OutlineInputBorder()),
+            ),
+            const SizedBox(height: 12),
+            _buildMapsKeyInstructions(),
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: () => launchUrl(
+                    Uri.parse('https://console.cloud.google.com/apis/credentials'),
+                    mode: LaunchMode.externalApplication),
+                icon: const Icon(Icons.open_in_new_rounded),
+                label: const Text('Άνοιγμα Google Cloud Console'),
+              ),
+            ),
+          ] else
+            const Text(
+              'Δεν εφαρμόζεται για τον δικό σου (default) λογαριασμό — το '
+              'δικό σου Google Maps κλειδί ρυθμίζεται ήδη απευθείας στον κώδικα.',
+              style: TextStyle(fontSize: 12.5, color: Colors.grey),
+            ),
+        ],
+      ),
+    );
+  }
+
+  // ─── Tab 3: Στοιχεία Επιχείρησης ─────────────────────────────────────────
+  Widget _buildBusinessTab() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (!_isDefault) ...[
+            Row(children: [
+              Icon(Icons.storefront_rounded, size: 18, color: Colors.indigo[700]),
+              const SizedBox(width: 6),
+              const Text('Στοιχεία Επιχείρησης',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+            ]),
+            const SizedBox(height: 4),
+            Text(
+              'Εμφανίζονται αυτόματα στη δική σου φόρμα κράτησης '
+              '(booking2.html) — δεν χρειάζεται να επεξεργαστείς κώδικα.',
+              style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _contactPhoneCtrl,
+              keyboardType: TextInputType.phone,
+              decoration: const InputDecoration(
+                  isDense: true,
+                  labelText: 'Τηλέφωνο επικοινωνίας',
+                  hintText: '+30 6900000000',
+                  border: OutlineInputBorder()),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _contactEmailCtrl,
+              keyboardType: TextInputType.emailAddress,
+              decoration: const InputDecoration(
+                  isDense: true,
+                  labelText: 'Email επικοινωνίας',
+                  hintText: 'info@τοδικοσουdomain.com',
+                  border: OutlineInputBorder()),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _whatsappNumberCtrl,
+              keyboardType: TextInputType.phone,
+              decoration: const InputDecoration(
+                  isDense: true,
+                  labelText: 'Αριθμός WhatsApp',
+                  helperText: 'Μόνο αριθμοί, με κωδικό χώρας — π.χ. 306900000000 (χωρίς +)',
+                  border: OutlineInputBorder()),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _logoUrlCtrl,
+              decoration: const InputDecoration(
+                  isDense: true,
+                  labelText: 'Link λογότυπου (εικόνα)',
+                  helperText: 'Ανέβασε το λογότυπό σου κάπου (π.χ. imgur.com) '
+                      'και επικόλλησε εδώ το link της εικόνας',
+                  border: OutlineInputBorder()),
+            ),
+          ] else
+            const Text(
+              'Δεν εφαρμόζεται για τον δικό σου (default) λογαριασμό.',
+              style: TextStyle(fontSize: 12.5, color: Colors.grey),
+            ),
+        ],
       ),
     );
   }
@@ -645,6 +867,137 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
                 ),
               ),
             ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ── Οδηγίες: πώς φτιάχνεις ΑΣΦΑΛΕΣ Google Maps API Key — βήμα-βήμα. ──────
+  Widget _buildMapsKeyInstructions() {
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: Colors.blue.shade50,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.blue.shade200),
+      ),
+      child: Theme(
+        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+        child: ExpansionTile(
+          tilePadding: const EdgeInsets.symmetric(horizontal: 12),
+          childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+          leading: Icon(Icons.map_rounded, size: 16, color: Colors.blue[700]),
+          title: Text('Πώς φτιάχνεις ασφαλές Google Maps κλειδί',
+              style: TextStyle(
+                  fontWeight: FontWeight.bold, fontSize: 12.5, color: Colors.blue[900])),
+          children: [
+            const Align(
+              alignment: Alignment.centerLeft,
+              child: Text('1. Ενεργοποίηση APIs',
+                  style: TextStyle(fontWeight: FontWeight.w600, fontSize: 12)),
+            ),
+            const SizedBox(height: 4),
+            const Text(
+              'Πήγαινε στο console.cloud.google.com → φτιάξε ΝΕΟ project (ή '
+              'χρησιμοποίησε υπάρχον δικό σου) → «APIs & Services» → «Library» → '
+              'ενεργοποίησε ΟΛΑ τα παρακάτω:',
+              style: TextStyle(fontSize: 12),
+            ),
+            const Padding(
+              padding: EdgeInsets.only(left: 10, top: 4),
+              child: Text(
+                '•  Places API (New) — για τις προτάσεις διευθύνσεων\n'
+                '•  Maps JavaScript API — για τον χάρτη της διαδρομής\n'
+                '•  Geocoding API — ΜΟΝΟ αν θες υποστήριξη Plus Codes '
+                '(π.χ. "8FW4V75V+8Q"). Χωρίς αυτό, η φόρμα δουλεύει κανονικά, '
+                'απλά δεν αναγνωρίζει Plus Codes.',
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: Colors.grey.shade100,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(children: [
+                Icon(Icons.my_location_rounded, size: 14, color: Colors.grey[700]),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    'Το κουμπί «Η τοποθεσία μου» (GPS) ΔΕΝ χρειάζεται τίποτα από '
+                    'τα παραπάνω — είναι λειτουργία του ίδιου του browser, '
+                    'δωρεάν, χωρίς Google API key. Μην μπερδεύεις με το '
+                    'ξεχωριστό (και εδώ άχρηστο) προϊόν "Geolocation API" της '
+                    'Google — δεν χρειάζεται καθόλου για τη φόρμα.',
+                    style: TextStyle(fontSize: 11, color: Colors.grey[700]),
+                  ),
+                ),
+              ]),
+            ),
+
+            const SizedBox(height: 12),
+            const Align(
+              alignment: Alignment.centerLeft,
+              child: Text('2. Δημιουργία κλειδιού',
+                  style: TextStyle(fontWeight: FontWeight.w600, fontSize: 12)),
+            ),
+            const SizedBox(height: 4),
+            const Text(
+              '«APIs & Services» → «Credentials» → «+ Create Credentials» → '
+              '«API key». Θα εμφανιστεί αμέσως ένας κωδικός (κάτι σαν '
+              '«AIzaSy...») — αυτόν θα βάλεις παραπάνω.',
+              style: TextStyle(fontSize: 12),
+            ),
+
+            const SizedBox(height: 12),
+            Row(children: [
+              Icon(Icons.lock_rounded, size: 14, color: Colors.red[700]),
+              const SizedBox(width: 4),
+              Text('3. ΠΡΟΣΤΑΣΙΑ — υποχρεωτικό βήμα!',
+                  style: TextStyle(
+                      fontWeight: FontWeight.bold, fontSize: 12, color: Colors.red[700])),
+            ]),
+            const SizedBox(height: 4),
+            const Text(
+              'Χωρίς αυτό το βήμα, ΟΠΟΙΟΣΔΗΠΟΤΕ μπορεί να «κλέψει» το κλειδί σου '
+              'από τον πηγαίο κώδικα της σελίδας και να το χρησιμοποιήσει αλλού '
+              'με δικά σου έξοδα. Πάτα πάνω στο κλειδί που μόλις έφτιαξες →',
+              style: TextStyle(fontSize: 12),
+            ),
+            const SizedBox(height: 6),
+            const Padding(
+              padding: EdgeInsets.only(left: 10),
+              child: Text(
+                '«Application restrictions» → επίλεξε «Websites» → πρόσθεσε:',
+                style: TextStyle(fontSize: 12),
+              ),
+            ),
+            const SizedBox(height: 6),
+            const _CopyableCode(text: 'https://ΤοDomainΣου.pages.dev/*'),
+            const SizedBox(height: 6),
+            const Padding(
+              padding: EdgeInsets.only(left: 10),
+              child: Text(
+                'Αν έχεις και preview URLs (Cloudflare Pages), πρόσθεσε ΚΑΙ:',
+                style: TextStyle(fontSize: 12),
+              ),
+            ),
+            const SizedBox(height: 6),
+            const _CopyableCode(text: 'https://*.ΤοDomainΣου.pages.dev/*'),
+            const SizedBox(height: 6),
+            const Text(
+              'Στην ενότητα «API restrictions» παρακάτω, επίλεξε «Restrict key» '
+              'και τσέκαρε ΜΟΝΟ τα APIs που ενεργοποίησες στο βήμα 1 — έτσι το '
+              'κλειδί δεν μπορεί να χρησιμοποιηθεί για τίποτα άλλο ακόμα κι αν '
+              'διαρρεύσει.',
+              style: TextStyle(fontSize: 12),
+            ),
+            const SizedBox(height: 4),
+            Text('Πάτα Save. Χρειάζεται συνήθως 5 λεπτά για να ενεργοποιηθεί.',
+                style: TextStyle(fontSize: 11, color: Colors.grey[600])),
           ],
         ),
       ),
