@@ -210,6 +210,49 @@ class _TenantAdminPageState extends State<TenantAdminPage> {
     }
   }
 
+  // Διορθώνει το tenantId σε πελάτες (π.χ. AIRSTAY) που έφτιαξαν οι admins
+  // αυτού του tenant, αν είχαν μείνει με λάθος/ελλιπές tenantId από πριν.
+  Future<void> _fixClientsPrompt(String tenantId, String businessName) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dctx) => AlertDialog(
+        title: const Text('Διόρθωση πελατών'),
+        content: Text(
+          'Θα βρεθούν όλοι οι admins/χρήστες του «$businessName» και θα '
+          'διορθωθεί το tenantId στους πελάτες (π.χ. AIRSTAY) που έχουν '
+          'φτιάξει — χρήσιμο αν κάποιος πελάτης δεν εμφανίζεται στη φόρμα. '
+          'Ασφαλές, δεν αγγίζει τίποτα άλλο.',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(dctx).pop(false), child: const Text('Άκυρο')),
+          FilledButton(
+            onPressed: () => Navigator.of(dctx).pop(true),
+            child: const Text('Εκτέλεση'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    try {
+      final callable = FirebaseFunctions.instance.httpsCallable('fixClientsForTenant');
+      final res = await callable.call({'tenantId': tenantId});
+      final total = res.data['total'] ?? 0;
+      final updated = res.data['updated'] ?? 0;
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Διορθώθηκαν $updated από $total πελάτες.'),
+          backgroundColor: const Color(0xFF1E8E3E),
+        ));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Σφάλμα: $e'), backgroundColor: Colors.red.shade700));
+      }
+    }
+  }
+
   Future<void> _toggleActive(String tenantId, bool newActive) async {
     // Αισιόδοξη ενημέρωση UI, με επαναφορά αν αποτύχει.
     setState(() {
@@ -470,6 +513,38 @@ class _TenantAdminPageState extends State<TenantAdminPage> {
                                               ),
                                             ),
                                           ]),
+                                          const SizedBox(height: 8),
+                                          // ── Διόρθωση πελατών (π.χ. AIRSTAY) που έφτιαξαν
+                                          // admins αυτού του tenant ΠΡΙΝ ρυθμιστεί σωστά
+                                          // το δικό τους tenantId, ή πριν το multi-tenant.
+                                          InkWell(
+                                            onTap: () => _fixClientsPrompt(
+                                                t['tenantId'] as String, t['businessName'] as String? ?? ''),
+                                            borderRadius: BorderRadius.circular(8),
+                                            child: Container(
+                                              width: double.infinity,
+                                              padding: const EdgeInsets.symmetric(
+                                                  horizontal: 10, vertical: 7),
+                                              decoration: BoxDecoration(
+                                                color: Colors.orange.shade50,
+                                                borderRadius: BorderRadius.circular(8),
+                                                border: Border.all(color: Colors.orange.shade200),
+                                              ),
+                                              child: Row(
+                                                mainAxisAlignment: MainAxisAlignment.center,
+                                                children: [
+                                                  Icon(Icons.build_circle_rounded,
+                                                      size: 14, color: Colors.orange.shade800),
+                                                  const SizedBox(width: 6),
+                                                  Text('Διόρθωση πελατών (π.χ. AIRSTAY)',
+                                                      style: TextStyle(
+                                                          fontSize: 11.5,
+                                                          fontWeight: FontWeight.w600,
+                                                          color: Colors.orange.shade800)),
+                                                ],
+                                              ),
+                                            ),
+                                          ),
                                           const SizedBox(height: 8),
                                           // ── Οδηγίες «πού το βάζεις» — μέσα στην ίδια την
                                           // εφαρμογή, ώστε να μη χρειάζεται να θυμάσαι/ψάχνεις.

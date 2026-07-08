@@ -2123,26 +2123,36 @@ function isNightWindow(naiveDate) {
   return mins >= 23 * 60 + 30 || mins < 5 * 60 + 30;
 }
 
-// ── Μπλάκαουτ: μόνο το ΑΜΕΣΩΣ επόμενο παράθυρο 22:30–08:00 από «τώρα» ───────
-function nearestBlackoutWindow(simNaive) {
+// ── Μπλάκαουτ: μόνο το ΑΜΕΣΩΣ επόμενο παράθυρο [startH:startM–endH:endM] από
+// «τώρα» — προεπιλογή 22:30–08:00, πλέον ρυθμιζόμενο ανά tenant.
+function nearestBlackoutWindow(simNaive, startH, startM, endH, endM) {
   const mins = simNaive.getUTCHours() * 60 + simNaive.getUTCMinutes();
   const start = new Date(simNaive);
-  start.setUTCHours(22, 30, 0, 0);
-  if (mins < 8 * 60) start.setUTCDate(start.getUTCDate() - 1);
+  start.setUTCHours(startH, startM, 0, 0);
+  if (mins < endH * 60 + endM) start.setUTCDate(start.getUTCDate() - 1);
   const end = new Date(start);
   end.setUTCDate(end.getUTCDate() + 1);
-  end.setUTCHours(8, 0, 0, 0);
+  end.setUTCHours(endH, endM, 0, 0);
   return { start, end };
 }
 
 // ── Λόγοι μπλοκαρίσματος υποβολής (μπλάκαουτ / προθεσμία / μεγάλη παραγγελία)
-function computeGate(simNaive, scheduledNaive, persons, luggage) {
+// cfg: leadTimeMinutes, blackoutEnabled, blackoutStartHour/Minute, blackoutEndHour/Minute
+function computeGate(simNaive, scheduledNaive, persons, luggage, cfg) {
   const reasons = [];
   if (!scheduledNaive) return reasons;
-  const bw = nearestBlackoutWindow(simNaive);
-  if (scheduledNaive >= bw.start && scheduledNaive < bw.end) reasons.push("blackout");
-  const leadHours = (scheduledNaive - simNaive) / 3600000;
-  if (leadHours < 2) reasons.push("lead_time");
+  const c = cfg || {};
+  if (c.blackoutEnabled !== false) {
+    const bw = nearestBlackoutWindow(
+      simNaive,
+      c.blackoutStartHour ?? 22, c.blackoutStartMinute ?? 30,
+      c.blackoutEndHour ?? 8, c.blackoutEndMinute ?? 0,
+    );
+    if (scheduledNaive >= bw.start && scheduledNaive < bw.end) reasons.push("blackout");
+  }
+  const leadMinutes = (scheduledNaive - simNaive) / 60000;
+  const minLeadMinutes = c.leadTimeMinutes ?? 120;
+  if (leadMinutes < minLeadMinutes) reasons.push("lead_time");
   if (persons >= 5 || luggage >= 5) reasons.push("large_order");
   return reasons;
 }
@@ -2289,6 +2299,13 @@ async function getPricingData(tenantId) {
       nightPctTaxi: 30, nightPctVan: 25, vanPct: 90,
       luggagePer: 0, seatPrice: 5,
       nightAppliesToZones: true,
+      // ── Ελάχιστη προθεσμία κράτησης (ώρες:λεπτά, π.χ. 1:15 = 75 λεπτά) ──
+      leadTimeMinutes: 120, // προεπιλογή: 2 ώρες (ίδιο με πριν)
+      // ── Μπλάκαουτ ξημερωμάτων (αν ενεργό, μπλοκάρει ραντεβού μέσα σε
+      // αυτό το παράθυρο ώρας, ό,τι κι αν είναι η προθεσμία) ──
+      blackoutEnabled: true, // προεπιλογή: ενεργό (ίδιο με πριν)
+      blackoutStartHour: 22, blackoutStartMinute: 30,
+      blackoutEndHour: 8, blackoutEndMinute: 0,
     },
     cfgDoc.exists ? cfgDoc.data() : {}
   );
@@ -2515,13 +2532,15 @@ exports.estimatePrice = onRequest(
       const lang = s(b.lang) || "el";
       const dialCode = s(b.dialCode);
       const isGreek = lang === "el" ? true : dialCode === "+30";
+      const tenantId = s(b.tenantId) || "default";
+      const { cfg } = await getPricingData(tenantId);
 
       let scheduledNaive = null, gateReasons = [];
       const date = s(b.date), time = s(b.time);
       if (date && time) {
         scheduledNaive = athensNaiveFromDateTimeStrings(date, time);
         const simNaive = athensNaiveDate(new Date());
-        gateReasons = computeGate(simNaive, scheduledNaive, persons, luggage);
+        gateReasons = computeGate(simNaive, scheduledNaive, persons, luggage, cfg);
       }
 
       const result = await computeEstimate({
@@ -2664,9 +2683,11 @@ exports.submitPublicBooking = onRequest(
       // ── Έλεγχος μπλάκαουτ/ελάχιστης προθεσμίας/μεγάλης παραγγελίας/εκτός
       //    Αττικής — ελέγχεται ΚΑΙ εδώ (όχι μόνο client-side): ένα POST
       //    απευθείας στο API δεν μπορεί να προσπεράσει τους κανόνες.
+      const tenantId = s(b.tenantId) || "default";
+      const { cfg } = await getPricingData(tenantId);
       const scheduledNaive = athensNaiveFromDateTimeStrings(date, time);
       const simNaive = athensNaiveDate(new Date());
-      const gateReasons = computeGate(simNaive, scheduledNaive, persons, luggage);
+      const gateReasons = computeGate(simNaive, scheduledNaive, persons, luggage, cfg);
 
       // Έλληνας/ξένος πελάτης: πρώτα η γλώσσα σελίδας, δεύτερο fallback ο
       // κωδικός χώρας του τηλεφώνου.
@@ -3143,9 +3164,10 @@ exports.createVivaOrder = onRequest(
 
       // ── ΙΔΙΟΣ έλεγχος μπλάκαουτ/προθεσμίας/μεγάλης παραγγελίας με το
       //    submitPublicBooking — ΞΑΝΑ, server-side, ΠΟΤΕ από τον client.
+      const { cfg } = await getPricingData(tenantId);
       const scheduledNaive = athensNaiveFromDateTimeStrings(date, time);
       const simNaive = athensNaiveDate(new Date());
-      const gateReasons = computeGate(simNaive, scheduledNaive, persons, luggage);
+      const gateReasons = computeGate(simNaive, scheduledNaive, persons, luggage, cfg);
 
       const dialCode = (phone.match(/^\+\d+/) || [""])[0];
       const isGreek = lang === "el" ? true : dialCode === "+30";
@@ -4053,6 +4075,56 @@ exports.updateTenantFeatureFlags = onCall(
       await db.collection("tenants").doc(tenantId).update(updates);
     }
     return { ok: true };
+  }
+);
+
+// ── fixClientsForTenant: διορθώνει το tenantId σε πελάτες (clients, π.χ.
+// "AIRSTAY") που έφτιαξαν admins/tenant-owners αυτού του tenant ΠΡΙΝ
+// ρυθμιστεί σωστά το δικό τους presence.tenantId (ή πριν φτιαχτεί καν το
+// multi-tenant σύστημα). Βρίσκει «σε ποιον ανήκει» ο κάθε πελάτης μέσω του
+// createdBy, ΟΧΙ μέσω του (πιθανό λάθος) δικού του tenantId.
+exports.fixClientsForTenant = onCall(
+  { region: "us-central1" },
+  async (request) => {
+    if (!request.auth || request.auth.token.email !== "techtacy@gmail.com") {
+      throw new HttpsError("permission-denied", "Μόνο ο super-admin.");
+    }
+    const tenantId = s((request.data || {}).tenantId);
+    if (!tenantId || tenantId === "default") {
+      throw new HttpsError("invalid-argument", "Μη έγκυρο tenantId.");
+    }
+    const db = getFirestore();
+
+    // 1) Ποιοι χρήστες (uid) ανήκουν σε αυτό το tenant ΤΩΡΑ.
+    const presSnap = await db.collection("presence")
+      .where("tenantId", "==", tenantId).get();
+    const uids = presSnap.docs.map((d) => d.id);
+    if (!uids.length) {
+      return { ok: true, total: 0, updated: 0, message: "Δεν βρέθηκε κανένας χρήστης σε αυτό το tenant." };
+    }
+
+    // 2) Πελάτες που έφτιαξε ΚΑΘΕΝΑΣ από αυτούς (Firestore 'in' — έως 30
+    // τιμές ανά ερώτημα, κάνουμε chunks για ασφάλεια σε μεγάλες ομάδες).
+    let total = 0, updated = 0;
+    const chunkSize = 30;
+    for (let i = 0; i < uids.length; i += chunkSize) {
+      const chunk = uids.slice(i, i + chunkSize);
+      const clientsSnap = await db.collection("clients")
+        .where("createdBy", "in", chunk).get();
+      total += clientsSnap.size;
+      const batch = db.batch();
+      let inBatch = 0;
+      for (const doc of clientsSnap.docs) {
+        if (doc.data().tenantId !== tenantId) {
+          batch.update(doc.ref, { tenantId });
+          updated++;
+          inBatch++;
+        }
+      }
+      if (inBatch > 0) await batch.commit();
+    }
+
+    return { ok: true, total, updated };
   }
 );
 

@@ -1152,6 +1152,17 @@ class _PricingConfigTabState extends State<_PricingConfigTab> {
   final Map<String, bool> _foreignOn = {for (final k in _keys) k: false};
 
   bool _nightAppliesToZones = true;
+
+  // ── Ελάχιστη προθεσμία κράτησης (ώρες:λεπτά) — π.χ. 1:15 = 1 ώρα 15 λεπτά
+  int _leadTimeHours = 2;
+  int _leadTimeMinutes = 0;
+
+  // ── Μπλάκαουτ ξημερωμάτων (αν ενεργό, μπλοκάρει ραντεβού μέσα στο
+  // παράθυρο [startH:startM–endH:endM], ό,τι κι αν είναι η προθεσμία)
+  bool _blackoutEnabled = true;
+  int _blackoutStartHour = 22, _blackoutStartMinute = 30;
+  int _blackoutEndHour = 8, _blackoutEndMinute = 0;
+
   bool _loaded = false;
   bool _saving = false;
 
@@ -1193,6 +1204,17 @@ class _PricingConfigTabState extends State<_PricingConfigTab> {
                 : _c[k]!.text; // αρχικοποίηση με την ίδια τιμή, βολικό σημείο εκκίνησης
           }
           _nightAppliesToZones = data['nightAppliesToZones'] as bool? ?? true;
+
+          final leadTimeMinutesTotal = (data['leadTimeMinutes'] as num?)?.toInt() ?? 120;
+          _leadTimeHours = leadTimeMinutesTotal ~/ 60;
+          _leadTimeMinutes = leadTimeMinutesTotal % 60;
+
+          _blackoutEnabled = data['blackoutEnabled'] as bool? ?? true;
+          _blackoutStartHour = (data['blackoutStartHour'] as num?)?.toInt() ?? 22;
+          _blackoutStartMinute = (data['blackoutStartMinute'] as num?)?.toInt() ?? 30;
+          _blackoutEndHour = (data['blackoutEndHour'] as num?)?.toInt() ?? 8;
+          _blackoutEndMinute = (data['blackoutEndMinute'] as num?)?.toInt() ?? 0;
+
           _loaded = true;
         }
         return SingleChildScrollView(
@@ -1222,6 +1244,104 @@ class _PricingConfigTabState extends State<_PricingConfigTab> {
                 value: _nightAppliesToZones,
                 onChanged: (v) => setState(() => _nightAppliesToZones = v),
               ),
+
+              const SizedBox(height: 20),
+              const Divider(),
+              const SizedBox(height: 8),
+              const Text('Ελάχιστη προθεσμία κράτησης',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+              const SizedBox(height: 4),
+              const Text(
+                'Πόσο πριν χρειάζεται να κλείσει κάποιος δουλειά — π.χ. 1 ώρα και '
+                '15 λεπτά σημαίνει ότι μπορεί να κλείσει για 1:16 από τώρα, αλλά '
+                'όχι για 1:14.',
+                style: TextStyle(color: Colors.grey, fontSize: 12),
+              ),
+              const SizedBox(height: 8),
+              Row(children: [
+                Expanded(
+                  child: _numberDropdown(
+                    label: 'Ώρες',
+                    value: _leadTimeHours,
+                    max: 23,
+                    onChanged: (v) => setState(() => _leadTimeHours = v),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: _numberDropdown(
+                    label: 'Λεπτά',
+                    value: _leadTimeMinutes,
+                    max: 59,
+                    onChanged: (v) => setState(() => _leadTimeMinutes = v),
+                  ),
+                ),
+              ]),
+
+              const SizedBox(height: 20),
+              const Divider(),
+              const SizedBox(height: 8),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Αποκλεισμός ραντεβού για τα ξημερώματα',
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                subtitle: const Text(
+                  'Αν ενεργό, δεν επιτρέπεται ραντεβού μέσα στο παράθυρο ώρας '
+                  'παρακάτω — ακόμα κι αν ζητηθεί πολλές ώρες νωρίτερα. Η φόρμα '
+                  'στέλνει τον πελάτη σε WhatsApp αντί να κλείνει τη δουλειά.',
+                  style: TextStyle(fontSize: 11.5),
+                ),
+                value: _blackoutEnabled,
+                onChanged: (v) => setState(() => _blackoutEnabled = v),
+              ),
+              if (_blackoutEnabled) ...[
+                const SizedBox(height: 8),
+                const Text('Από ώρα (βράδυ)', style: TextStyle(fontSize: 12.5, color: Colors.grey)),
+                const SizedBox(height: 6),
+                Row(children: [
+                  Expanded(
+                    child: _numberDropdown(
+                      label: 'Ώρα',
+                      value: _blackoutStartHour,
+                      max: 23,
+                      onChanged: (v) => setState(() => _blackoutStartHour = v),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: _numberDropdown(
+                      label: 'Λεπτά',
+                      value: _blackoutStartMinute,
+                      max: 59,
+                      onChanged: (v) => setState(() => _blackoutStartMinute = v),
+                    ),
+                  ),
+                ]),
+                const SizedBox(height: 12),
+                const Text('Μέχρι ώρα (πρωί, π.χ. 12:00am–7:00am)',
+                    style: TextStyle(fontSize: 12.5, color: Colors.grey)),
+                const SizedBox(height: 6),
+                Row(children: [
+                  Expanded(
+                    child: _numberDropdown(
+                      label: 'Ώρα',
+                      value: _blackoutEndHour,
+                      max: 23,
+                      onChanged: (v) => setState(() => _blackoutEndHour = v),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: _numberDropdown(
+                      label: 'Λεπτά',
+                      value: _blackoutEndMinute,
+                      max: 59,
+                      onChanged: (v) => setState(() => _blackoutEndMinute = v),
+                    ),
+                  ),
+                ]),
+              ],
+
               const SizedBox(height: 12),
               AppButton(
                 label: _saving ? 'Αποθήκευση…' : 'Αποθήκευση',
@@ -1232,6 +1352,29 @@ class _PricingConfigTabState extends State<_PricingConfigTab> {
           ),
         );
       },
+    );
+  }
+
+  // Απλό dropdown 0..max για ώρα/λεπτά.
+  Widget _numberDropdown({
+    required String label,
+    required int value,
+    required int max,
+    required ValueChanged<int> onChanged,
+  }) {
+    return DropdownButtonFormField<int>(
+      initialValue: value.clamp(0, max),
+      decoration: InputDecoration(
+        isDense: true,
+        labelText: label,
+        border: const OutlineInputBorder(),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+      ),
+      items: [
+        for (int i = 0; i <= max; i++)
+          DropdownMenuItem(value: i, child: Text(i.toString().padLeft(2, '0'))),
+      ],
+      onChanged: (v) { if (v != null) onChanged(v); },
     );
   }
 
@@ -1314,6 +1457,12 @@ class _PricingConfigTabState extends State<_PricingConfigTab> {
       // Ο μαθηματικός τύπος αφαιρέθηκε — καθαρίζουμε τυχόν παλιά τιμή ώστε ο
       // server να χρησιμοποιεί πάντα τον ενσωματωμένο υπολογισμό.
       'customFormula': '',
+      'leadTimeMinutes': _leadTimeHours * 60 + _leadTimeMinutes,
+      'blackoutEnabled': _blackoutEnabled,
+      'blackoutStartHour': _blackoutStartHour,
+      'blackoutStartMinute': _blackoutStartMinute,
+      'blackoutEndHour': _blackoutEndHour,
+      'blackoutEndMinute': _blackoutEndMinute,
     };
     try {
       await _pricingDocRef.set(data, SetOptions(merge: true));
