@@ -3825,7 +3825,23 @@ exports.repairTenantOwnerAccess = onCall(
       tenantOwner: true,
       webEnabled: true,
     }, { merge: true });
-    return { ok: true, tenantId, targetUid, targetEmail: targetEmail || null };
+
+    // Διαγνωστικό: ξαναδιάβασε ό,τι ΠΡΑΓΜΑΤΙΚΑ αποθηκεύτηκε, ώστε να
+    // επιβεβαιώνεται στο UI ότι τα flags μπήκαν σωστά.
+    const after = (await db.collection("presence").doc(targetUid).get()).data() || {};
+    return {
+      ok: true,
+      tenantId,
+      targetUid,
+      targetEmail: targetEmail || null,
+      saved: {
+        admin: after.admin === true,
+        tenantOwner: after.tenantOwner === true,
+        isApproved: after.isApproved === true,
+        webEnabled: after.webEnabled === true,
+        tenantId: after.tenantId || null,
+      },
+    };
   }
 );
 

@@ -366,15 +366,44 @@ class _TenantAdminPageState extends State<TenantAdminPage> {
     final targetEmail = emailCtrl.text.trim();
     try {
       final callable = FirebaseFunctions.instance.httpsCallable('repairTenantOwnerAccess');
-      await callable.call({
+      final res = await callable.call({
         'tenantId': tenantId,
         if (targetEmail.isNotEmpty && targetEmail != masterEmail) 'email': targetEmail,
       });
+      final saved = (res.data['saved'] as Map?) ?? {};
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('Έγινε για $targetEmail — ζήτησε να ξανακάνει login (ή refresh στο web).'),
-          backgroundColor: const Color(0xFF1E8E3E),
-        ));
+        await showDialog<void>(
+          context: context,
+          builder: (dctx) => AlertDialog(
+            title: const Text('Επισκευή ολοκληρώθηκε'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Λογαριασμός: ${res.data['targetEmail'] ?? masterEmail}'),
+                const SizedBox(height: 8),
+                Text('admin: ${saved['admin']}'),
+                Text('tenantOwner: ${saved['tenantOwner']}'),
+                Text('isApproved: ${saved['isApproved']}'),
+                Text('webEnabled: ${saved['webEnabled']}'),
+                Text('tenantId: ${saved['tenantId']}'),
+                const SizedBox(height: 12),
+                const Text(
+                  'Αν όλα δείχνουν true, ζήτησέ του να κάνει ΠΛΗΡΗ αποσύνδεση '
+                  '(κουμπί Αποσύνδεση στα Στοιχεία οδηγού) και ξανά σύνδεση. '
+                  'Αν συνεχίζει, στείλε μου screenshot αυτού του παραθύρου.',
+                  style: TextStyle(fontSize: 12.5),
+                ),
+              ],
+            ),
+            actions: [
+              FilledButton(
+                onPressed: () => Navigator.of(dctx).pop(),
+                child: const Text('Κατάλαβα'),
+              ),
+            ],
+          ),
+        );
       }
     } catch (e) {
       if (mounted) {

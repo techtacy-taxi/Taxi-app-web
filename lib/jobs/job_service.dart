@@ -2335,19 +2335,26 @@ class JobService {
 
   /// Δημιουργεί την πηγή "Standard Rate" αν δεν υπάρχει.
   static Future<void> ensureStandardRate() async {
-    final ref = _fs.collection(_sources).doc('standard_rate');
-    final doc = await ref.get();
-    if (doc.exists) return;
-    final settings = await getAppSettings();
-    await ref.set({
-      'name':               'Standard Rate',
-      'commissionType':     CommissionType.fixed.name,
-      'commissionValue':    0.0,
-      'appCommissionType':  CommissionType.fixed.name,
-      'appCommissionValue': settings['appCommission'] ?? 1.50,
-      'createdBy':          'SYSTEM',
-      'isGlobal':           true,
-    });
+    try {
+      final ref = _fs.collection(_sources).doc('standard_rate');
+      final doc = await ref.get();
+      if (doc.exists) return;
+      final settings = await getAppSettings();
+      await ref.set({
+        'name':               'Standard Rate',
+        'commissionType':     CommissionType.fixed.name,
+        'commissionValue':    0.0,
+        'appCommissionType':  CommissionType.fixed.name,
+        'appCommissionValue': settings['appCommission'] ?? 1.50,
+        'createdBy':          'SYSTEM',
+        'isGlobal':           true,
+      });
+    } catch (_) {
+      // Αν αποτύχει (π.χ. permission σε tenant-owner που δεν επιτρέπεται να
+      // γράψει global doc, ή προσωρινό σφάλμα), ΔΕΝ πρέπει να μπλοκάρει το
+      // άνοιγμα της φόρμας πελάτη — το standard_rate είναι βοηθητικό. Απλά
+      // συνεχίζουμε· ο master το έχει ήδη δημιουργήσει έτσι κι αλλιώς.
+    }
   }
 
   static Future<void> createSource(JobSource source) async {
