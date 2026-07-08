@@ -3739,6 +3739,41 @@ exports.listTenants = onCall(
 // ΜΟΝΟ ο super-admin (π.χ. αν έγραψε λάθος το email του πελάτη στη «Νέα
 // Online Φόρμα»). Αν αλλάξει το email, ξαναβρίσκουμε το masterUid από το
 // Firebase Auth (ο πελάτης πρέπει να έχει ήδη κάνει login με το ΝΕΟ email).
+// ── repairTenantOwnerAccess: «επισκευή» με ένα κλικ — ξαναβάζει στο presence
+// του master αυτού του tenant ΟΛΑ τα flags που χρειάζεται για να δουλέψει
+// ξανά κανονικά (admin/tenantOwner/isApproved/tenantId/webEnabled). Χρήσιμο
+// όποτε κάποιος λογαριασμός «σπάει» (π.χ. permission-denied στη δημιουργία
+// πελατών) — αντί να ψάχνεις χειροκίνητα στη λίστα Διαχειριστές.
+exports.repairTenantOwnerAccess = onCall(
+  { region: "us-central1" },
+  async (request) => {
+    if (!request.auth || request.auth.token.email !== "techtacy@gmail.com") {
+      throw new HttpsError("permission-denied", "Μόνο ο super-admin μπορεί να το κάνει.");
+    }
+    const d = request.data || {};
+    const tenantId = s(d.tenantId);
+    if (!tenantId || tenantId === "default") {
+      throw new HttpsError("invalid-argument", "Μη έγκυρο tenantId.");
+    }
+    const db = getFirestore();
+    const tenantDoc = await db.collection("tenants").doc(tenantId).get();
+    if (!tenantDoc.exists) throw new HttpsError("not-found", "Δεν βρέθηκε αυτός ο tenant.");
+    const masterUid = tenantDoc.data().masterUid;
+    if (!masterUid) {
+      throw new HttpsError("failed-precondition",
+        "Αυτός ο tenant δεν έχει καταγεγραμμένο masterUid — διόρθωσε πρώτα το email από την Επεξεργασία.");
+    }
+    await db.collection("presence").doc(masterUid).set({
+      tenantId,
+      isApproved: true,
+      admin: true,
+      tenantOwner: true,
+      webEnabled: true,
+    }, { merge: true });
+    return { ok: true, tenantId, masterUid };
+  }
+);
+
 exports.updateTenantOwnerInfo = onCall(
   { region: "us-central1" },
   async (request) => {

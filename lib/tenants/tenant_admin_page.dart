@@ -323,6 +323,46 @@ class _TenantAdminPageState extends State<TenantAdminPage> {
     if (changed == true) _loadTenants();
   }
 
+  // «Επισκευή πρόσβασης» — ξαναβάζει admin/tenantOwner/isApproved/webEnabled
+  // στο presence του master αυτού του tenant. Χρήσιμο αν κάποιος λογαριασμός
+  // «σπάσει» (π.χ. permission-denied στη δημιουργία πελατών/δουλειών).
+  Future<void> _repairAccess(String tenantId, String businessName) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dctx) => AlertDialog(
+        title: const Text('Επισκευή πρόσβασης'),
+        content: Text(
+          'Θα ξαναμπούν όλα τα δικαιώματα (Διαχειριστής, Ιδιοκτήτης Online '
+          'Φόρμας, έγκριση, web) στον master του «$businessName». Ασφαλές να '
+          'το τρέξεις — χρήσιμο αν παίρνει σφάλμα permission-denied.',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(dctx).pop(false), child: const Text('Άκυρο')),
+          FilledButton(
+            onPressed: () => Navigator.of(dctx).pop(true),
+            child: const Text('Επισκευή'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      final callable = FirebaseFunctions.instance.httpsCallable('repairTenantOwnerAccess');
+      await callable.call({'tenantId': tenantId});
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Έγινε — ζήτησε από τον πελάτη να ξανακάνει login (ή refresh στο web).'),
+          backgroundColor: Color(0xFF1E8E3E),
+        ));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Σφάλμα: $e'), backgroundColor: Colors.red.shade700));
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     // ── Ασφάλεια: κανείς άλλος δεν βλέπει τίποτα από αυτή τη σελίδα ──
@@ -551,6 +591,35 @@ class _TenantAdminPageState extends State<TenantAdminPage> {
                                                           fontSize: 11.5,
                                                           fontWeight: FontWeight.w600,
                                                           color: Colors.orange.shade800)),
+                                                ],
+                                              ),
+                                            ),
+                                          ),
+                                          const SizedBox(height: 8),
+                                          InkWell(
+                                            onTap: () => _repairAccess(
+                                                t['tenantId'] as String, t['businessName'] as String? ?? ''),
+                                            borderRadius: BorderRadius.circular(8),
+                                            child: Container(
+                                              width: double.infinity,
+                                              padding: const EdgeInsets.symmetric(
+                                                  horizontal: 10, vertical: 7),
+                                              decoration: BoxDecoration(
+                                                color: Colors.red.shade50,
+                                                borderRadius: BorderRadius.circular(8),
+                                                border: Border.all(color: Colors.red.shade200),
+                                              ),
+                                              child: Row(
+                                                mainAxisAlignment: MainAxisAlignment.center,
+                                                children: [
+                                                  Icon(Icons.health_and_safety_rounded,
+                                                      size: 14, color: Colors.red.shade800),
+                                                  const SizedBox(width: 6),
+                                                  Text('Επισκευή πρόσβασης (permission-denied)',
+                                                      style: TextStyle(
+                                                          fontSize: 11.5,
+                                                          fontWeight: FontWeight.w600,
+                                                          color: Colors.red.shade800)),
                                                 ],
                                               ),
                                             ),
