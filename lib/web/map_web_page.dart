@@ -40,6 +40,7 @@ class _MapWebPageState extends State<MapWebPage> {
 
   List<VoiceGroup> _groups = [];
   Map<String, Map<String, dynamic>> _presence = {};
+  bool _centeredOnSelf = false; // κεντράρουμε στη δική μας θέση ΜΙΑ φορά, όχι σε κάθε ενημέρωση
 
   StreamSubscription? _presenceSub;
   StreamSubscription? _groupsSub;
@@ -80,7 +81,7 @@ class _MapWebPageState extends State<MapWebPage> {
 
     for (final entry in _presence.entries) {
       final id = entry.key;
-      if (id == widget.uid) continue; // όχι ο εαυτός μας
+      final isSelf = id == widget.uid; // ο δικός σου marker — τον δείχνουμε ΤΩΡΑ, δεν τον κρύβουμε
       final data = entry.value;
       final lat = (data['lat'] as num?)?.toDouble();
       final lng = (data['lng'] as num?)?.toDouble();
@@ -98,15 +99,17 @@ class _MapWebPageState extends State<MapWebPage> {
       final isAvailable = isOnline && available;
       if (isOnline) online++;
 
-      // Όνομα (ίδια λογική με το map_page)
+      // Όνομα (ίδια λογική με το map_page) — για τον εαυτό σου, ξεκάθαρη ετικέτα.
       final firstName = (data['displayName'] as String?)?.trim();
       final lastName = (data['lastName'] as String?)?.trim();
       final initial = (firstName != null && firstName.isNotEmpty)
           ? '${firstName[0].toUpperCase()}.'
           : '';
-      final safeName = (lastName != null && lastName.isNotEmpty)
-          ? (initial.isNotEmpty ? '$lastName $initial' : lastName)
-          : (firstName != null && firstName.isNotEmpty ? firstName : 'Οδηγός');
+      final safeName = isSelf
+          ? 'Εσύ'
+          : (lastName != null && lastName.isNotEmpty)
+              ? (initial.isNotEmpty ? '$lastName $initial' : lastName)
+              : (firstName != null && firstName.isNotEmpty ? firstName : 'Οδηγός');
 
       final vehicle = ((data['vehicleType'] as String?) ?? 'taxi') == 'van'
           ? VehicleType.van
@@ -130,18 +133,30 @@ class _MapWebPageState extends State<MapWebPage> {
         position: LatLng(lat, lng),
         icon: asset.icon,
         anchor: asset.anchor,
-        // Πάτημα → πλήρης κάρτα οδηγού (ίδια με το κινητό).
-        onTap: () {
-          if (!mounted) return;
-          showDriverCard(
-            context: context,
-            data: data,
-            vehicle: vehicle,
-            driverUid: id,
-            allGroups: _groups,
-          );
-        },
+        // Πάτημα → πλήρης κάρτα οδηγού (ίδια με το κινητό). Για τον εαυτό σου
+        // δεν έχει νόημα να ανοίγει κάρτα «οδηγού», απλά δεν κάνει τίποτα.
+        onTap: isSelf
+            ? null
+            : () {
+                if (!mounted) return;
+                showDriverCard(
+                  context: context,
+                  data: data,
+                  vehicle: vehicle,
+                  driverUid: id,
+                  allGroups: _groups,
+                );
+              },
       ));
+
+      // Κεντράρισμα της κάμερας στη ΔΙΚΗ ΣΟΥ θέση — μόνο ΜΙΑ φορά, την πρώτη
+      // φορά που τη λαμβάνουμε (δεν ξανακεντράρει σε κάθε ενημέρωση θέσης,
+      // ώστε να μη «πηδάει» ο χάρτης ενώ κοιτάς κάτι άλλο).
+      if (isSelf && !_centeredOnSelf && _controller != null) {
+        _centeredOnSelf = true;
+        _controller!.animateCamera(
+            CameraUpdate.newLatLngZoom(LatLng(lat, lng), _kWebZoom));
+      }
     }
 
     if (!mounted) return;
@@ -166,7 +181,10 @@ class _MapWebPageState extends State<MapWebPage> {
             myLocationButtonEnabled: false,
             mapToolbarEnabled: false,
             zoomControlsEnabled: true,
-            onMapCreated: (c) => _controller = c,
+            onMapCreated: (c) {
+              _controller = c;
+              _rebuildMarkers(); // ξανατρέχει, σε περίπτωση που η θέση σου είχε ήδη φτάσει
+            },
           ),
           Positioned(
             top: 14, left: 14,
