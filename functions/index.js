@@ -3770,19 +3770,36 @@ exports.repairTenantOwnerAccess = onCall(
     const db = getFirestore();
     const tenantDoc = await db.collection("tenants").doc(tenantId).get();
     if (!tenantDoc.exists) throw new HttpsError("not-found", "Δεν βρέθηκε αυτός ο tenant.");
-    const masterUid = tenantDoc.data().masterUid;
-    if (!masterUid) {
-      throw new HttpsError("failed-precondition",
-        "Αυτός ο tenant δεν έχει καταγεγραμμένο masterUid — διόρθωσε πρώτα το email από την Επεξεργασία.");
+
+    // ── Προεπιλογή: ο καταγεγραμμένος master του tenant. Αν δώσεις ΑΛΛΟ
+    // email (π.χ. κάποιος υπάλληλος/admin αυτού του tenant που ΔΕΝ είναι ο
+    // ίδιος ο ιδιοκτήτης), διορθώνει ΕΚΕΙΝΟΝ αντί για τον master.
+    const targetEmail = s(d.email);
+    let targetUid;
+    if (targetEmail) {
+      try {
+        const userRecord = await getAuth().getUserByEmail(targetEmail);
+        targetUid = userRecord.uid;
+      } catch (e) {
+        throw new HttpsError("not-found",
+          "Δεν βρέθηκε λογαριασμός με αυτό το email — πρέπει να έχει ήδη κάνει login.");
+      }
+    } else {
+      targetUid = tenantDoc.data().masterUid;
+      if (!targetUid) {
+        throw new HttpsError("failed-precondition",
+          "Αυτός ο tenant δεν έχει καταγεγραμμένο masterUid — δώσε συγκεκριμένο email.");
+      }
     }
-    await db.collection("presence").doc(masterUid).set({
+
+    await db.collection("presence").doc(targetUid).set({
       tenantId,
       isApproved: true,
       admin: true,
       tenantOwner: true,
       webEnabled: true,
     }, { merge: true });
-    return { ok: true, tenantId, masterUid };
+    return { ok: true, tenantId, targetUid, targetEmail: targetEmail || null };
   }
 );
 

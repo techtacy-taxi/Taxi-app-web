@@ -324,17 +324,34 @@ class _TenantAdminPageState extends State<TenantAdminPage> {
   }
 
   // «Επισκευή πρόσβασης» — ξαναβάζει admin/tenantOwner/isApproved/webEnabled
-  // στο presence του master αυτού του tenant. Χρήσιμο αν κάποιος λογαριασμός
-  // «σπάσει» (π.χ. permission-denied στη δημιουργία πελατών/δουλειών).
-  Future<void> _repairAccess(String tenantId, String businessName) async {
+  // στο presence ενός λογαριασμού αυτού του tenant. Προεπιλογή: ο master.
+  // Μπορείς να δώσεις ΑΛΛΟ email αν ο λογαριασμός που έχει το πρόβλημα δεν
+  // είναι ο ίδιος ο ιδιοκτήτης (π.χ. υπάλληλος/admin του ίδιου tenant).
+  Future<void> _repairAccess(String tenantId, String businessName, String masterEmail) async {
+    final emailCtrl = TextEditingController(text: masterEmail);
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dctx) => AlertDialog(
         title: const Text('Επισκευή πρόσβασης'),
-        content: Text(
-          'Θα ξαναμπούν όλα τα δικαιώματα (Διαχειριστής, Ιδιοκτήτης Online '
-          'Φόρμας, έγκριση, web) στον master του «$businessName». Ασφαλές να '
-          'το τρέξεις — χρήσιμο αν παίρνει σφάλμα permission-denied.',
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Θα ξαναμπούν όλα τα δικαιώματα (Διαχειριστής, Ιδιοκτήτης Online '
+              'Φόρμας, έγκριση, web) στον λογαριασμό «$businessName» παρακάτω.',
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: emailCtrl,
+              keyboardType: TextInputType.emailAddress,
+              decoration: const InputDecoration(
+                  isDense: true,
+                  labelText: 'Email λογαριασμού προς επισκευή',
+                  helperText: 'Άλλαξέ το αν το πρόβλημα το έχει άλλος (π.χ. υπάλληλος), όχι ο ιδιοκτήτης',
+                  border: OutlineInputBorder()),
+            ),
+          ],
         ),
         actions: [
           TextButton(onPressed: () => Navigator.of(dctx).pop(false), child: const Text('Άκυρο')),
@@ -346,13 +363,17 @@ class _TenantAdminPageState extends State<TenantAdminPage> {
       ),
     );
     if (confirmed != true) return;
+    final targetEmail = emailCtrl.text.trim();
     try {
       final callable = FirebaseFunctions.instance.httpsCallable('repairTenantOwnerAccess');
-      await callable.call({'tenantId': tenantId});
+      await callable.call({
+        'tenantId': tenantId,
+        if (targetEmail.isNotEmpty && targetEmail != masterEmail) 'email': targetEmail,
+      });
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('Έγινε — ζήτησε από τον πελάτη να ξανακάνει login (ή refresh στο web).'),
-          backgroundColor: Color(0xFF1E8E3E),
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Έγινε για $targetEmail — ζήτησε να ξανακάνει login (ή refresh στο web).'),
+          backgroundColor: const Color(0xFF1E8E3E),
         ));
       }
     } catch (e) {
@@ -598,7 +619,9 @@ class _TenantAdminPageState extends State<TenantAdminPage> {
                                           const SizedBox(height: 8),
                                           InkWell(
                                             onTap: () => _repairAccess(
-                                                t['tenantId'] as String, t['businessName'] as String? ?? ''),
+                                                t['tenantId'] as String,
+                                                t['businessName'] as String? ?? '',
+                                                t['masterEmail'] as String? ?? ''),
                                             borderRadius: BorderRadius.circular(8),
                                             child: Container(
                                               width: double.infinity,
