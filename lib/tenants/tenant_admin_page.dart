@@ -240,6 +240,28 @@ class _TenantAdminPageState extends State<TenantAdminPage> {
     }
   }
 
+  // Ενεργοποίηση/απενεργοποίηση χάρτη ή Places σε μια Online Φόρμα.
+  // field: 'mapEnabled' ή 'placesEnabled'.
+  Future<void> _toggleFeatureFlag(String tenantId, String field, bool newValue) async {
+    setState(() {
+      final i = _tenants.indexWhere((t) => t['tenantId'] == tenantId);
+      if (i != -1) _tenants[i][field] = newValue;
+    });
+    try {
+      final callable = FirebaseFunctions.instance.httpsCallable('updateTenantFeatureFlags');
+      await callable.call({'tenantId': tenantId, field: newValue});
+    } catch (e) {
+      setState(() {
+        final i = _tenants.indexWhere((t) => t['tenantId'] == tenantId);
+        if (i != -1) _tenants[i][field] = !newValue;
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Σφάλμα: $e'), backgroundColor: Colors.red.shade700));
+      }
+    }
+  }
+
   Future<void> _openCreateDialog() async {
     final created = await showDialog<bool>(
       context: context,
@@ -326,6 +348,8 @@ class _TenantAdminPageState extends State<TenantAdminPage> {
                             itemBuilder: (context, i) {
                               final t = _tenants[i];
                               final active = t['active'] == true;
+                              final mapEnabled = t['mapEnabled'] != false;
+                              final placesEnabled = t['placesEnabled'] != false;
                               return Card(
                                 margin: const EdgeInsets.only(bottom: 10),
                                 shape: RoundedRectangleBorder(
@@ -478,6 +502,52 @@ class _TenantAdminPageState extends State<TenantAdminPage> {
                                                 ),
                                               ],
                                             ),
+                                          ),
+                                          const SizedBox(height: 10),
+                                          // ── Έλεγχος master: κόψε/ξανάβαλε χάρτη ή Places
+                                          // στη δημόσια φόρμα αυτού του πελάτη, όποτε θες.
+                                          Container(
+                                            padding: const EdgeInsets.symmetric(
+                                                horizontal: 10, vertical: 6),
+                                            decoration: BoxDecoration(
+                                              color: Colors.grey.shade50,
+                                              borderRadius: BorderRadius.circular(8),
+                                              border: Border.all(color: Colors.grey.shade200),
+                                            ),
+                                            child: Row(children: [
+                                              Expanded(
+                                                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                                                  Icon(Icons.map_rounded,
+                                                      size: 15,
+                                                      color: mapEnabled ? Colors.teal : Colors.grey),
+                                                  const SizedBox(width: 4),
+                                                  const Text('Χάρτης', style: TextStyle(fontSize: 11.5)),
+                                                  Switch(
+                                                    value: mapEnabled,
+                                                    activeThumbColor: Colors.teal,
+                                                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                                    onChanged: (v) => _toggleFeatureFlag(
+                                                        t['tenantId'] as String, 'mapEnabled', v),
+                                                  ),
+                                                ]),
+                                              ),
+                                              Expanded(
+                                                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                                                  Icon(Icons.location_on_rounded,
+                                                      size: 15,
+                                                      color: placesEnabled ? Colors.teal : Colors.grey),
+                                                  const SizedBox(width: 4),
+                                                  const Text('Places', style: TextStyle(fontSize: 11.5)),
+                                                  Switch(
+                                                    value: placesEnabled,
+                                                    activeThumbColor: Colors.teal,
+                                                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                                    onChanged: (v) => _toggleFeatureFlag(
+                                                        t['tenantId'] as String, 'placesEnabled', v),
+                                                  ),
+                                                ]),
+                                              ),
+                                            ]),
                                           ),
                                         ],
                                       ),

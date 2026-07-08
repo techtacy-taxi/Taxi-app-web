@@ -2,6 +2,8 @@
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show Clipboard, ClipboardData;
+import 'package:url_launcher/url_launcher.dart';
 
 import '../models.dart';
 import '../jobs/job_service.dart';
@@ -301,6 +303,7 @@ class _AdminDriverCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final name   = '${data['displayName'] ?? ''} ${data['lastName'] ?? ''}'.trim();
     final phone  = data['phone']  as String? ?? '';
+    final email  = data['email']  as String? ?? '';
     final isMaster = data['master'] == true;
     final isAdmin  = data['admin']  == true;
     final isApproved = data['isApproved'] == true;
@@ -363,9 +366,50 @@ class _AdminDriverCard extends StatelessWidget {
                       style: const TextStyle(
                           fontSize: 15, fontWeight: FontWeight.bold)),
                   if (phone.isNotEmpty)
-                    Text(phone,
-                        style: TextStyle(
-                            fontSize: 12, color: Colors.grey[500])),
+                    InkWell(
+                      onTap: () => launchUrl(Uri.parse('tel:$phone')),
+                      child: Row(mainAxisSize: MainAxisSize.min, children: [
+                        Icon(Icons.phone_rounded, size: 12, color: Colors.grey[500]),
+                        const SizedBox(width: 4),
+                        Text(phone,
+                            style: TextStyle(
+                                fontSize: 12, color: Colors.grey[500],
+                                decoration: TextDecoration.underline)),
+                      ]),
+                    ),
+                  if (email.isNotEmpty)
+                    Row(mainAxisSize: MainAxisSize.min, children: [
+                      Flexible(
+                        child: InkWell(
+                          onTap: () => launchUrl(Uri.parse('mailto:$email')),
+                          child: Row(mainAxisSize: MainAxisSize.min, children: [
+                            Icon(Icons.email_rounded, size: 12, color: Colors.grey[500]),
+                            const SizedBox(width: 4),
+                            Flexible(
+                              child: Text(email,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                      fontSize: 12, color: Colors.grey[500],
+                                      decoration: TextDecoration.underline)),
+                            ),
+                          ]),
+                        ),
+                      ),
+                      InkWell(
+                        onTap: () {
+                          Clipboard.setData(ClipboardData(text: email));
+                          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                            content: Text('Αντιγράφηκε: $email'),
+                            duration: const Duration(seconds: 2),
+                            backgroundColor: const Color(0xFF1E8E3E),
+                          ));
+                        },
+                        child: Padding(
+                          padding: const EdgeInsets.only(left: 4),
+                          child: Icon(Icons.copy_rounded, size: 13, color: Colors.grey[500]),
+                        ),
+                      ),
+                    ]),
                 ],
               )),
               // Role badge

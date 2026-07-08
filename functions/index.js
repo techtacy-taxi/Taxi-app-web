@@ -2068,6 +2068,12 @@ const { onRequest } = require("firebase-functions/v2/https");
 const BOOKING_ALLOWED_ORIGINS = [
   "https://taxiathenstransfers.com",
   "https://www.taxiathenstransfers.com",
+  "https://booking2-template.pages.dev",
+  // Καλύπτει ΟΛΑ τα Cloudflare Pages sites (και τα preview URLs με τυχαίο
+  // prefix, π.χ. b3f904ca.booking2-template.pages.dev) — έτσι κάθε νέο site
+  // πελάτη που φτιάχνεις σε Cloudflare Pages δουλεύει αυτόματα, χωρίς να
+  // χρειάζεται να ξαναγυρίσεις εδώ κάθε φορά.
+  /^https:\/\/([a-z0-9-]+\.)*pages\.dev$/,
 ];
 
 // ── helper: ασφαλές κείμενο (όχι undefined/null) ────────────────────────────
@@ -3698,6 +3704,8 @@ exports.listTenants = onCall(
         active: t.active !== false,
         vivaDemo: t.vivaDemo !== false,
         hasVivaCredentials: t.hasVivaCredentials === true,
+        mapEnabled: t.mapEnabled !== false,
+        placesEnabled: t.placesEnabled !== false,
       };
     });
     return { ok: true, tenants };
@@ -3969,6 +3977,10 @@ exports.updateTenantBusinessInfo = onCall(
     if (d.contactEmail != null)   updates.contactEmail   = s(d.contactEmail) || null;
     if (d.whatsappNumber != null) updates.whatsappNumber = s(d.whatsappNumber) || null;
     if (d.logoUrl != null)        updates.logoUrl        = s(d.logoUrl) || null;
+    // Google Maps/Places API key — ΔΕΝ είναι μυστικό (τα κλειδιά Google Maps
+    // είναι ΠΑΝΤΑ ορατά στον browser, η ασφάλεια έρχεται από τον περιορισμό
+    // domain στο ίδιο το Google Cloud Console, όχι από μυστικότητα).
+    if (d.mapsApiKey != null)     updates.mapsApiKey     = s(d.mapsApiKey) || null;
     if (Object.keys(updates).length) {
       await db.collection("tenants").doc(tenantId).update(updates);
     }
@@ -3990,7 +4002,8 @@ exports.getTenantBusinessInfo = onRequest(
       const doc = await db.collection("tenants").doc(tenantId).get();
       if (!doc.exists) {
         return res.status(200).json({ ok: true, businessName: null, contactPhone: null,
-          contactEmail: null, whatsappNumber: null, logoUrl: null });
+          contactEmail: null, whatsappNumber: null, logoUrl: null, mapsApiKey: null,
+          mapEnabled: true, placesEnabled: true });
       }
       const t = doc.data();
       return res.status(200).json({
@@ -4000,11 +4013,45 @@ exports.getTenantBusinessInfo = onRequest(
         contactEmail:   t.contactEmail   || null,
         whatsappNumber: t.whatsappNumber || null,
         logoUrl:        t.logoUrl        || null,
+        mapsApiKey:     t.mapsApiKey     || null,
+        // ── Διακόπτες master — απενεργοποιούν χάρτη/Places ανά φόρμα.
+        // ΠΡΟΕΠΙΛΟΓΗ true (ενεργά) αν δεν έχουν οριστεί ρητά ποτέ.
+        mapEnabled:     t.mapEnabled     !== false,
+        placesEnabled:  t.placesEnabled  !== false,
       });
     } catch (e) {
       console.error("getTenantBusinessInfo error:", e);
       return res.status(500).json({ ok: false, error: "server_error" });
     }
+  }
+);
+
+// ── updateTenantFeatureFlags: ενεργοποίηση/απενεργοποίηση χάρτη & Places
+// ανά Online Φόρμα — ΜΟΝΟ ο super-admin (εσύ) το αλλάζει, ποτέ ο ίδιος
+// ο tenant. Χρήσιμο π.χ. αν κάποιος πελάτης δεν έχει ρυθμίσει ακόμα σωστά
+// το δικό του Google API key, ή αν θες προσωρινά να κόψεις κόστος.
+exports.updateTenantFeatureFlags = onCall(
+  { region: "us-central1" },
+  async (request) => {
+    if (!request.auth || request.auth.token.email !== "techtacy@gmail.com") {
+      throw new HttpsError("permission-denied", "Μόνο ο super-admin.");
+    }
+    const d = request.data || {};
+    const tenantId = s(d.tenantId);
+    if (!tenantId || tenantId === "default") {
+      throw new HttpsError("invalid-argument", "Μη έγκυρο tenantId.");
+    }
+    const db = getFirestore();
+    const tenantDoc = await db.collection("tenants").doc(tenantId).get();
+    if (!tenantDoc.exists) throw new HttpsError("not-found", "Άγνωστο tenant.");
+
+    const updates = {};
+    if (d.mapEnabled != null) updates.mapEnabled = d.mapEnabled === true;
+    if (d.placesEnabled != null) updates.placesEnabled = d.placesEnabled === true;
+    if (Object.keys(updates).length) {
+      await db.collection("tenants").doc(tenantId).update(updates);
+    }
+    return { ok: true };
   }
 );
 
