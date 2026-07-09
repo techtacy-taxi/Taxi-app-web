@@ -794,6 +794,22 @@ async function freshAccessTokenFor(uid) {
 }
 
 // ─── Βρες τον (πρώτο) master ─────────────────────────────────────────────────
+// ─── Όνομα εμφάνισης του master/tenant-owner για ownerName σε saved_jobs ────
+// ΠΡΟΣΟΧΗ: το presence ΔΕΝ έχει πεδίο "name" — έχει displayName/lastName.
+// Για tenant owner προτιμάμε το businessName του tenant (πιο αναγνωρίσιμο
+// στο dropdown «Δημιουργός» απ' το να λέει γενικά «Master» για όλους).
+async function resolveOwnerDisplayName(tenantId, presenceData) {
+  const pd = presenceData || {};
+  if (tenantId && tenantId !== "default") {
+    try {
+      const tDoc = await getFirestore().collection("tenants").doc(tenantId).get();
+      if (tDoc.exists && tDoc.data().businessName) return tDoc.data().businessName;
+    } catch (e) { /* fallback παρακάτω */ }
+  }
+  const full = [pd.displayName, pd.lastName].filter(Boolean).join(" ").trim();
+  return full || pd.name || "Master";
+}
+
 async function findMasterUid(tenantId) {
   const tid = tenantId || "default";
   const db = getFirestore();
@@ -802,6 +818,20 @@ async function findMasterUid(tenantId) {
     .where("tenantId", "==", tid)
     .limit(1).get();
   if (!masterSnap.empty) return masterSnap.docs[0].id;
+
+  // ── Ανθεκτικό fallback για tenant "default": αν ο master (εσύ) δεν έχει
+  // (ακόμα) ρητό tenantId:'default' στο presence του — π.χ. δεν έτρεξε ποτέ
+  // backfillDefaultTenantId — το query με tenantId=='default' ΔΕΝ ταιριάζει
+  // (το Firestore δεν ταιριάζει missing πεδίο με ==), οπότε επιστρέφει null
+  // και ΧΑΝΕΤΑΙ ολόκληρη η κράτηση (π.χ. δεν φτάνει ποτέ στα saved_jobs).
+  // Πραγματικά υπάρχει ΕΝΑΣ master, οπότε για default ψάξε τον ΧΩΡΙΣ φίλτρο
+  // tenantId σαν τελευταία προσπάθεια.
+  if (tid === "default") {
+    const anyMaster = await db.collection("presence")
+      .where("master", "==", true)
+      .limit(1).get();
+    if (!anyMaster.empty) return anyMaster.docs[0].id;
+  }
 
   // Fallback: ο tenant δεν έχει master (νέο μοντέλο multi-tenant — ο
   // πελάτης είναι admin + tenantOwner, όχι master) — ειδοποιούμε τον
@@ -2737,7 +2767,7 @@ exports.submitPublicBooking = onRequest(
         return res.status(500).json({ ok: false, error: "no_master" });
       }
       const me = await getFirestore().collection("presence").doc(masterUid).get();
-      const masterName = (me.exists && me.data().name) ? me.data().name : "Master";
+      const masterName = await resolveOwnerDisplayName(tenantId, me.exists ? me.data() : null);
 
       // Ραντεβού σε ώρα Ελλάδας → JS Date.
       // Το date/time έρχονται ως τοπική ώρα Ελλάδας. Φτιάχνουμε ISO με offset.
@@ -3430,7 +3460,7 @@ exports.vivaWebhook = onRequest(
         return res.status(200).json({ ok: true, error: "no_master" });
       }
       const me = await db.collection("presence").doc(masterUid).get();
-      const masterName = (me.exists && me.data().name) ? me.data().name : "Master";
+      const masterName = await resolveOwnerDisplayName(pd.tenantId, me.exists ? me.data() : null);
 
       const scheduledIso = pd.date + "T" + pd.time + ":00";
       const scheduledAtMs = Date.parse(scheduledIso);
