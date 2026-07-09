@@ -4027,6 +4027,44 @@ exports.renameTenantEformId = onCall(
 //  Τρέχεις τη ΜΙΑ φορά, ΤΩΡΑ, πριν δημιουργήσεις τον 2ο πραγματικό tenant.
 // ═══════════════════════════════════════════════════════════════════════════
 
+// ── Διόρθωση ownerName σε ΥΠΑΡΧΟΥΣΕΣ saved_jobs (one-time). Ξαναγράφει το
+// σωστό όνομα (businessName tenant ή displayName+lastName master) σε όσες
+// δουλειές έχουν ownerName κενό ή "Master".
+exports.backfillOwnerNames = onCall(
+  { region: "us-central1", timeoutSeconds: 300 },
+  async (request) => {
+    if (!request.auth || request.auth.token.email !== "techtacy@gmail.com") {
+      throw new HttpsError("permission-denied", "Μόνο ο super-admin.");
+    }
+    const db = getFirestore();
+    const snap = await db.collection("saved_jobs").get();
+    // Cache ανά ownerUid ώστε να μη διαβάζουμε ξανά-ξανά το ίδιο presence/tenant.
+    const nameCache = {};
+    let updated = 0, batch = db.batch(), inBatch = 0;
+    for (const doc of snap.docs) {
+      const d = doc.data();
+      const cur = (d.ownerName || "").trim();
+      if (cur && cur !== "Master") continue; // ήδη σωστό
+      const uid = d.ownerUid;
+      if (!uid) continue;
+      const cacheKey = uid + "|" + (d.tenantId || "default");
+      if (nameCache[cacheKey] == null) {
+        const pDoc = await db.collection("presence").doc(uid).get();
+        nameCache[cacheKey] = await resolveOwnerDisplayName(
+          d.tenantId, pDoc.exists ? pDoc.data() : null);
+      }
+      const newName = nameCache[cacheKey];
+      if (newName && newName !== cur) {
+        batch.update(doc.ref, { ownerName: newName });
+        updated++; inBatch++;
+        if (inBatch >= 450) { await batch.commit(); batch = db.batch(); inBatch = 0; }
+      }
+    }
+    if (inBatch > 0) await batch.commit();
+    return { ok: true, total: snap.size, updated };
+  }
+);
+
 exports.backfillDefaultTenantId = onCall(
   { region: "us-central1", timeoutSeconds: 300 },
   async (request) => {

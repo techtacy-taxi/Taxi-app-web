@@ -34,6 +34,30 @@ class _TenantAdminPageState extends State<TenantAdminPage> {
   String? _error;
   List<Map<String, dynamic>> _tenants = [];
   bool _backfilling = false;
+  bool _fixingOwnerNames = false;
+
+  Future<void> _runFixOwnerNames() async {
+    setState(() => _fixingOwnerNames = true);
+    try {
+      final callable = FirebaseFunctions.instance.httpsCallable(
+        'backfillOwnerNames',
+        options: HttpsCallableOptions(timeout: const Duration(seconds: 120)),
+      );
+      final res = await callable.call();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('Διορθώθηκαν ${res.data['updated']} από ${res.data['total']} δουλειές.'),
+        backgroundColor: const Color(0xFF1E8E3E),
+      ));
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Σφάλμα: $e'), backgroundColor: Colors.red.shade700));
+      }
+    } finally {
+      if (mounted) setState(() => _fixingOwnerNames = false);
+    }
+  }
   bool _fixingCase = false;
 
   bool get _isSuperAdmin =>
@@ -449,6 +473,16 @@ class _TenantAdminPageState extends State<TenantAdminPage> {
                 : const Icon(Icons.build_circle_rounded),
             onPressed: _backfilling ? null : _runBackfillPrompt,
             tooltip: 'Επισκευή ζωνών/δουλειών (backfill tenantId)',
+          ),
+          IconButton(
+            icon: _fixingOwnerNames
+                ? const SizedBox(
+                    width: 20, height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                  )
+                : const Icon(Icons.badge_rounded),
+            onPressed: _fixingOwnerNames ? null : _runFixOwnerNames,
+            tooltip: 'Διόρθωση ονομάτων δημιουργού στις αποθηκευμένες',
           ),
           IconButton(
             icon: _fixingCase
