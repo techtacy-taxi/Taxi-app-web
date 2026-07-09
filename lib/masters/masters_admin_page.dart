@@ -362,9 +362,29 @@ class _AdminDriverCard extends StatelessWidget {
               Expanded(child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(name.isEmpty ? '(χωρίς όνομα)' : name,
-                      style: const TextStyle(
-                          fontSize: 15, fontWeight: FontWeight.bold)),
+                  Row(mainAxisSize: MainAxisSize.min, children: [
+                    Flexible(
+                      child: Text(name.isEmpty ? '(χωρίς όνομα)' : name,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                              fontSize: 15, fontWeight: FontWeight.bold)),
+                    ),
+                    if (name.isNotEmpty)
+                      InkWell(
+                        onTap: () {
+                          Clipboard.setData(ClipboardData(text: name));
+                          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                            content: Text('Αντιγράφηκε: $name'),
+                            duration: const Duration(seconds: 2),
+                            backgroundColor: const Color(0xFF1E8E3E),
+                          ));
+                        },
+                        child: Padding(
+                          padding: const EdgeInsets.only(left: 4),
+                          child: Icon(Icons.copy_rounded, size: 13, color: Colors.grey[500]),
+                        ),
+                      ),
+                  ]),
                   if (phone.isNotEmpty)
                     InkWell(
                       onTap: () => launchUrl(Uri.parse('tel:$phone')),

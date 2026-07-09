@@ -210,6 +210,37 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
               _mapsApiKeyCtrl.text     = bi['mapsApiKey'] as String? ?? '';
             });
           }
+          // ── Αυτόματη προσυμπλήρωση (ΜΟΝΟ αν είναι ακόμα κενά, ώστε να μην
+          // πειράξουμε ό,τι έχει ήδη σώσει ο tenant): το κινητό του από το
+          // presence, και το email με το οποίο έχει κάνει login. Ο tenant
+          // μπορεί μετά να τα αλλάξει ελεύθερα.
+          if (_contactPhoneCtrl.text.trim().isEmpty ||
+              _whatsappNumberCtrl.text.trim().isEmpty ||
+              _contactEmailCtrl.text.trim().isEmpty) {
+            try {
+              final uid = FirebaseAuth.instance.currentUser?.uid;
+              String myPhone = '';
+              if (uid != null) {
+                final pDoc = await FirebaseFirestore.instance
+                    .collection('presence').doc(uid).get();
+                myPhone = (pDoc.data()?['phone'] as String?) ?? '';
+              }
+              final myEmail = FirebaseAuth.instance.currentUser?.email ?? '';
+              setState(() {
+                if (_contactPhoneCtrl.text.trim().isEmpty && myPhone.isNotEmpty) {
+                  _contactPhoneCtrl.text = myPhone;
+                }
+                if (_whatsappNumberCtrl.text.trim().isEmpty && myPhone.isNotEmpty) {
+                  _whatsappNumberCtrl.text = myPhone;
+                }
+                if (_contactEmailCtrl.text.trim().isEmpty && myEmail.isNotEmpty) {
+                  _contactEmailCtrl.text = myEmail;
+                }
+              });
+            } catch (_) {
+              // Μη κρίσιμο — ο tenant τα συμπληρώνει χειροκίνητα αν αποτύχει.
+            }
+          }
         } catch (_) {
           // Μη κρίσιμο — απλά δεν προσυμπληρώνονται, ο tenant τα ξαναγράφει.
         }

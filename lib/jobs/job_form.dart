@@ -430,10 +430,21 @@ class _JobFormPageState extends State<JobFormPage> {
   }
 
   Future<void> _loadClients() async {
-    // Master βλέπει όλους, admin μόνο δικούς του (& μόνο του tenant του)
-    final tid = widget.isMaster ? null : await JobService.myTenantId();
+    // Master βλέπει όλους, admin μόνο δικούς του (& μόνο του tenant του).
+    // Εξαίρεση: αν ο master έχει ενεργοποιήσει την προσωπική προτίμηση «να
+    // μη βλέπω πελάτες άλλων» (masterHideOtherClients), φιλτράρει σαν admin.
+    bool hideOthers = false;
+    if (widget.isMaster) {
+      try {
+        final doc = await FirebaseFirestore.instance
+            .collection('presence').doc(widget.adminUid).get();
+        hideOthers = doc.data()?['masterHideOtherClients'] == true;
+      } catch (_) {}
+    }
+    final effectiveIsMaster = widget.isMaster && !hideOthers;
+    final tid = effectiveIsMaster ? null : await JobService.myTenantId();
     final list = await JobService.clientsOnce(
-        createdBy: widget.isMaster ? null : widget.adminUid,
+        createdBy: effectiveIsMaster ? null : widget.adminUid,
         tenantId:  tid);
     if (!mounted) return;
     setState(() => _clients = list);

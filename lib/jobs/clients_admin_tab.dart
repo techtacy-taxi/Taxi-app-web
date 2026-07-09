@@ -10,6 +10,7 @@
 //   • Tap σε αποθηκευμένη διαδρομή → ανοίγει ΝΕΑ ΔΟΥΛΕΙΑ με προσυμπληρωμένα
 //     Από / Προς / Τιμή / Πηγή. Ο χρήστης αλλάζει τα υπόλοιπα.
 
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
 import 'client_model.dart';
@@ -42,6 +43,9 @@ class _ClientsTabState extends State<ClientsTab> {
   String _query = '';
   String? _tenantId;
   bool _tenantLoaded = false;
+  // ── Μόνο για master: προσωπική προτίμηση «να μη βλέπω πελάτες άλλων».
+  // Αποθηκεύεται στο δικό του presence — δεν επηρεάζει κανέναν άλλον admin.
+  bool _hideOthers = false;
 
   @override
   void initState() {
@@ -51,6 +55,11 @@ class _ClientsTabState extends State<ClientsTab> {
 
   Future<void> _loadTenant() async {
     if (widget.isMaster) {
+      try {
+        final doc = await FirebaseFirestore.instance
+            .collection('presence').doc(widget.adminUid).get();
+        _hideOthers = doc.data()?['masterHideOtherClients'] == true;
+      } catch (_) {}
       if (mounted) setState(() => _tenantLoaded = true);
       return;
     }
@@ -58,14 +67,27 @@ class _ClientsTabState extends State<ClientsTab> {
     if (mounted) setState(() { _tenantId = tid; _tenantLoaded = true; });
   }
 
+  Future<void> _toggleHideOthers(bool v) async {
+    setState(() => _hideOthers = v);
+    try {
+      await FirebaseFirestore.instance.collection('presence')
+          .doc(widget.adminUid).set(
+              {'masterHideOtherClients': v}, SetOptions(merge: true));
+    } catch (_) {}
+  }
+
   @override
   Widget build(BuildContext context) {
     if (!_tenantLoaded) {
       return const Center(child: CircularProgressIndicator());
     }
+    // Master + hideOthers ενεργό → συμπεριφέρεται σαν να φιλτράρει μόνο τους
+    // δικούς του πελάτες (ίδια λογική με τον απλό admin).
+    final effectiveCreatedBy =
+        (widget.isMaster && !_hideOthers) ? null : widget.adminUid;
     return StreamBuilder<List<Client>>(
       stream: JobService.clients(
-          createdBy: widget.isMaster ? null : widget.adminUid,
+          createdBy: effectiveCreatedBy,
           tenantId:  widget.isMaster ? null : _tenantId),
       builder: (context, snap) {
         var clients = snap.data ?? [];
@@ -79,20 +101,59 @@ class _ClientsTabState extends State<ClientsTab> {
           // Αναζήτηση
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
-            child: TextField(
-              decoration: InputDecoration(
-                hintText:   'Αναζήτηση πελάτη...',
-                prefixIcon: const Icon(Icons.search_rounded),
-                filled:     true,
-                fillColor:  Colors.white,
-                isDense:    true,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide(color: Colors.grey.shade300),
+            child: Row(children: [
+              Expanded(
+                child: TextField(
+                  decoration: InputDecoration(
+                    hintText:   'Αναζήτηση πελάτη...',
+                    prefixIcon: const Icon(Icons.search_rounded),
+                    filled:     true,
+                    fillColor:  Colors.white,
+                    isDense:    true,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(color: Colors.grey.shade300),
+                    ),
+                  ),
+                  onChanged: (v) => setState(() => _query = v),
                 ),
               ),
-              onChanged: (v) => setState(() => _query = v),
-            ),
+              // ── Μόνο για master: κρύψε/δείξε πελάτες άλλων διαχειριστών.
+              if (widget.isMaster) ...[
+                const SizedBox(width: 8),
+                Tooltip(
+                  message: _hideOthers
+                      ? 'Βλέπεις ΜΟΝΟ τους δικούς σου πελάτες — πάτα για να δεις όλους'
+                      : 'Βλέπεις όλους τους πελάτες — πάτα για να δεις ΜΟΝΟ τους δικούς σου',
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(10),
+                    onTap: () => _toggleHideOthers(!_hideOthers),
+                    child: Container(
+                      padding: const EdgeInsets.all(11),
+                      decoration: BoxDecoration(
+                        color: _hideOthers
+                            ? Colors.amber.shade100
+                            : Colors.white,
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(
+                            color: _hideOthers
+                                ? Colors.amber.shade400
+                                : Colors.grey.shade300),
+                      ),
+                      child: Icon(
+                        _hideOthers
+                            ? Icons.visibility_off_rounded
+                            : Icons.visibility_rounded,
+                        size: 20,
+                        color: _hideOthers
+                            ? Colors.amber.shade900
+                            : Colors.grey.shade600,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ]),
           ),
           Expanded(
             child: ListView(
