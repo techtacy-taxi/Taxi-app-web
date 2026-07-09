@@ -1163,6 +1163,10 @@ class _PricingConfigTabState extends State<_PricingConfigTab> {
   int _blackoutStartHour = 22, _blackoutStartMinute = 30;
   int _blackoutEndHour = 8, _blackoutEndMinute = 0;
 
+  // ── Ποσοστό προκαταβολής στη δημόσια φόρμα (προεπιλογή 10%) — η
+  // στρογγυλοποίηση στο επόμενο ευρώ παραμένει ίδια, ό,τι ποσοστό κι αν βάλεις.
+  final _depositPercentCtrl = TextEditingController();
+
   bool _loaded = false;
   bool _saving = false;
 
@@ -1174,6 +1178,7 @@ class _PricingConfigTabState extends State<_PricingConfigTab> {
     for (final ctrl in _cForeign.values) {
       ctrl.dispose();
     }
+    _depositPercentCtrl.dispose();
     super.dispose();
   }
 
@@ -1214,6 +1219,11 @@ class _PricingConfigTabState extends State<_PricingConfigTab> {
           _blackoutStartMinute = (data['blackoutStartMinute'] as num?)?.toInt() ?? 30;
           _blackoutEndHour = (data['blackoutEndHour'] as num?)?.toInt() ?? 8;
           _blackoutEndMinute = (data['blackoutEndMinute'] as num?)?.toInt() ?? 0;
+
+          final depositPercent = (data['depositPercent'] as num?)?.toDouble() ?? 10;
+          _depositPercentCtrl.text = (depositPercent == depositPercent.roundToDouble())
+              ? depositPercent.toStringAsFixed(0)
+              : depositPercent.toString();
 
           _loaded = true;
         }
@@ -1346,6 +1356,24 @@ class _PricingConfigTabState extends State<_PricingConfigTab> {
                 ]),
               ],
 
+              const SizedBox(height: 20),
+              const Divider(),
+              const SizedBox(height: 8),
+              const Text('Προκαταβολή στη δημόσια φόρμα',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _depositPercentCtrl,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                decoration: const InputDecoration(
+                    isDense: true,
+                    labelText: 'Ποσοστό προκαταβολής (%)',
+                    suffixText: '%',
+                    helperText: 'Προεπιλογή 10%. Η στρογγυλοποίηση στο επόμενο ευρώ '
+                        'παραμένει ίδια — π.χ. 15% σε τιμή 44€ → 7€ προκαταβολή.',
+                    border: OutlineInputBorder()),
+              ),
+
               const SizedBox(height: 12),
               AppButton(
                 label: _saving ? 'Αποθήκευση…' : 'Αποθήκευση',
@@ -1467,6 +1495,8 @@ class _PricingConfigTabState extends State<_PricingConfigTab> {
       'blackoutStartMinute': _blackoutStartMinute,
       'blackoutEndHour': _blackoutEndHour,
       'blackoutEndMinute': _blackoutEndMinute,
+      'depositPercent': (double.tryParse(_depositPercentCtrl.text.replaceAll(',', '.')) ?? 10)
+          .clamp(1, 100),
     };
     try {
       await _pricingDocRef.set(data, SetOptions(merge: true));

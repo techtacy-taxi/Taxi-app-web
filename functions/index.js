@@ -594,6 +594,37 @@ const GCAL_CLIENT_ID =
 const { defineSecret } = require("firebase-functions/params");
 const GCAL_CLIENT_SECRET = defineSecret("GCAL_CLIENT_SECRET");
 
+// ── Resend (email επιβεβαίωσης στον ΠΕΛΑΤΗ μετά από πληρωμή) ────────────────
+// Ορίζεται με: firebase functions:secrets:set RESEND_API_KEY
+const RESEND_API_KEY = defineSecret("RESEND_API_KEY");
+
+// Στέλνει email μέσω Resend. Best-effort — ποτέ δεν πετάει exception προς τα
+// έξω (η αποτυχία εδώ δεν πρέπει ΠΟΤΕ να μπλοκάρει την επιβεβαίωση πληρωμής).
+async function sendCustomerEmailViaResend({ to, subject, html, fromName, fromEmail }) {
+  try {
+    const apiKey = RESEND_API_KEY.value();
+    if (!apiKey || !to) return false;
+    const res = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { "Authorization": "Bearer " + apiKey, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        from: (fromName || "Athens Taxi Booking") + " <" + (fromEmail || "bookings@taxiathenstransfers.com") + ">",
+        to: [to],
+        subject,
+        html,
+      }),
+    });
+    if (!res.ok) {
+      console.error("Resend send error:", res.status, await res.text());
+      return false;
+    }
+    return true;
+  } catch (e) {
+    console.error("Resend send exception:", e);
+    return false;
+  }
+}
+
 // Ανταλλαγή serverAuthCode → refresh_token. Αποθήκευση στο Firestore.
 exports.exchangeCalendarCode = onCall({ secrets: [GCAL_CLIENT_SECRET] }, async (request) => {
   const uid = request.auth && request.auth.uid;
@@ -2369,6 +2400,8 @@ async function getPricingData(tenantId) {
       blackoutEnabled: true, // προεπιλογή: ενεργό (ίδιο με πριν)
       blackoutStartHour: 22, blackoutStartMinute: 30,
       blackoutEndHour: 8, blackoutEndMinute: 0,
+      // ── Ποσοστό προκαταβολής — προεπιλογή 10%, ρυθμίζεται ανά tenant ──
+      depositPercent: 10,
     },
     cfgDoc.exists ? cfgDoc.data() : {}
   );
@@ -2632,6 +2665,7 @@ exports.estimatePrice = onRequest(
         distanceKm: result.distanceKm,
         durationMin: result.durationMin,
         routePolyline: result.routePolyline,
+        depositPercent: Number(cfg.depositPercent) > 0 ? Number(cfg.depositPercent) : 10,
       });
     } catch (e) {
       console.error("estimatePrice error:", e);
@@ -3263,7 +3297,8 @@ exports.createVivaOrder = onRequest(
       //   • chargeAmount = πόσο ΠΡΑΓΜΑΤΙΚΑ χρεώνεται στη Viva τώρα
       //     (depositEquivalent αν 10%, ή ΟΛΟΚΛΗΡΗ η τιμή αν payFull).
       const payFull = b.payFull === true;
-      const depositEquivalent = Math.ceil(estimate.price * 0.10);
+      const depositPct = Number(cfg.depositPercent) > 0 ? Number(cfg.depositPercent) : 10;
+      const depositEquivalent = Math.ceil(estimate.price * (depositPct / 100));
       const chargeAmount = payFull ? Math.ceil(estimate.price) : depositEquivalent;
       const depositCents = chargeAmount * 100; // Viva θέλει το amount σε λεπτά
 
@@ -3388,7 +3423,7 @@ exports.createVivaOrder = onRequest(
 exports.vivaWebhook = onRequest(
   {
     region: "us-central1", memory: "256MiB",
-    secrets: [GCAL_CLIENT_SECRET, VIVA_MERCHANT_ID, VIVA_API_KEY, VIVA_DEMO],
+    secrets: [GCAL_CLIENT_SECRET, VIVA_MERCHANT_ID, VIVA_API_KEY, VIVA_DEMO, RESEND_API_KEY],
   },
   async (req, res) => {
     // ── Multi-tenant: κάθε tenant καταχωρεί το webhook URL με ?tenantId=xyz
@@ -3577,6 +3612,64 @@ exports.vivaWebhook = onRequest(
         });
       } catch (e) {
         console.error("viva booking FCM failed:", e);
+      }
+
+      // ── Email ΕΠΙΒΕΒΑΙΩΣΗΣ στον ΠΕΛΑΤΗ (μέσω Resend, best-effort) ──────────
+      // ΔΕΝ μπλοκάρει ποτέ την υπόλοιπη ροή — αν αποτύχει, απλά καταγράφεται.
+      if (pd.clientEmail) {
+        try {
+          let businessName = "Athens Taxi";
+          let whatsapp = "";
+          if (pd.tenantId && pd.tenantId !== "default") {
+            const tDoc = await db.collection("tenants").doc(pd.tenantId).get();
+            if (tDoc.exists) {
+              businessName = tDoc.data().businessName || businessName;
+              whatsapp = (tDoc.data().whatsappNumber || "").replace(/[^0-9]/g, "");
+            }
+          } else {
+            businessName = "Athens Taxi";
+            whatsapp = "306936123322";
+          }
+          const isEl = (pd.lang || "el") === "el";
+          const waLine = whatsapp
+            ? (isEl
+                ? "Από εδώ και πέρα η επικοινωνία θα γίνεται μέσω WhatsApp: <a href=\"https://wa.me/" + whatsapp + "\">+" + whatsapp + "</a>"
+                : "From now on, communication will happen via WhatsApp: <a href=\"https://wa.me/" + whatsapp + "\">+" + whatsapp + "</a>")
+            : "";
+          const subject = isEl
+            ? "✅ Η κράτησή σας επιβεβαιώθηκε — " + pd.from + " → " + pd.to
+            : "✅ Your booking is confirmed — " + pd.from + " → " + pd.to;
+          const html = isEl
+            ? "<div style=\"font-family:sans-serif;font-size:15px;color:#222;\">" +
+              "<h2 style=\"color:#1a1a2e;\">Η κράτησή σας επιβεβαιώθηκε!</h2>" +
+              "<p>Γεια σας " + pd.clientName + ",</p>" +
+              "<p>Η προκαταβολή πληρώθηκε με επιτυχία και η κράτησή σας είναι οριστική.</p>" +
+              "<table style=\"border-collapse:collapse;margin:12px 0;\">" +
+              "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Διαδρομή:</td><td><b>" + pd.from + " → " + pd.to + "</b></td></tr>" +
+              "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Ημερομηνία/ώρα:</td><td>" + whenStr + "</td></tr>" +
+              "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Πληρώθηκε:</td><td>" + pd.depositAmount + "€" + (pd.fullyPaid ? " (πλήρης πληρωμή)" : " (προκαταβολή)") + "</td></tr>" +
+              "</table>" +
+              "<p>" + waLine + "</p>" +
+              "<p style=\"color:#999;font-size:13px;margin-top:24px;\">" + businessName + "</p>" +
+              "</div>"
+            : "<div style=\"font-family:sans-serif;font-size:15px;color:#222;\">" +
+              "<h2 style=\"color:#1a1a2e;\">Your booking is confirmed!</h2>" +
+              "<p>Hi " + pd.clientName + ",</p>" +
+              "<p>Your deposit was paid successfully and your booking is now confirmed.</p>" +
+              "<table style=\"border-collapse:collapse;margin:12px 0;\">" +
+              "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Route:</td><td><b>" + pd.from + " → " + pd.to + "</b></td></tr>" +
+              "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Date/time:</td><td>" + whenStr + "</td></tr>" +
+              "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Paid:</td><td>€" + pd.depositAmount + (pd.fullyPaid ? " (full payment)" : " (deposit)") + "</td></tr>" +
+              "</table>" +
+              "<p>" + waLine + "</p>" +
+              "<p style=\"color:#999;font-size:13px;margin-top:24px;\">" + businessName + "</p>" +
+              "</div>";
+          await sendCustomerEmailViaResend({
+            to: pd.clientEmail, subject, html, fromName: businessName,
+          });
+        } catch (e) {
+          console.error("customer confirmation email failed:", e);
+        }
       }
 
       return res.status(200).json({ ok: true });
