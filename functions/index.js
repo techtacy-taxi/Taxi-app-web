@@ -835,6 +835,19 @@ async function freshAccessTokenFor(uid) {
 // φόρμα ενδέχεται να κλείσει στο μέλλον), οπότε το προσωπικό όνομα είναι πιο
 // σταθερό αναγνωριστικό στο dropdown «Δημιουργός». Business name μόνο αν δεν
 // υπάρχει καθόλου προσωπικό όνομα καταχωρημένο.
+// ─── Μοναδικός, αυξανόμενος αριθμός κράτησης — ΞΕΧΩΡΙΣΤΗ αρίθμηση ανά tenant
+// (κάθε επιχείρηση ξεκινά από το #1, όχι κοινό μετρητή για όλους) ───────────
+async function nextBookingNumber(tenantId) {
+  const db = getFirestore();
+  const ref = db.collection("counters").doc(tenantId || "default");
+  return await db.runTransaction(async (tx) => {
+    const doc = await tx.get(ref);
+    const next = (doc.exists ? (doc.data().value || 0) : 0) + 1;
+    tx.set(ref, { value: next }, { merge: true });
+    return next;
+  });
+}
+
 async function resolveOwnerDisplayName(tenantId, presenceData) {
   const pd = presenceData || {};
   const full = [pd.displayName, pd.lastName].filter(Boolean).join(" ").trim();
@@ -2703,47 +2716,11 @@ function buildIcs({ from, to, startDate, durationMin, summary, description }) {
   ].join("\r\n");
 }
 
-// ── helper: στέλνει email με .ics μέσω Gmail API (refresh token του master) ──
-async function sendBookingEmail(masterUid, toEmail, subject, bodyText, icsContent) {
-  const accessToken = await freshAccessTokenFor(masterUid);
-  if (!accessToken) { console.warn("sendBookingEmail: δεν βρέθηκε access token master"); return false; }
-
-  const boundary = "athenstaxi_" + Date.now();
-  const icsB64 = Buffer.from(icsContent, "utf8").toString("base64");
-
-  const mime = [
-    'Content-Type: multipart/mixed; boundary="' + boundary + '"',
-    "MIME-Version: 1.0",
-    "to: " + toEmail,
-    "subject: =?UTF-8?B?" + Buffer.from(subject, "utf8").toString("base64") + "?=",
-    "",
-    "--" + boundary,
-    'Content-Type: text/plain; charset="UTF-8"',
-    "Content-Transfer-Encoding: base64",
-    "",
-    Buffer.from(bodyText, "utf8").toString("base64"),
-    "",
-    "--" + boundary,
-    'Content-Type: text/calendar; charset="UTF-8"; method=PUBLISH; name="booking.ics"',
-    "Content-Transfer-Encoding: base64",
-    'Content-Disposition: attachment; filename="booking.ics"',
-    "",
-    icsB64,
-    "",
-    "--" + boundary + "--",
-  ].join("\r\n");
-
-  const raw = Buffer.from(mime, "utf8")
-    .toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-
-  const res = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/messages/send", {
-    method: "POST",
-    headers: { Authorization: "Bearer " + accessToken, "Content-Type": "application/json" },
-    body: JSON.stringify({ raw }),
-  });
-  if (!res.ok) { console.error("Gmail send error:", await res.text()); return false; }
-  return true;
-}
+// ── (Αφαιρέθηκε: sendBookingEmail — έστελνε email+.ics στον master μέσω Gmail
+// API για κάθε κράτηση από φόρμα. Καταργήθηκε πλήρως κατ' απαίτηση — ο master
+// πλέον ενημερώνεται ΜΟΝΟ μέσω FCM (push notification/ήχος) και βλέπει τη
+// δουλειά στις «Αποθηκευμένες». Το email επιβεβαίωσης προς τον ΠΕΛΑΤΗ (Resend)
+// παραμένει, είναι ξεχωριστό.)
 
 exports.submitPublicBooking = onRequest(
   { region: "us-central1", cors: BOOKING_ALLOWED_ORIGINS, memory: "256MiB",
@@ -2835,9 +2812,11 @@ exports.submitPublicBooking = onRequest(
       // (from/to/persons/flightOrShip/scheduledAt:Timestamp), αλλιώς η δουλειά
       // εμφανίζεται κενή στην εφαρμογή.
       const { Timestamp } = require("firebase-admin/firestore");
+      const bookingNumber = await nextBookingNumber(tenantId);
       const savedRef = await getFirestore().collection("saved_jobs").add({
         origin:         "public_form",   // ← ΣΗΜΑΔΙ «ΑΠΟ ΦΟΡΜΑ»
         tenantId:       tenantId,        // ← ΚΡΙΣΙΜΟ: για tenant isolation (rules + φίλτρα)
+        bookingNumber:  bookingNumber,   // ← μοναδικός αύξων αριθμός (ανά tenant)
         from:           from,
         to:             to,
         fromLat:        fromLat,
@@ -2863,35 +2842,10 @@ exports.submitPublicBooking = onRequest(
         createdAt:      FieldValue.serverTimestamp(),
       });
 
-      // ── 2) Email + .ics στον master ────────────────────────────────────────
-      const summary = "🚕 Νέα κράτηση: " + from + " → " + to;
-      const whenStr = date + " " + time;
-      const emailBody =
-        "Νέα κράτηση από τη φόρμα της ιστοσελίδας.\n\n" +
-        "Διαδρομή: " + from + " → " + to + "\n" +
-        "Ραντεβού: " + whenStr + "\n" +
-        "Πελάτης: " + name + " (" + phone + ")\n" +
-        (email ? "Email: " + email + "\n" : "") +
-        (flight ? "Πτήση/Πλοίο: " + flight + "\n" : "") +
-        "Άτομα: " + persons + " · Βαλίτσες: " + luggage +
-        (childSeatCount ? " · Παιδικά καθίσματα: " + childSeatCount : "") + "\n" +
-        "Όχημα: " + (vehicleType === "van" ? "Βαν" : "Ταξί") + "\n" +
-        (note ? "Σχόλια: " + note + "\n" : "") +
-        "\nΗ δουλειά αποθηκεύτηκε στις «Αποθηκευμένες» της εφαρμογής.";
-
-      const ics = buildIcs({
-        from, to, startDate, durationMin: 60,
-        summary, description: emailBody,
-      });
-
-      // Email στον master. (toEmail: το email του master)
-      const masterEmail = (me.exists && me.data().email) ? me.data().email : "techtacy@gmail.com";
-      sendBookingEmail(masterUid, masterEmail, summary, emailBody, ics)
-        .catch((e) => console.error("booking email failed:", e));
-
-      // ── 3) FCM στον master/tenant-owner ΤΟΥ ΣΥΓΚΕΚΡΙΜΕΝΟΥ tenant (ΟΧΙ πάντα
+      // ── 2) FCM στον master/tenant-owner ΤΟΥ ΣΥΓΚΕΚΡΙΜΕΝΟΥ tenant (ΟΧΙ πάντα
       // στον super-admin) — ξεχωριστό type/εικονίδιο, πιάνεται από το
       // public_booking_alert.dart (ownerUid==myUid φίλτρο, βλ. εκεί).
+      const whenStr = date + " " + time;
       try {
         const tokens = await getTokensForUid(masterUid);
         await sendDataOnly(tokens, {
@@ -2900,14 +2854,14 @@ exports.submitPublicBooking = onRequest(
           from, to,
           clientName: name,
           when:       whenStr,
-          title:      "Νέα κράτηση από φόρμα",
+          title:      "Νέα κράτηση #" + bookingNumber + " από φόρμα",
           body:       from + " → " + to + " · " + name,
         });
       } catch (e) {
         console.error("booking FCM failed:", e);
       }
 
-      return res.status(200).json({ ok: true, id: savedRef.id });
+      return res.status(200).json({ ok: true, id: savedRef.id, bookingNumber });
     } catch (e) {
       console.error("submitPublicBooking error:", e);
       return res.status(500).json({ ok: false, error: "server_error" });
@@ -3536,9 +3490,11 @@ exports.vivaWebhook = onRequest(
       const fullNote = noteLines.join("\n");
 
       const { Timestamp } = require("firebase-admin/firestore");
+      const bookingNumber = await nextBookingNumber(pd.tenantId || "default");
       const savedRef = await db.collection("saved_jobs").add({
         origin:         "public_form",
         tenantId:       pd.tenantId || "default",
+        bookingNumber:  bookingNumber,
         from:           pd.from,
         to:             pd.to,
         fromLat:        pd.fromLat,
@@ -3574,27 +3530,7 @@ exports.vivaWebhook = onRequest(
 
       await pendingRef.update({ status: "completed", savedJobId: savedRef.id });
 
-      // ── Email + .ics στον master ──
-      const summary = "🚕 Νέα κράτηση (" + payLabel + " πληρώθηκε): " + pd.from + " → " + pd.to;
       const whenStr = pd.date + " " + pd.time;
-      const emailBody =
-        "Νέα κράτηση από τη φόρμα της ιστοσελίδας — Ο πελάτης ΠΛΗΡΩΣΕ ήδη " + payLabel + " " +
-        pd.depositAmount + "€ μέσω Viva" + (pd.fullyPaid ? " (ΔΕΝ χρωστάει τίποτα άλλο)" : "") + ".\n\n" +
-        "Διαδρομή: " + pd.from + " → " + pd.to + "\n" +
-        "Ραντεβού: " + whenStr + "\n" +
-        "Πελάτης: " + pd.clientName + " (" + pd.clientPhone + ")\n" +
-        (pd.clientEmail ? "Email: " + pd.clientEmail + "\n" : "") +
-        (pd.flightOrShip ? "Πτήση/Πλοίο: " + pd.flightOrShip + "\n" : "") +
-        "Άτομα: " + pd.persons + " · Βαλίτσες: " + pd.luggage +
-        (pd.childSeatCount ? " · Παιδικά καθίσματα: " + pd.childSeatCount : "") + "\n" +
-        "Όχημα: " + (pd.vehicleType === "van" ? "Βαν" : "Ταξί") + "\n" +
-        (pd.note ? "Σχόλια: " + pd.note + "\n" : "") +
-        "\nΗ δουλειά αποθηκεύτηκε στις «Αποθηκευμένες» της εφαρμογής.";
-
-      const ics = buildIcs({ from: pd.from, to: pd.to, startDate, durationMin: 60, summary, description: emailBody });
-      const masterEmail = (me.exists && me.data().email) ? me.data().email : "techtacy@gmail.com";
-      sendBookingEmail(masterUid, masterEmail, summary, emailBody, ics)
-        .catch((e) => console.error("viva booking email failed:", e));
 
       try {
         // ΚΡΙΣΙΜΟ: στέλνουμε ΜΟΝΟ στον master/tenant-owner ΤΟΥ tenant αυτής
@@ -3607,7 +3543,7 @@ exports.vivaWebhook = onRequest(
           from: pd.from, to: pd.to,
           clientName: pd.clientName,
           when:       whenStr,
-          title:      "Νέα κράτηση (" + (pd.fullyPaid ? "πληρωμένη πλήρως" : "πληρωμένη προκαταβολή") + ")",
+          title:      "Νέα κράτηση #" + bookingNumber + " (" + (pd.fullyPaid ? "πληρωμένη πλήρως" : "πληρωμένη προκαταβολή") + ")",
           body:       pd.from + " → " + pd.to + " · " + pd.clientName + " · " + pd.depositAmount + "€",
         });
       } catch (e) {
@@ -3637,14 +3573,15 @@ exports.vivaWebhook = onRequest(
                 : "From now on, communication will happen via WhatsApp: <a href=\"https://wa.me/" + whatsapp + "\">+" + whatsapp + "</a>")
             : "";
           const subject = isEl
-            ? "✅ Η κράτησή σας επιβεβαιώθηκε — " + pd.from + " → " + pd.to
-            : "✅ Your booking is confirmed — " + pd.from + " → " + pd.to;
+            ? "✅ Κράτηση #" + bookingNumber + " επιβεβαιώθηκε — " + pd.from + " → " + pd.to
+            : "✅ Booking #" + bookingNumber + " confirmed — " + pd.from + " → " + pd.to;
           const html = isEl
             ? "<div style=\"font-family:sans-serif;font-size:15px;color:#222;\">" +
               "<h2 style=\"color:#1a1a2e;\">Η κράτησή σας επιβεβαιώθηκε!</h2>" +
               "<p>Γεια σας " + pd.clientName + ",</p>" +
               "<p>Η προκαταβολή πληρώθηκε με επιτυχία και η κράτησή σας είναι οριστική.</p>" +
               "<table style=\"border-collapse:collapse;margin:12px 0;\">" +
+              "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Αριθμός κράτησης:</td><td><b>#" + bookingNumber + "</b></td></tr>" +
               "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Διαδρομή:</td><td><b>" + pd.from + " → " + pd.to + "</b></td></tr>" +
               "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Ημερομηνία/ώρα:</td><td>" + whenStr + "</td></tr>" +
               "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Πληρώθηκε:</td><td>" + pd.depositAmount + "€" + (pd.fullyPaid ? " (πλήρης πληρωμή)" : " (προκαταβολή)") + "</td></tr>" +
@@ -3657,6 +3594,7 @@ exports.vivaWebhook = onRequest(
               "<p>Hi " + pd.clientName + ",</p>" +
               "<p>Your deposit was paid successfully and your booking is now confirmed.</p>" +
               "<table style=\"border-collapse:collapse;margin:12px 0;\">" +
+              "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Booking number:</td><td><b>#" + bookingNumber + "</b></td></tr>" +
               "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Route:</td><td><b>" + pd.from + " → " + pd.to + "</b></td></tr>" +
               "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Date/time:</td><td>" + whenStr + "</td></tr>" +
               "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Paid:</td><td>€" + pd.depositAmount + (pd.fullyPaid ? " (full payment)" : " (deposit)") + "</td></tr>" +

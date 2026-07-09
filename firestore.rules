@@ -348,6 +348,13 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // ── counters/{tenantId} — μετρητής μοναδικού αριθμού κράτησης ανά
+    // tenant. Το γράφει ΜΟΝΟ το Cloud Function (Admin SDK, παρακάμπτει τα
+    // rules) — κανένας client δεν το αγγίζει απευθείας.
+    match /counters/{id} {
+      allow read, write: if false;
+    }
+
     // ── Default: ΟΛΑ τα υπόλοιπα ΚΛΕΙΣΤΑ ───────────────────────────────────
     match /{document=**} {
       allow read, write: if false;

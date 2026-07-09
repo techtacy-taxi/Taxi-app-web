@@ -27,12 +27,10 @@ import '../voice/recipient_picker.dart';
 import '../voice/voice_models.dart';
 import '../voice/share_service.dart';
 import '../calendar/converted_events_store.dart';
-import 'ics_access.dart';
 import 'job_form.dart';
 import 'job_service.dart';
 import 'job_details_sheet.dart';
 import 'job_shared_widgets.dart';
-import 'my_jobs_sheet.dart' show showCalendarPicker;
 import 'saved_job_service.dart';
 
 class SavedJobsTab extends StatefulWidget {
@@ -73,10 +71,6 @@ class _SavedJobsTabState extends State<SavedJobsTab> {
   String? _myTenantId;
   bool _tenantLoaded = false;
 
-  // ── Κουμπί «Στο ημερολόγιο» — ίδιος διακόπτης master με του οδηγού
-  // (icsExportEnabled), βλ. ics_access.dart. Master πάντα true.
-  bool _icsAllowed = IcsAccess.cached ?? false;
-
   Future<void> _loadMyTenantId() async {
     if (widget.isMaster) {
       // Ο master δεν χρειάζεται φίλτρο — βλέπει τα πάντα, όπως πάντα.
@@ -97,11 +91,6 @@ class _SavedJobsTabState extends State<SavedJobsTab> {
   void initState() {
     super.initState();
     _loadMyTenantId();
-    if (IcsAccess.cached == null) {
-      IcsAccess.canExport().then((v) {
-        if (mounted) setState(() => _icsAllowed = v);
-      });
-    }
     // Ο master βλέπει ούτως ή άλλως τα πάντα — δεν χρειάζεται shares.
     if (!widget.isMaster) {
       _shareSub = ShareService.sharedOwnersStream(widget.adminUid).listen((m) {
@@ -180,34 +169,6 @@ class _SavedJobsTabState extends State<SavedJobsTab> {
 
         return Column(
           children: [
-            // ── «Στο ημερολόγιο» — μόνο αν επιτρέπεται (ίδιο flag με τον
-            // οδηγό), πάντα ορατό όσο υπάρχει έστω 1 αποθηκευμένη δουλειά.
-            if (_icsAllowed && items.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
-                child: SizedBox(
-                  width: double.infinity,
-                  child: FilledButton.icon(
-                    onPressed: () => showCalendarPicker(
-                        context, items.map((s) => s.job).toList()),
-                    style: FilledButton.styleFrom(
-                      backgroundColor: const Color(0xFF1A73E8),
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 13),
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14)),
-                    ),
-                    icon: const Icon(Icons.calendar_month_rounded,
-                        color: Colors.white),
-                    label: const Text('Στο ημερολόγιο',
-                        style: TextStyle(
-                            fontSize: 14.5,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.white)),
-                  ),
-                ),
-              ),
-
             // ── Φίλτρα (μόνο master) ──
             if (widget.isMaster) _buildMasterFilters(snap.data ?? const []),
 
@@ -727,14 +688,18 @@ class _SavedJobCard extends StatelessWidget {
                     color: const Color(0xFFFFB300),
                     borderRadius: BorderRadius.circular(8),
                   ),
-                  child: const Row(mainAxisAlignment: MainAxisAlignment.center,
+                  child: Row(mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                    Icon(Icons.public_rounded,
+                    const Icon(Icons.public_rounded,
                         color: Color(0xFF5A3D00), size: 16),
-                    SizedBox(width: 6),
-                    Text('ΑΠΟ ΦΟΡΜΑ', style: TextStyle(
-                        color: Color(0xFF5A3D00), fontSize: 13,
-                        fontWeight: FontWeight.w900, letterSpacing: 2)),
+                    const SizedBox(width: 6),
+                    Text(
+                        saved.bookingNumber != null
+                            ? 'ΑΠΟ ΦΟΡΜΑ · #${saved.bookingNumber}'
+                            : 'ΑΠΟ ΦΟΡΜΑ',
+                        style: const TextStyle(
+                            color: Color(0xFF5A3D00), fontSize: 13,
+                            fontWeight: FontWeight.w900, letterSpacing: 1.2)),
                   ]),
                 ),
               ],

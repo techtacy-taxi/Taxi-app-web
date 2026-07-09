@@ -34,6 +34,7 @@ class SavedJob {
   final String?  lastEditedByName; // ποιος την άγγιξε τελευταίος (αν ξένος)
   final String?  origin;           // π.χ. 'public_form' = ήρθε από τη φόρμα site
   final bool     autoReturned;     // true = γύρισε μόνη της (αδιεκδίκητη, όχι χειροκίνητο draft)
+  final int?     bookingNumber;    // μοναδικός αύξων αριθμός κράτησης (ανά tenant), αν από φόρμα
 
   const SavedJob({
     required this.id,
@@ -45,6 +46,7 @@ class SavedJob {
     this.lastEditedByName,
     this.origin,
     this.autoReturned = false,
+    this.bookingNumber,
   });
 
   /// True αν η δουλειά δημιουργήθηκε από τη δημόσια φόρμα της ιστοσελίδας.
@@ -64,6 +66,7 @@ class SavedJob {
       lastEditedByName: d['lastEditedByName'] as String?,
       origin:   d['origin'] as String?,
       autoReturned: d['autoReturned'] == true,
+      bookingNumber: (d['bookingNumber'] as num?)?.toInt(),
     );
   }
 
