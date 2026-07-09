@@ -38,7 +38,7 @@ class PublicBookingAlerts {
   void Function(void Function())? _setStateInDialog;
 
   /// Ξεκινά listeners. Ασφαλές να κληθεί πολλές φορές.
-  void start() {
+  Future<void> start() async {
     // Ασφαλιστική δικλείδα: το γεγονός ότι η εφαρμογή μόλις άνοιξε/ήρθε στο
     // προσκήνιο σημαίνει ότι ο master είδε ήδη την ειδοποίηση (ή/και θα δει
     // αμέσως το popup). Σβήνουμε προληπτικά κάθε native ειδοποίηση/ήχο που
@@ -52,20 +52,33 @@ class PublicBookingAlerts {
       _seenIds.clear();
       final myUid = FirebaseAuth.instance.currentUser?.uid;
       if (myUid == null) return; // δεν είναι συνδεδεμένος — τίποτα να ακούσει
-      // ΣΗΜΑΝΤΙΚΟ: φιλτράρουμε με ownerUid == ο ίδιος — το vivaWebhook ήδη
-      // αναθέτει κάθε δουλειά από τη δημόσια φόρμα στον master/tenant-owner
-      // ΤΟΥ ΣΥΓΚΕΚΡΙΜΕΝΟΥ tenant (βλ. findMasterUid στο index.js). Έτσι:
-      //   • Εσύ (master, tenant "default") βλέπεις/ακούς ΜΟΝΟ τις δικές σου.
-      //   • Κάθε tenant-owner βλέπει/ακούει ΜΟΝΟ τις δικές του — σαν να τις
-      //     είχε φτιάξει μόνος του και τις είχε αποθηκεύσει.
-      // Χωρίς αυτό το φίλτρο, ΟΛΟΙ θα έβλεπαν/άκουγαν τις κρατήσεις ΟΛΩΝ
-      // των tenants — διαρροή δεδομένων μεταξύ πελατών.
-      _fsSub = FirebaseFirestore.instance
+
+      // ⚠️ ΚΡΙΣΙΜΟ: τα Firestore rules για saved_jobs απαιτούν ΚΑΙ
+      // sameTenantAsResource() (tenantId ίδιο με του χρήστη) πέρα από
+      // isAdmin(). Ένα query που φιλτράρει ΜΟΝΟ σε ownerUid (χωρίς tenantId)
+      // ΔΕΝ μπορεί να επαληθευτεί από τη Firestore βάσει του ΟΡΙΣΜΟΥ του
+      // query — απορρίπτεται ΟΛΟΚΛΗΡΟ με permission-denied για ΚΑΘΕ μη-master
+      // χρήστη (ο master περνάει γιατί παρακάμπτει το tenantId check). Αυτό
+      // εξηγούσε γιατί η ειδοποίηση ΠΟΤΕ δεν ενεργοποιούνταν για tenant
+      // owners (π.χ. Seretis) — το σφάλμα καταπινόταν σιωπηλά στο onError.
+      // Λύση: προσθέτουμε ΚΑΙ tenantId στο ίδιο το query.
+      String? tenantId;
+      try {
+        final pDoc = await FirebaseFirestore.instance
+            .collection('presence').doc(myUid).get();
+        tenantId = pDoc.data()?['tenantId'] as String?;
+      } catch (_) {}
+
+      Query<Map<String, dynamic>> q = FirebaseFirestore.instance
           .collection('saved_jobs')
           .where('origin', isEqualTo: 'public_form')
-          .where('ownerUid', isEqualTo: myUid)
-          .snapshots()
-          .listen(_onSnapshot, onError: (_) {});
+          .where('ownerUid', isEqualTo: myUid);
+      if (tenantId != null && tenantId.isNotEmpty) {
+        q = q.where('tenantId', isEqualTo: tenantId);
+      }
+      _fsSub = q.snapshots().listen(_onSnapshot, onError: (e) {
+        debugPrint('PublicBookingAlerts listener error: $e');
+      });
     }
     // 2) FCM — εφεδρικό.
     _fcmSub ??= FirebaseMessaging.onMessage.listen((msg) {

@@ -798,16 +798,23 @@ async function freshAccessTokenFor(uid) {
 // ΠΡΟΣΟΧΗ: το presence ΔΕΝ έχει πεδίο "name" — έχει displayName/lastName.
 // Για tenant owner προτιμάμε το businessName του tenant (πιο αναγνωρίσιμο
 // στο dropdown «Δημιουργός» απ' το να λέει γενικά «Master» για όλους).
+// ─── Όνομα εμφάνισης του master/tenant-owner για ownerName σε saved_jobs ────
+// ΠΡΟΤΙΜΑΤΑΙ το προσωπικό όνομα (displayName+lastName) — όχι το όνομα
+// επιχείρησης, γιατί κάποιες δουλειές θα μπαίνουν και εκτός φόρμας (ή η
+// φόρμα ενδέχεται να κλείσει στο μέλλον), οπότε το προσωπικό όνομα είναι πιο
+// σταθερό αναγνωριστικό στο dropdown «Δημιουργός». Business name μόνο αν δεν
+// υπάρχει καθόλου προσωπικό όνομα καταχωρημένο.
 async function resolveOwnerDisplayName(tenantId, presenceData) {
   const pd = presenceData || {};
+  const full = [pd.displayName, pd.lastName].filter(Boolean).join(" ").trim();
+  if (full) return full;
   if (tenantId && tenantId !== "default") {
     try {
       const tDoc = await getFirestore().collection("tenants").doc(tenantId).get();
       if (tDoc.exists && tDoc.data().businessName) return tDoc.data().businessName;
     } catch (e) { /* fallback παρακάτω */ }
   }
-  const full = [pd.displayName, pd.lastName].filter(Boolean).join(" ").trim();
-  return full || pd.name || "Master";
+  return pd.name || "Master";
 }
 
 async function findMasterUid(tenantId) {
