@@ -889,7 +889,37 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
           children: [
             const Align(
               alignment: Alignment.centerLeft,
-              child: Text('1. Webhook (Ειδοποίηση πληρωμής)',
+              child: Text('1. Viva Client ID / Client Secret / API Key',
+                  style: TextStyle(fontWeight: FontWeight.w600, fontSize: 12)),
+            ),
+            const SizedBox(height: 4),
+            const Text(
+              'Στο Viva dashboard: πλαϊνό μενού → «Ρυθμίσεις» → «Διαπιστευτήρια '
+              'πρόσβασης API» (API Access Credentials). Εκεί θα βρεις το Client '
+              'ID και το Client Secret (Smart Checkout), και πιο κάτω το API '
+              'Key (Basic Authentication) — αντέγραψε ό,τι από τα δύο σου '
+              'ζητάει η κάρτα σου.',
+              style: TextStyle(fontSize: 12),
+            ),
+
+            const SizedBox(height: 12),
+            const Align(
+              alignment: Alignment.centerLeft,
+              child: Text('2. Viva Merchant ID',
+                  style: TextStyle(fontWeight: FontWeight.w600, fontSize: 12)),
+            ),
+            const SizedBox(height: 4),
+            const Text(
+              'Ίδια σελίδα («Ρυθμίσεις» → «Διαπιστευτήρια πρόσβασης API») — '
+              'το Merchant ID εμφανίζεται συνήθως πάνω-πάνω στην ίδια σελίδα, '
+              'ή στο «Προφίλ λογαριασμού» πάνω δεξιά.',
+              style: TextStyle(fontSize: 12),
+            ),
+
+            const SizedBox(height: 12),
+            const Align(
+              alignment: Alignment.centerLeft,
+              child: Text('3. Webhook (Ειδοποίηση πληρωμής)',
                   style: TextStyle(fontWeight: FontWeight.w600, fontSize: 12)),
             ),
             const SizedBox(height: 4),
@@ -905,7 +935,7 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
             const SizedBox(height: 12),
             const Align(
               alignment: Alignment.centerLeft,
-              child: Text('2. Source Code (Κωδικός)',
+              child: Text('4. Source Code (Κωδικός)',
                   style: TextStyle(fontWeight: FontWeight.w600, fontSize: 12)),
             ),
             const SizedBox(height: 4),

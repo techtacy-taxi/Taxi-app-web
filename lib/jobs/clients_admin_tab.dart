@@ -785,7 +785,7 @@ class _ClientEditorPageState extends State<ClientEditorPage> {
               title: const Text('Υπηρεσία Shuttle Bus',
                   style: TextStyle(fontSize: 14.5, fontWeight: FontWeight.w600)),
               subtitle: const Text(
-                  'Ενεργοποίησε αν αυτός ο πελάτης διαθέτει δικό του shuttle bus',
+                  'Ενεργοποίησε αν προσφέρεις σε αυτόν τον πελάτη υπηρεσία shuttle bus',
                   style: TextStyle(fontSize: 12)),
               value: _hasShuttleBus,
               onChanged: (v) => setState(() => _hasShuttleBus = v),
