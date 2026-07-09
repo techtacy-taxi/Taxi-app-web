@@ -3260,6 +3260,19 @@ exports.createVivaOrder = onRequest(
       const chargeAmount = payFull ? Math.ceil(estimate.price) : depositEquivalent;
       const depositCents = chargeAmount * 100; // Viva θέλει το amount σε λεπτά
 
+      // ── ΔΙΑΓΝΩΣΤΙΚΟ (προσωρινό) — καταγράφει ΑΚΡΙΒΩΣ τι έλαβε ο server και
+      // τι υπολόγισε, ώστε αν η χρέωση δεν ταιριάζει με ό,τι έδειχνε η φόρμα
+      // να το βλέπουμε στα Firebase Functions logs αντί να μαντεύουμε.
+      console.log("createVivaOrder DEBUG:", {
+        tenantId, date, time, persons, luggage, childSeatCount, vehicleType,
+        payFull, isGreek, dialCode,
+        "estimate.price": estimate.price,
+        "estimate.nightApplies": estimate.nightApplies,
+        "estimate.zoneMatch": estimate.zoneMatch,
+        "estimate.minChargeApplied": estimate.minChargeApplied,
+        depositEquivalent, chargeAmount,
+      });
+
       if (chargeAmount <= 0) {
         return res.status(400).json({ ok: false, error: "invalid_amount" });
       }
