@@ -4111,9 +4111,27 @@ exports.listClients = onRequest(
     try {
       const tenantId = s(req.method === "POST" ? (req.body || {}).tenantId : req.query.tenantId) || "default";
       const db = getFirestore();
-      const snap = await db.collection("clients")
-        .where("tenantId", "==", tenantId)
-        .get();
+
+      // ── «Μάτι» (masterHideOtherClients) — αν ο master αυτού του tenant
+      // έχει κλείσει το μάτι στη σελίδα Πελάτες, η δημόσια φόρμα δείχνει
+      // ΜΟΝΟ τους δικούς του πελάτες (createdBy == masterUid). Αν είναι
+      // ανοιχτό (προεπιλογή), δείχνει ΟΛΟΥΣ τους πελάτες του tenant, όπως πριν.
+      let restrictToUid = null;
+      try {
+        const masterUid = await findMasterUid(tenantId);
+        if (masterUid) {
+          const mPres = await db.collection("presence").doc(masterUid).get();
+          if (mPres.exists && mPres.data().masterHideOtherClients === true) {
+            restrictToUid = masterUid;
+          }
+        }
+      } catch (e) {
+        console.error("listClients: hideOthers check failed:", e.message || e);
+      }
+
+      let q = db.collection("clients").where("tenantId", "==", tenantId);
+      if (restrictToUid) q = q.where("createdBy", "==", restrictToUid);
+      const snap = await q.get();
 
       const clients = snap.docs.map((doc) => {
         const d = doc.data();

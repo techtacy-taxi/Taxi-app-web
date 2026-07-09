@@ -132,13 +132,13 @@ class _ClientsTabState extends State<ClientsTab> {
                       padding: const EdgeInsets.all(11),
                       decoration: BoxDecoration(
                         color: _hideOthers
-                            ? Colors.amber.shade100
-                            : Colors.white,
+                            ? Colors.white
+                            : Colors.amber.shade100,
                         borderRadius: BorderRadius.circular(10),
                         border: Border.all(
                             color: _hideOthers
-                                ? Colors.amber.shade400
-                                : Colors.grey.shade300),
+                                ? Colors.grey.shade300
+                                : Colors.amber.shade400),
                       ),
                       child: Icon(
                         _hideOthers
@@ -146,8 +146,8 @@ class _ClientsTabState extends State<ClientsTab> {
                             : Icons.visibility_rounded,
                         size: 20,
                         color: _hideOthers
-                            ? Colors.amber.shade900
-                            : Colors.grey.shade600,
+                            ? Colors.grey.shade600
+                            : Colors.amber.shade900,
                       ),
                     ),
                   ),
