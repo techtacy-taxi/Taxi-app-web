@@ -327,10 +327,35 @@ class _ClientCardState extends State<_ClientCard>
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(client.name,
-                        maxLines: 1, overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                            fontWeight: FontWeight.bold, fontSize: 16.5)),
+                    Row(children: [
+                      Flexible(
+                        child: Text(client.name,
+                            maxLines: 1, overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                                fontWeight: FontWeight.bold, fontSize: 16.5)),
+                      ),
+                      if (client.hasShuttleBus) ...[
+                        const SizedBox(width: 6),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: Colors.amber.shade100,
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Row(mainAxisSize: MainAxisSize.min, children: [
+                            Icon(Icons.directions_bus_filled_rounded,
+                                size: 12, color: Colors.amber.shade900),
+                            const SizedBox(width: 3),
+                            Text('Shuttle',
+                                style: TextStyle(
+                                    fontSize: 10.5,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.amber.shade900)),
+                          ]),
+                        ),
+                      ],
+                    ]),
                     const SizedBox(height: 2),
                     Row(children: [
                       Icon(Icons.route_rounded,
@@ -571,6 +596,7 @@ class _ClientEditorPageState extends State<ClientEditorPage> {
   final _nameCtrl  = TextEditingController();
   final _phoneCtrl = TextEditingController();
   PlacePick? _fromPick;
+  bool _hasShuttleBus = false;
   List<_EditableRoute> _routes = [];
   List<JobSource> _sources = [];
   bool _saving = false;
@@ -583,6 +609,7 @@ class _ClientEditorPageState extends State<ClientEditorPage> {
     if (c != null) {
       _nameCtrl.text  = c.name;
       _phoneCtrl.text = c.phone ?? '';
+      _hasShuttleBus  = c.hasShuttleBus;
       _fromPick = PlacePick(
           description: c.fromName, lat: c.fromLat, lng: c.fromLng);
       _routes = c.routes.map((r) => _EditableRoute(
@@ -654,6 +681,7 @@ class _ClientEditorPageState extends State<ClientEditorPage> {
       phone:         _phoneCtrl.text.trim().isNotEmpty
           ? _phoneCtrl.text.trim()
           : null,
+      hasShuttleBus: _hasShuttleBus,
       routes:        routes,
       createdBy:     widget.client?.createdBy.isNotEmpty == true
           ? widget.client!.createdBy
@@ -741,6 +769,26 @@ class _ClientEditorPageState extends State<ClientEditorPage> {
               filled:     true, fillColor: Colors.white,
               border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(12)),
+            ),
+          ),
+          const SizedBox(height: 10),
+          Container(
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: Colors.grey.shade300),
+            ),
+            child: SwitchListTile(
+              contentPadding: const EdgeInsets.symmetric(horizontal: 14),
+              secondary: Icon(Icons.directions_bus_filled_rounded,
+                  color: _hasShuttleBus ? Colors.amber.shade800 : Colors.grey),
+              title: const Text('Υπηρεσία Shuttle Bus',
+                  style: TextStyle(fontSize: 14.5, fontWeight: FontWeight.w600)),
+              subtitle: const Text(
+                  'Ενεργοποίησε αν αυτός ο πελάτης διαθέτει δικό του shuttle bus',
+                  style: TextStyle(fontSize: 12)),
+              value: _hasShuttleBus,
+              onChanged: (v) => setState(() => _hasShuttleBus = v),
             ),
           ),
           const SizedBox(height: 20),

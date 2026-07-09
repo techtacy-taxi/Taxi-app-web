@@ -78,6 +78,7 @@ class Client {
   final double? fromLat;
   final double? fromLng;
   final String? phone;       // προαιρετικό τηλέφωνο πελάτη
+  final bool    hasShuttleBus; // ✅ διαθέτει υπηρεσία Shuttle Bus
   final List<ClientRoute> routes;
   final String  createdBy;
   final String  createdByName;
@@ -90,6 +91,7 @@ class Client {
     this.fromLat,
     this.fromLng,
     this.phone,
+    this.hasShuttleBus = false,
     this.routes = const [],
     required this.createdBy,
     this.createdByName = '',
@@ -114,6 +116,7 @@ class Client {
       fromLat:       (d['fromLat'] as num?)?.toDouble(),
       fromLng:       (d['fromLng'] as num?)?.toDouble(),
       phone:         d['phone']    as String?,
+      hasShuttleBus: d['hasShuttleBus'] == true,
       routes:        routes,
       createdBy:     d['createdBy']     as String? ?? '',
       createdByName: d['createdByName'] as String? ?? '',
@@ -127,6 +130,7 @@ class Client {
         if (fromLat != null) 'fromLat': fromLat,
         if (fromLng != null) 'fromLng': fromLng,
         if (phone != null && phone!.isNotEmpty) 'phone': phone,
+        'hasShuttleBus': hasShuttleBus,
         'routes':        routes.map((r) => r.toMap()).toList(),
         'createdBy':     createdBy,
         'createdByName': createdByName,
@@ -141,6 +145,7 @@ class Client {
     double?  fromLat,
     double?  fromLng,
     String?  phone,
+    bool?    hasShuttleBus,
     List<ClientRoute>? routes,
   }) =>
       Client(
@@ -150,6 +155,7 @@ class Client {
         fromLat:       fromLat  ?? this.fromLat,
         fromLng:       fromLng  ?? this.fromLng,
         phone:         phone    ?? this.phone,
+        hasShuttleBus: hasShuttleBus ?? this.hasShuttleBus,
         routes:        routes   ?? this.routes,
         createdBy:     createdBy,
         createdByName: createdByName,
