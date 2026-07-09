@@ -708,7 +708,11 @@ Future<void> showPublicBookingNotification({
 Future<void> cancelPublicBookingNotifications() async {
   try {
     await _localNotifs.cancelAll();
-  } catch (_) {}
+  } catch (e) {
+    // ΠΡΙΝ: καταπινόταν σιωπηλά — αν αυτό αποτύχει, ο ήχος/η ειδοποίηση
+    // μπορεί να «κολλήσει» ενεργή χωρίς καμία ένδειξη στα logs.
+    debugPrint('cancelPublicBookingNotifications error: $e');
+  }
 }
 
 // ─── Public API ─────────────────────────────────────────────────────────────
