@@ -20,6 +20,7 @@ import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:just_audio/just_audio.dart';
+import 'job_shared_widgets.dart';
 import 'package:vibration/vibration.dart';
 import 'job_model.dart';
 import 'job_service.dart';
@@ -505,7 +506,8 @@ class _JobPopupContentState extends State<_JobPopupContent>
         // άκρη (ίδιο στυλ με τις μπάρες κατάστασης από πάνω). Μόνο για πλήρη
         // πληρωμή (online ή χειροκίνητη).
         if (job.fullyPaid)
-          Container(
+          BlinkingBox(
+            child: Container(
             width: double.infinity,
             color: const Color(0xFFD97757),
             padding: const EdgeInsets.symmetric(vertical: 9, horizontal: 10),
@@ -523,6 +525,7 @@ class _JobPopupContentState extends State<_JobPopupContent>
                           fontWeight: FontWeight.w900)),
                 ),
               ],
+            ),
             ),
           ),
 
@@ -545,13 +548,21 @@ class _JobPopupContentState extends State<_JobPopupContent>
 
                 // Οικονομικά στοιχεία
                 Row(children: [
-                  Expanded(child: _infoCell(
-                    icon:  Icons.euro_rounded,
-                    label: job.fullyPaid ? 'Πληρώθηκε online' : (job.depositPaid ? 'Να εισπράξεις' : 'Τιμή'),
-                    value: '${job.remainingToCollect.toStringAsFixed(2)}€',
-                    color: const Color(0xFF1E8E3E),
-                    large: true,
-                  )),
+                  Expanded(child: job.depositPaid
+                      ? BlinkingBox(child: _infoCell(
+                          icon:  Icons.euro_rounded,
+                          label: job.fullyPaid ? 'Πληρώθηκε online' : 'Να εισπράξεις',
+                          value: '${job.remainingToCollect.toStringAsFixed(2)}€',
+                          color: const Color(0xFF1E8E3E),
+                          large: true,
+                        ))
+                      : _infoCell(
+                          icon:  Icons.euro_rounded,
+                          label: 'Τιμή',
+                          value: '${job.remainingToCollect.toStringAsFixed(2)}€',
+                          color: const Color(0xFF1E8E3E),
+                          large: true,
+                        )),
                   if (job.commission > 0)
                     Expanded(child: _infoCell(
                       icon:  Icons.handshake_rounded,
@@ -559,13 +570,21 @@ class _JobPopupContentState extends State<_JobPopupContent>
                       value: '-${job.commission.toStringAsFixed(2)}€',
                       color: Colors.orange,
                     )),
-                  Expanded(child: _infoCell(
-                    icon:  Icons.account_balance_wallet_rounded,
-                    label: 'Κέρδος',
-                    value: '${job.driverEarning.toStringAsFixed(2)}€',
-                    color: Colors.blue,
-                    large: true,
-                  )),
+                  Expanded(child: job.depositPaid
+                      ? BlinkingBox(child: _infoCell(
+                          icon:  Icons.account_balance_wallet_rounded,
+                          label: 'Κέρδος',
+                          value: '${job.driverEarning.toStringAsFixed(2)}€',
+                          color: Colors.blue,
+                          large: true,
+                        ))
+                      : _infoCell(
+                          icon:  Icons.account_balance_wallet_rounded,
+                          label: 'Κέρδος',
+                          value: '${job.driverEarning.toStringAsFixed(2)}€',
+                          color: Colors.blue,
+                          large: true,
+                        )),
                 ]),
                 // Σημείωση προκαταβολής/πλήρους πληρωμής — ώστε ο οδηγός να
                 // καταλάβει γιατί το ποσό που θα εισπράξει διαφέρει.

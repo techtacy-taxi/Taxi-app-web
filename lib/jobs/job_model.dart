@@ -77,6 +77,10 @@ class Job {
   // ο οδηγός δεν χρειάζεται να εισπράξει τίποτα.
   final bool       fullyPaid;
 
+  // Μοναδικός αύξων αριθμός κράτησης (ανά tenant) — ΜΟΝΟ αν η δουλειά ήρθε
+  // από δημόσια φόρμα. Read-only παντού· null = χειροκίνητη δουλειά.
+  final int?       bookingNumber;
+
   const Job({
     required this.id,
     required this.from,
@@ -132,6 +136,7 @@ class Job {
     this.depositAmount   = 0,
     this.vivaOrderCode,
     this.fullyPaid       = false,
+    this.bookingNumber,
   });
 
   factory Job.fromDoc(DocumentSnapshot<Map<String, dynamic>> doc) {
@@ -227,6 +232,7 @@ class Job {
       depositAmount:    (d['depositAmount'] as num?)?.toDouble() ?? 0,
       vivaOrderCode:    d['vivaOrderCode'] as String?,
       fullyPaid:        (d['fullyPaid'] as bool?) ?? false,
+      bookingNumber:    (d['bookingNumber'] as num?)?.toInt(),
     );
   }
 
@@ -283,7 +289,33 @@ class Job {
     if (depositPaid) 'depositAmount': depositAmount,
     if (vivaOrderCode != null) 'vivaOrderCode': vivaOrderCode,
     if (fullyPaid) 'fullyPaid': true,
+    if (bookingNumber != null) 'bookingNumber': bookingNumber,
   };
+
+  /// Ελαφρύ copyWith — μόνο για τα πεδία που χρειάζονται στην πράξη
+  /// (π.χ. προσάρτηση bookingNumber όταν μια αποθηκευμένη δουλειά «γίνεται»
+  /// πραγματική δουλειά προς οδηγό).
+  Job copyWith({int? bookingNumber}) => Job(
+    id: id, from: from, to: to, fromLat: fromLat, fromLng: fromLng,
+    toLat: toLat, toLng: toLng, routeKm: routeKm, routeMinutes: routeMinutes,
+    routePolyline: routePolyline, price: price, commission: commission,
+    appCommission: appCommission, commissionLabel: commissionLabel,
+    persons: persons, luggage: luggage, childSeat: childSeat,
+    childSeatCount: childSeatCount, withReturn: withReturn, withStops: withStops,
+    childSeatPrice: childSeatPrice, vehicleType: vehicleType, status: status,
+    createdBy: createdBy, createdByName: createdByName, takenBy: takenBy,
+    takenByName: takenByName, note: note, sourceId: sourceId, sourceName: sourceName,
+    scheduledAt: scheduledAt, createdAt: createdAt, takenAt: takenAt,
+    doneAt: doneAt, cancelledAt: cancelledAt, groupId: groupId,
+    targetUids: targetUids, targetNames: targetNames, timeoutMins: timeoutMins,
+    clientName: clientName, clientPhone: clientPhone, clientEmail: clientEmail,
+    flightOrShip: flightOrShip, isReturn: isReturn, availableOnly: availableOnly,
+    exclusiveTarget: exclusiveTarget, escalationStage: escalationStage,
+    stageStartedAt: stageStartedAt, stopped: stopped, batchId: batchId,
+    depositPaid: depositPaid, depositAmount: depositAmount,
+    vivaOrderCode: vivaOrderCode, fullyPaid: fullyPaid,
+    bookingNumber: bookingNumber ?? this.bookingNumber,
+  );
 
   // ── Ποσό που πρέπει να εισπράξει ο ΟΔΗΓΟΣ από τον πελάτη ──
   // ΣΗΜΑΝΤΙΚΟ: για δουλειές από τη δημόσια φόρμα (Viva), το `price` που

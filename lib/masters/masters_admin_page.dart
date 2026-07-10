@@ -1,6 +1,7 @@
 // lib/masters/masters_admin_page.dart
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:url_launcher/url_launcher.dart';
@@ -893,6 +894,11 @@ class _AdminDriverCard extends StatelessWidget {
                             ),
                           ),
                         ),
+                      if (selTenantOwner && tenantIdCtrl.text.trim().isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                          child: _TenantEmailsToggle(tenantId: tenantIdCtrl.text.trim()),
+                        ),
                     ]),
                   ),
                 ],
@@ -1393,4 +1399,80 @@ class _GroupOption {
   final String id;
   final String name;
   const _GroupOption({required this.id, required this.name});
+}
+
+// ─── Διακόπτης «Αυτόματα email» ανά tenant — φορτώνει/αποθηκεύει ΑΜΕΣΩΣ,
+// ανεξάρτητα από το κουμπί «Αποθήκευση» του διαλόγου (ίδια λογική με το
+// «Επισκευή πρόσβασης» — άμεση ενέργεια). Αν ο tenant έχει βάλει δικό του
+// Resend key, ξανανοίγει αυτόματα από το ίδιο το backend (updateTenantResendKey).
+class _TenantEmailsToggle extends StatefulWidget {
+  final String tenantId;
+  const _TenantEmailsToggle({required this.tenantId});
+
+  @override
+  State<_TenantEmailsToggle> createState() => _TenantEmailsToggleState();
+}
+
+class _TenantEmailsToggleState extends State<_TenantEmailsToggle> {
+  bool? _enabled;
+  bool _saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final doc = await FirebaseFirestore.instance
+          .collection('tenants').doc(widget.tenantId).get();
+      if (mounted) setState(() => _enabled = doc.data()?['emailsEnabled'] != false);
+    } catch (_) {
+      if (mounted) setState(() => _enabled = true);
+    }
+  }
+
+  Future<void> _toggle(bool v) async {
+    setState(() { _enabled = v; _saving = true; });
+    try {
+      final callable = FirebaseFunctions.instance.httpsCallable('updateTenantEmailsEnabled');
+      await callable.call({'tenantId': widget.tenantId, 'enabled': v});
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Σφάλμα: $e'), backgroundColor: Colors.red.shade700));
+      }
+      await _load(); // επαναφορά σε περίπτωση σφάλματος
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_enabled == null) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 8),
+        child: SizedBox(
+            height: 16, width: 16,
+            child: CircularProgressIndicator(strokeWidth: 2)),
+      );
+    }
+    return SwitchListTile(
+      dense: true,
+      contentPadding: EdgeInsets.zero,
+      title: const Text('Αυτόματα email επιβεβαίωσης πελάτη',
+          style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold)),
+      subtitle: Text(
+          _saving
+              ? 'Αποθήκευση…'
+              : (_enabled!
+                  ? 'Ενεργά — στέλνονται αυτόματα μετά την πληρωμή'
+                  : 'Απενεργοποιημένα από εσένα'),
+          style: const TextStyle(fontSize: 10.5)),
+      value: _enabled!,
+      onChanged: _saving ? null : _toggle,
+    );
+  }
 }

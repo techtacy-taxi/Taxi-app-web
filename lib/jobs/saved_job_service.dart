@@ -24,6 +24,59 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'job_model.dart';
 
+// ─── Μία «στάση» μέσα σε μια ενωμένη δουλειά Shuttle ────────────────────────
+// Κάθε στάση αντιστοιχεί σε ΜΙΑ αρχική αποθηκευμένη δουλειά (savedJobId) που
+// απορροφήθηκε στο container. isPickupHere=true σημαίνει ότι ο επιβάτης
+// ΜΠΑΙΝΕΙ σε αυτό το σημείο (πολλαπλές παραλαβές → 1 κοινό προορισμό)·
+// false σημαίνει ότι ΚΑΤΕΒΑΙΝΕΙ εδώ (1 κοινή αφετηρία → πολλαπλοί προορισμοί).
+class ShuttleStop {
+  final String  savedJobId;
+  final String  name;
+  final String? phone;
+  final String? email;
+  final String? flightOrShip;
+  final String  address;
+  final double? lat;
+  final double? lng;
+  final bool    isPickupHere;
+
+  const ShuttleStop({
+    required this.savedJobId,
+    required this.name,
+    this.phone,
+    this.email,
+    this.flightOrShip,
+    required this.address,
+    this.lat,
+    this.lng,
+    required this.isPickupHere,
+  });
+
+  factory ShuttleStop.fromMap(Map<String, dynamic> m) => ShuttleStop(
+        savedJobId:   m['savedJobId'] as String? ?? '',
+        name:         m['name'] as String? ?? '',
+        phone:        m['phone'] as String?,
+        email:        m['email'] as String?,
+        flightOrShip: m['flightOrShip'] as String?,
+        address:      m['address'] as String? ?? '',
+        lat:          (m['lat'] as num?)?.toDouble(),
+        lng:          (m['lng'] as num?)?.toDouble(),
+        isPickupHere: m['isPickupHere'] == true,
+      );
+
+  Map<String, dynamic> toMap() => {
+        'savedJobId':   savedJobId,
+        'name':         name,
+        if (phone != null) 'phone': phone,
+        if (email != null) 'email': email,
+        if (flightOrShip != null) 'flightOrShip': flightOrShip,
+        'address':      address,
+        if (lat != null) 'lat': lat,
+        if (lng != null) 'lng': lng,
+        'isPickupHere': isPickupHere,
+      };
+}
+
 class SavedJob {
   final String   id;
   final Job      job;        // το προσχέδιο ως κανονική δουλειά
@@ -36,6 +89,22 @@ class SavedJob {
   final bool     autoReturned;     // true = γύρισε μόνη της (αδιεκδίκητη, όχι χειροκίνητο draft)
   final int?     bookingNumber;    // μοναδικός αύξων αριθμός κράτησης (ανά tenant), αν από φόρμα
 
+  // ── Ένωση Shuttle ──────────────────────────────────────────────────────
+  // Αν mergedIntoId != null, αυτή η αποθηκευμένη δουλειά έχει «απορροφηθεί»
+  // σε ένα container (κρύβεται από τη λίστα, αλλά ΔΕΝ διαγράφεται — ώστε να
+  // μπορεί να γίνει split αργότερα).
+  final String?  mergedIntoId;
+  // Αν isShuttleContainer, ΑΥΤΗ η δουλειά ΕΙΝΑΙ το ενωμένο Shuttle — δείχνει
+  // το κοινό σημείο + όλες τις στάσεις.
+  final bool     isShuttleContainer;
+  final List<ShuttleStop> shuttleStops;
+  final String?  shuttleSharedPointName;
+  final double?  shuttleSharedPointLat;
+  final double?  shuttleSharedPointLng;
+  final bool     shuttleSharedIsPickup; // true = το κοινό σημείο είναι η ΠΑΡΑΛΑΒΗ (πολλαπλές αφήσεις)
+  final List<String> mergedChildIds;    // ids των αρχικών savedJobs που απορροφήθηκαν εδώ
+  final String?  tenantId;              // multi-tenant — απαραίτητο για rules στο container doc
+
   const SavedJob({
     required this.id,
     required this.job,
@@ -47,6 +116,15 @@ class SavedJob {
     this.origin,
     this.autoReturned = false,
     this.bookingNumber,
+    this.mergedIntoId,
+    this.isShuttleContainer = false,
+    this.shuttleStops = const [],
+    this.shuttleSharedPointName,
+    this.shuttleSharedPointLat,
+    this.shuttleSharedPointLng,
+    this.shuttleSharedIsPickup = false,
+    this.mergedChildIds = const [],
+    this.tenantId,
   });
 
   /// True αν η δουλειά δημιουργήθηκε από τη δημόσια φόρμα της ιστοσελίδας.
@@ -67,6 +145,18 @@ class SavedJob {
       origin:   d['origin'] as String?,
       autoReturned: d['autoReturned'] == true,
       bookingNumber: (d['bookingNumber'] as num?)?.toInt(),
+      mergedIntoId: d['mergedIntoId'] as String?,
+      isShuttleContainer: d['isShuttleContainer'] == true,
+      shuttleStops: (d['shuttleStops'] as List<dynamic>?)
+              ?.map((e) => ShuttleStop.fromMap(Map<String, dynamic>.from(e as Map)))
+              .toList() ??
+          const [],
+      shuttleSharedPointName: d['shuttleSharedPointName'] as String?,
+      shuttleSharedPointLat: (d['shuttleSharedPointLat'] as num?)?.toDouble(),
+      shuttleSharedPointLng: (d['shuttleSharedPointLng'] as num?)?.toDouble(),
+      shuttleSharedIsPickup: d['shuttleSharedIsPickup'] == true,
+      mergedChildIds: (d['mergedChildIds'] as List<dynamic>?)?.map((e) => e as String).toList() ?? const [],
+      tenantId: d['tenantId'] as String?,
     );
   }
 
@@ -92,6 +182,10 @@ class SavedJob {
   }
 
   bool get isExpired => DateTime.now().isAfter(expiresAt);
+
+  /// True αν αυτή η δουλειά έχει απορροφηθεί σε ένα ενωμένο Shuttle — πρέπει
+  /// να κρύβεται από την κανονική λίστα (φαίνεται μόνο μέσα στο container).
+  bool get isMergedAway => mergedIntoId != null;
 }
 
 class SavedJobService {
@@ -150,6 +244,98 @@ class SavedJobService {
 
   static Future<void> delete(String id) async {
     await _fs.collection(_coll).doc(id).delete();
+  }
+
+  // ── Ένωση Shuttle ──────────────────────────────────────────────────────
+  // Ενώνει πολλές αποθηκευμένες δουλειές σε ΜΙΑ. Δημιουργεί νέο container
+  // doc με όλες τις στάσεις· τα αρχικά docs ΔΕΝ διαγράφονται — μαρκάρονται
+  // με mergedIntoId ώστε να κρύβονται από τη λίστα αλλά να μπορεί να γίνει
+  // split αργότερα χωρίς απώλεια δεδομένων.
+  static Future<String> mergeIntoShuttle({
+    required List<SavedJob> items,
+    required String sharedPointName,
+    double? sharedPointLat,
+    double? sharedPointLng,
+    required bool sharedIsPickup, // true = κοινή ΠΑΡΑΛΑΒΗ (πολλές αφήσεις) · false = κοινή ΑΦΕΣΗ (πολλές παραλαβές)
+    required DateTime unifiedScheduledAt,
+    required String ownerUid,
+    required String ownerName,
+  }) async {
+    if (items.length < 2) throw ArgumentError('χρειάζονται τουλάχιστον 2 δουλειές');
+
+    final totalPersons = items.fold<int>(0, (s, i) => s + i.job.persons);
+    final totalLuggage = items.fold<int>(0, (s, i) => s + i.job.luggage);
+    final totalPrice   = items.fold<double>(0, (s, i) => s + i.job.price);
+
+    final stops = items.map((i) => ShuttleStop(
+          savedJobId:   i.id,
+          name:         i.job.clientName ?? '',
+          phone:        i.job.clientPhone,
+          email:        i.job.clientEmail,
+          flightOrShip: i.job.flightOrShip,
+          address:      sharedIsPickup ? i.job.to : i.job.from,
+          lat:          sharedIsPickup ? i.job.toLat : i.job.fromLat,
+          lng:          sharedIsPickup ? i.job.toLng : i.job.fromLng,
+          isPickupHere: !sharedIsPickup,
+        )).toList();
+
+    final combinedFrom = sharedIsPickup ? sharedPointName : 'Πολλαπλές παραλαβές (${items.length})';
+    final combinedTo   = sharedIsPickup ? 'Πολλαπλές αφήσεις (${items.length})' : sharedPointName;
+    final first = items.first.job;
+
+    final containerJob = Job(
+      id: '',
+      from: combinedFrom,
+      to: combinedTo,
+      fromLat: sharedIsPickup ? sharedPointLat : null,
+      fromLng: sharedIsPickup ? sharedPointLng : null,
+      toLat:   sharedIsPickup ? null : sharedPointLat,
+      toLng:   sharedIsPickup ? null : sharedPointLng,
+      price: totalPrice,
+      persons: totalPersons,
+      luggage: totalLuggage,
+      vehicleType: first.vehicleType,
+      createdBy: ownerUid,
+      createdByName: ownerName,
+      scheduledAt: unifiedScheduledAt,
+      createdAt: DateTime.now(),
+      note: 'Ενωμένη δουλειά Shuttle — ${items.length} επιβάτες/κρατήσεις.',
+    );
+
+    final map = containerJob.toMap();
+    map['ownerUid']  = ownerUid;
+    map['ownerName'] = ownerName;
+    map['savedAt']   = FieldValue.serverTimestamp();
+    map['isShuttleContainer'] = true;
+    map['shuttleSharedPointName'] = sharedPointName;
+    if (sharedPointLat != null) map['shuttleSharedPointLat'] = sharedPointLat;
+    if (sharedPointLng != null) map['shuttleSharedPointLng'] = sharedPointLng;
+    map['shuttleSharedIsPickup'] = sharedIsPickup;
+    map['shuttleStops'] = stops.map((s) => s.toMap()).toList();
+    map['mergedChildIds'] = items.map((i) => i.id).toList();
+    final tid = items.first.tenantId;
+    if (tid != null) map['tenantId'] = tid;
+
+    final batch = _fs.batch();
+    final containerRef = _fs.collection(_coll).doc();
+    batch.set(containerRef, map);
+    for (final i in items) {
+      batch.update(_fs.collection(_coll).doc(i.id), {'mergedIntoId': containerRef.id});
+    }
+    await batch.commit();
+    return containerRef.id;
+  }
+
+  /// Ξεχωρίζει ξανά μια ενωμένη Shuttle δουλειά στα αρχικά της κομμάτια —
+  /// διαγράφει το container, ξαναφέρνει ορατά τα αρχικά (mergedIntoId: null).
+  static Future<void> splitShuttle(SavedJob container) async {
+    if (!container.isShuttleContainer) return;
+    final batch = _fs.batch();
+    for (final childId in container.mergedChildIds) {
+      batch.update(_fs.collection(_coll).doc(childId), {'mergedIntoId': FieldValue.delete()});
+    }
+    batch.delete(_fs.collection(_coll).doc(container.id));
+    await batch.commit();
   }
 
   /// Stream αποθηκευμένων για συγκεκριμένη λίστα owner uids (δικές μου + κοινές).

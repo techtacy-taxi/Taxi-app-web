@@ -544,6 +544,58 @@ class _PulseRingDotState extends State<PulseRingDot>
   }
 }
 
+// ─── Blinking wrapper — για κρίσιμες οικονομικές πληροφορίες (προπληρωμένη
+// δουλειά, ποσό προς είσπραξη) όπου θέλουμε να είναι ΑΔΥΝΑΤΟΝ να περάσει
+// απαρατήρητο. Αναβοσβήνει η αδιαφάνεια ανάμεσα σε 1.0 και ένα ελάχιστο,
+// συνέχεια, όσο είναι στην οθόνη. Σέβεται reduce-motion (τότε μένει σταθερό).
+class BlinkingBox extends StatefulWidget {
+  final Widget child;
+  final double minOpacity;
+  final Duration duration;
+  const BlinkingBox({
+    super.key,
+    required this.child,
+    this.minOpacity = 0.35,
+    this.duration = const Duration(milliseconds: 700),
+  });
+
+  @override
+  State<BlinkingBox> createState() => _BlinkingBoxState();
+}
+
+class _BlinkingBoxState extends State<BlinkingBox>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(vsync: this, duration: widget.duration)
+      ..repeat(reverse: true);
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final reduceMotion = MediaQuery.maybeOf(context)?.disableAnimations ?? false;
+    if (reduceMotion) return widget.child;
+    return AnimatedBuilder(
+      animation: _ctrl,
+      builder: (_, child) => Opacity(
+        opacity: widget.minOpacity +
+            (1 - widget.minOpacity) * (1 - _ctrl.value),
+        child: child,
+      ),
+      child: widget.child,
+    );
+  }
+}
+
 // ─── Shimmer skeleton ─────────────────────────────────────────────────────────
 //
 // Placeholder φόρτωσης με «λάμψη» που περνά διαγώνια — αντί για στρογγυλό

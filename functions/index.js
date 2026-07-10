@@ -600,9 +600,9 @@ const RESEND_API_KEY = defineSecret("RESEND_API_KEY");
 
 // Στέλνει email μέσω Resend. Best-effort — ποτέ δεν πετάει exception προς τα
 // έξω (η αποτυχία εδώ δεν πρέπει ΠΟΤΕ να μπλοκάρει την επιβεβαίωση πληρωμής).
-async function sendCustomerEmailViaResend({ to, subject, html, fromName, fromEmail }) {
+async function sendCustomerEmailViaResend({ to, subject, html, fromName, fromEmail, apiKeyOverride }) {
   try {
-    const apiKey = RESEND_API_KEY.value();
+    const apiKey = apiKeyOverride || RESEND_API_KEY.value();
     if (!apiKey || !to) return false;
     const res = await fetch("https://api.resend.com/emails", {
       method: "POST",
@@ -2366,6 +2366,27 @@ function matchZone(lat, lng, zones) {
   return best;
 }
 
+// ── Κλειδί ομαδοποίησης Shuttle — «ίδια ζώνη-σε-ζώνη + κοντινή ώρα» ώστε
+// πολλές κρατήσεις Shuttle (π.χ. από 3 κοντινά Airbnb προς το αεροδρόμιο)
+// να μπορούν να φανούν οπτικά μαζί στις Αποθηκευμένες και να «συγχωνευτούν»
+// σε ΜΙΑ δουλειά. Το «κάδος ώρας» είναι 30λεπτος (00 ή 30) — ραντεβού μέσα
+// στο ίδιο μισάωρο πιάνουν το ΙΔΙΟ κλειδί. null αν δεν βρέθηκε ζωνικό
+// ταίριασμα και στα δύο άκρα (δεν έχει νόημα ομαδοποίηση εκτός ζωνών).
+async function computeShuttleGroupKey({ fromLat, fromLng, toLat, toLng, scheduledNaive, tenantId }) {
+  if (fromLat == null || fromLng == null || toLat == null || toLng == null || !scheduledNaive) return null;
+  const { zones } = await getPricingData(tenantId);
+  const fromZone = matchZone(fromLat, fromLng, zones);
+  const toZone = matchZone(toLat, toLng, zones);
+  if (!fromZone || !toZone) return null;
+
+  const bucket = new Date(scheduledNaive);
+  bucket.setUTCMinutes(bucket.getUTCMinutes() < 30 ? 0 : 30, 0, 0);
+  const bucketKey = bucket.getUTCFullYear() + "-" + (bucket.getUTCMonth() + 1) + "-" +
+    bucket.getUTCDate() + "T" + bucket.getUTCHours() + ":" + bucket.getUTCMinutes();
+
+  return fromZone.id + ">" + toZone.id + "|" + bucketKey;
+}
+
 // ── Ρυθμίσεις τιμολόγησης (ζώνες + διαδρομές + δυναμικός τύπος), cache 60″ ──
 // ΝΕΟ (multi-tenant, Φάση 3): ξεχωριστό cache + ξεχωριστά δεδομένα ανά
 // tenantId. Ο δικός σου tenant ("default") συνεχίζει να χρησιμοποιεί
@@ -2415,6 +2436,9 @@ async function getPricingData(tenantId) {
       blackoutEndHour: 8, blackoutEndMinute: 0,
       // ── Ποσοστό προκαταβολής — προεπιλογή 10%, ρυθμίζεται ανά tenant ──
       depositPercent: 10,
+      // ── Έκπτωση «γνωριμίας» στη δυναμική τιμολόγηση (εκτός ζωνών, εκτός
+      // Shuttle) — προεπιλογή 8%. 0 = δείξε κατευθείαν την τελική τιμή.
+      dynamicDiscountPercent: 8,
     },
     cfgDoc.exists ? cfgDoc.data() : {}
   );
@@ -2444,10 +2468,69 @@ async function computeEstimate({
 }) {
   const { zones, routes, cfg } = await getPricingData(tenantId);
   const forced = persons >= 5 || luggage >= 5;
-  const vehicle = forced ? "van" : (vehicleType === "van" ? "van" : "taxi");
 
   const fromZone = fromLat != null && fromLng != null ? matchZone(fromLat, fromLng, zones) : null;
   const toZone = toLat != null && toLng != null ? matchZone(toLat, toLng, zones) : null;
+  const zoneRoute = (fromZone && toZone) ? routes[fromZone.id + ">" + toZone.id] : null;
+
+  // ── Shuttle: διαθέσιμο ΜΟΝΟ αν υπάρχει ρητά ορισμένη τιμή/άτομο για ΑΥΤΟ
+  // το ζεύγος ζωνών. Το ελέγχουμε ΠΑΝΤΑ (ανεξάρτητα από το ζητούμενο
+  // vehicleType) ώστε ο client να ξέρει αν πρέπει να δείξει/προεπιλέξει το
+  // κουμπί Shuttle, πριν καν διαλέξει ο πελάτης όχημα.
+  const shuttleAvailable = !!(zoneRoute && Number(zoneRoute.shuttlePricePerPerson) > 0);
+
+  if (vehicleType === "shuttle") {
+    if (!shuttleAvailable) {
+      return {
+        price: 0, nightApplies: false, vehicle: "shuttle", zoneMatch: false,
+        minChargeApplied: false, displayOriginal: 0, discountPercent: 0,
+        outsideAttica: false, distanceKm: 0, durationMin: 0, routePolyline: null,
+        shuttleAvailable: false,
+      };
+    }
+    const departureTime = scheduledNaive ? athensNaiveToRealDate(scheduledNaive) : null;
+    let distanceKm = 0, durationMin = 0, routePolyline = null;
+    if (needMap && fromLat != null && fromLng != null && toLat != null && toLng != null) {
+      if (cachedDistanceKm != null && Number(cachedDistanceKm) > 0) {
+        distanceKm = Number(cachedDistanceKm);
+        durationMin = Number(cachedDurationMin) || 0;
+        routePolyline = cachedRoutePolyline || null;
+      } else {
+        const rd = await routesDistanceDuration(
+          { lat: fromLat, lng: fromLng }, { lat: toLat, lng: toLng }, apiKey, departureTime);
+        if (rd) { distanceKm = rd.distanceKm; durationMin = rd.durationMin; routePolyline = rd.polyline; }
+      }
+    }
+
+    const isNightNow = !!scheduledNaive && isNightWindow(scheduledNaive);
+    const perPerson = (isNightNow && Number(zoneRoute.shuttleNightPricePerPerson) > 0)
+      ? Number(zoneRoute.shuttleNightPricePerPerson)
+      : Number(zoneRoute.shuttlePricePerPerson);
+    const minType = zoneRoute.shuttleMinType === "persons" ? "persons" : "price";
+    const minValue = Number(zoneRoute.shuttleMinValue) || 0;
+
+    let billedPersons = persons;
+    let minChargeApplied = false;
+    if (minType === "persons" && minValue > persons) {
+      billedPersons = minValue;
+      minChargeApplied = true;
+    }
+    let price = billedPersons * perPerson;
+    if (minType === "price" && price < minValue) {
+      price = minValue;
+      minChargeApplied = true;
+    }
+    price = Math.ceil(price);
+
+    return {
+      price, nightApplies: isNightNow, vehicle: "shuttle", zoneMatch: true,
+      minChargeApplied, displayOriginal: price, discountPercent: 0,
+      outsideAttica: false, distanceKm, durationMin, routePolyline,
+      shuttleAvailable: true, shuttlePricePerPerson: perPerson,
+    };
+  }
+
+  const vehicle = forced ? "van" : (vehicleType === "van" ? "van" : "taxi");
 
   // Επιλογή τιμής ανά εθνικότητα για τον δυναμικό τύπο.
   function pick(key, useGreek) {
@@ -2465,22 +2548,19 @@ async function computeEstimate({
   let routePolyline = null; // για εμφάνιση στον χάρτη (booking.html)
   const departureTime = scheduledNaive ? athensNaiveToRealDate(scheduledNaive) : null;
 
-  if (fromZone && toZone) {
-    const route = routes[fromZone.id + ">" + toZone.id];
-    if (route) {
-      zoneMatch = true;
-      const ownField = vehicle === "van" ? "van" : "taxi";
-      const foreignField = vehicle === "van" ? "vanForeign" : "taxiForeign";
-      const ownPrice = Number(route[ownField] || 0);
-      const foreignPrice = route[foreignField] != null ? Number(route[foreignField]) : null;
-      if (foreignPrice != null && isGreek) {
-        basePrice = ownPrice;
-        baseOtherPrice = foreignPrice; // ο ξένος είναι η βάση αναφοράς (τυπικό -8%)
-      } else if (foreignPrice != null && !isGreek) {
-        basePrice = foreignPrice;
-      } else {
-        basePrice = ownPrice;
-      }
+  if (zoneRoute) {
+    zoneMatch = true;
+    const ownField = vehicle === "van" ? "van" : "taxi";
+    const foreignField = vehicle === "van" ? "vanForeign" : "taxiForeign";
+    const ownPrice = Number(zoneRoute[ownField] || 0);
+    const foreignPrice = zoneRoute[foreignField] != null ? Number(zoneRoute[foreignField]) : null;
+    if (foreignPrice != null && isGreek) {
+      basePrice = ownPrice;
+      baseOtherPrice = foreignPrice; // ο ξένος είναι η βάση αναφοράς (τυπικό -8%)
+    } else if (foreignPrice != null && !isGreek) {
+      basePrice = foreignPrice;
+    } else {
+      basePrice = ownPrice;
     }
   }
 
@@ -2613,15 +2693,25 @@ async function computeEstimate({
   price = Math.floor(price);
   const referencePrice = Math.floor(referencePriceRaw);
 
-  // «Αρχική τιμή» = αυτή που, με -8% έκπτωση γνωριμίας, δίνει ακριβώς την
-  // τιμή αναφοράς (του ξένου πελάτη, ή τη δική του τιμή αν δεν υπάρχει
-  // διαφοροποίηση). Ο Έλληνας βλέπει την ΙΔΙΑ αρχική με τον ξένο, οπότε το
-  // πραγματικό του ποσοστό έκπτωσης βγαίνει μεγαλύτερο.
-  const displayOriginal = Math.round((referencePrice / 0.92) * 100) / 100;
-  let discountPercent = displayOriginal > 0 ? Math.round((1 - price / displayOriginal) * 100) : 8;
-  if (!isFinite(discountPercent)) discountPercent = 8;
+  // «Αρχική τιμή» = αυτή που, με -Χ% ρυθμιζόμενη έκπτωση γνωριμίας, δίνει
+  // ακριβώς την τιμή αναφοράς (του ξένου πελάτη, ή τη δική του τιμή αν δεν
+  // υπάρχει διαφοροποίηση). Ο Έλληνας βλέπει την ΙΔΙΑ αρχική με τον ξένο,
+  // οπότε το πραγματικό του ποσοστό έκπτωσης βγαίνει μεγαλύτερο.
+  // Αν discountPct είναι 0, ΔΕΝ δείχνουμε καθόλου «αρχική»/έκπτωση — η
+  // displayOriginal γίνεται ίση με την τελική τιμή (καμία διαγραφή στη φόρμα).
+  const discountPct = Number(cfg.dynamicDiscountPercent);
+  const discountFrac = isFinite(discountPct) && discountPct > 0 ? discountPct / 100 : 0;
+  let displayOriginal, discountPercent;
+  if (discountFrac <= 0) {
+    displayOriginal = price;
+    discountPercent = 0;
+  } else {
+    displayOriginal = Math.round((referencePrice / (1 - discountFrac)) * 100) / 100;
+    discountPercent = displayOriginal > 0 ? Math.round((1 - price / displayOriginal) * 100) : discountPct;
+    if (!isFinite(discountPercent)) discountPercent = discountPct;
+  }
 
-  return { price, nightApplies, vehicle, zoneMatch, minChargeApplied, displayOriginal, discountPercent, outsideAttica, distanceKm, durationMin, routePolyline };
+  return { price, nightApplies, vehicle, zoneMatch, minChargeApplied, displayOriginal, discountPercent, outsideAttica, distanceKm, durationMin, routePolyline, shuttleAvailable };
 }
 
 // ── estimatePrice: καλείται ζωντανά από τη φόρμα καθώς συμπληρώνει ο πελάτης ─
@@ -2637,7 +2727,7 @@ exports.estimatePrice = onRequest(
       const persons = Math.max(1, parseInt(b.persons, 10) || 1);
       const luggage = Math.max(0, parseInt(b.luggage, 10) || 0);
       const childSeatCount = Math.max(0, parseInt(b.childSeatCount, 10) || 0);
-      const vehicleType = s(b.vehicleType) === "van" ? "van" : "taxi";
+      const vehicleType = s(b.vehicleType) === "van" ? "van" : (s(b.vehicleType) === "shuttle" ? "shuttle" : "taxi");
       const lang = s(b.lang) || "el";
       const dialCode = s(b.dialCode);
       const isGreek = lang === "el" ? true : dialCode === "+30";
@@ -2679,6 +2769,8 @@ exports.estimatePrice = onRequest(
         durationMin: result.durationMin,
         routePolyline: result.routePolyline,
         depositPercent: Number(cfg.depositPercent) > 0 ? Number(cfg.depositPercent) : 10,
+        shuttleAvailable: !!result.shuttleAvailable,
+        shuttlePricePerPerson: result.shuttlePricePerPerson || null,
       });
     } catch (e) {
       console.error("estimatePrice error:", e);
@@ -2745,7 +2837,7 @@ exports.submitPublicBooking = onRequest(
       const persons = Math.max(1, parseInt(b.persons, 10) || 1);
       const luggage = Math.max(0, parseInt(b.luggage, 10) || 0);
       const childSeatCount = Math.max(0, parseInt(b.childSeatCount, 10) || 0);
-      const vehicleType = (s(b.vehicleType) === "van") ? "van" : "taxi";
+      const vehicleType = (s(b.vehicleType) === "van") ? "van" : ((s(b.vehicleType) === "shuttle") ? "shuttle" : "taxi");
       const email = s(b.email), flight = s(b.flight), note = s(b.note);
       const lang = s(b.lang) || "el";
 
@@ -2813,10 +2905,14 @@ exports.submitPublicBooking = onRequest(
       // εμφανίζεται κενή στην εφαρμογή.
       const { Timestamp } = require("firebase-admin/firestore");
       const bookingNumber = await nextBookingNumber(tenantId);
+      const shuttleGroupKey = vehicleType === "shuttle"
+        ? await computeShuttleGroupKey({ fromLat, fromLng, toLat, toLng, scheduledNaive, tenantId })
+        : null;
       const savedRef = await getFirestore().collection("saved_jobs").add({
         origin:         "public_form",   // ← ΣΗΜΑΔΙ «ΑΠΟ ΦΟΡΜΑ»
         tenantId:       tenantId,        // ← ΚΡΙΣΙΜΟ: για tenant isolation (rules + φίλτρα)
         bookingNumber:  bookingNumber,   // ← μοναδικός αύξων αριθμός (ανά tenant)
+        ...(shuttleGroupKey ? { shuttleGroupKey } : {}),
         from:           from,
         to:             to,
         fromLat:        fromLat,
@@ -3194,7 +3290,7 @@ exports.createVivaOrder = onRequest(
       const persons = Math.max(1, parseInt(b.persons, 10) || 1);
       const luggage = Math.max(0, parseInt(b.luggage, 10) || 0);
       const childSeatCount = Math.max(0, parseInt(b.childSeatCount, 10) || 0);
-      const vehicleType = (s(b.vehicleType) === "van") ? "van" : "taxi";
+      const vehicleType = (s(b.vehicleType) === "van") ? "van" : ((s(b.vehicleType) === "shuttle") ? "shuttle" : "taxi");
       const email = s(b.email), flight = s(b.flight), note = s(b.note);
       const lang = s(b.lang) || "el";
 
@@ -3554,57 +3650,99 @@ exports.vivaWebhook = onRequest(
       // ΔΕΝ μπλοκάρει ποτέ την υπόλοιπη ροή — αν αποτύχει, απλά καταγράφεται.
       if (pd.clientEmail) {
         try {
-          let businessName = "Athens Taxi";
-          let whatsapp = "";
-          if (pd.tenantId && pd.tenantId !== "default") {
-            const tDoc = await db.collection("tenants").doc(pd.tenantId).get();
-            if (tDoc.exists) {
-              businessName = tDoc.data().businessName || businessName;
-              whatsapp = (tDoc.data().whatsappNumber || "").replace(/[^0-9]/g, "");
-            }
+          const tid = pd.tenantId || "default";
+          const tDoc = await db.collection("tenants").doc(tid).get();
+          const t = tDoc.exists ? tDoc.data() : {};
+
+          // ── Ο master μπορεί να έχει κλείσει χειροκίνητα τα αυτόματα email
+          // για αυτόν τον tenant (σελίδα Διαχειριστές) — σεβόμαστε το.
+          if (t.emailsEnabled === false) {
+            console.log("customer email: emailsEnabled=false για tenant", tid, "— παραλείπεται.");
           } else {
-            businessName = "Athens Taxi";
-            whatsapp = "306936123322";
-          }
-          const isEl = (pd.lang || "el") === "el";
-          const waLine = whatsapp
-            ? (isEl
-                ? "Από εδώ και πέρα η επικοινωνία θα γίνεται μέσω WhatsApp: <a href=\"https://wa.me/" + whatsapp + "\">+" + whatsapp + "</a>"
-                : "From now on, communication will happen via WhatsApp: <a href=\"https://wa.me/" + whatsapp + "\">+" + whatsapp + "</a>")
-            : "";
-          const subject = isEl
-            ? "✅ Κράτηση #" + bookingNumber + " επιβεβαιώθηκε — " + pd.from + " → " + pd.to
-            : "✅ Booking #" + bookingNumber + " confirmed — " + pd.from + " → " + pd.to;
-          const html = isEl
-            ? "<div style=\"font-family:sans-serif;font-size:15px;color:#222;\">" +
+            const businessName   = t.businessName   || (tid === "default" ? "TaxiAthensTransfers.com" : "Taxi Transfers");
+            const whatsapp       = (t.whatsappNumber || (tid === "default" ? "306936123322" : "")).replace(/[^0-9]/g, "");
+            // ⚠️ Λογότυπο: δεν μπαίνει τίποτα εδώ ακόμα — χρειάζεται ένα link
+            // εικόνας (π.χ. ανεβασμένο στο imgur.com ή στο ίδιο το site σου).
+            // Μόλις μου δώσεις το link, μπαίνει είτε εδώ (σταθερό στον κώδικα)
+            // είτε στο πεδίο «Link λογότυπου» στο tab Επιχείρηση.
+            const logoUrl        = t.logoUrl        || "";
+            const footerPhone    = t.contactPhone   || (tid === "default" ? "+30 693 612 3322" : "");
+            const footerEmail    = t.contactEmail   || (tid === "default" ? "info@taxiathenstransfers.com" : "");
+
+            // Ξεχωριστή διεύθυνση αποστολής: το δικό σου site (default) από
+            // booking@, όλες οι υπόλοιπες φόρμες (booking2, κάθε tenant) από
+            // info@ — ίδιο επαληθευμένο domain taxiathenstransfers.com.
+            const fromEmail = tid === "default"
+              ? "booking@taxiathenstransfers.com"
+              : "info@taxiathenstransfers.com";
+
+            // Αν ο tenant έχει βάλει ΔΙΚΟ ΤΟΥ Resend API key (tab «Email» στις
+            // Ρυθμίσεις Viva), το χρησιμοποιούμε αντί για το κοινό μας κλειδί.
+            let apiKeyOverride = null;
+            if (t.hasOwnResendKey) {
+              try {
+                apiKeyOverride = await readSecret(tenantSecretId(tid, "resend-api-key"));
+              } catch (e) {
+                console.error("δεν βρέθηκε το δικό key του tenant, fallback στο κοινό:", e.message);
+              }
+            }
+
+            const isEl = (pd.lang || "el") === "el";
+            const waLine = whatsapp
+              ? (isEl
+                  ? "Από εδώ και πέρα η επικοινωνία θα γίνεται μέσω WhatsApp: <a href=\"https://wa.me/" + whatsapp + "\">+" + whatsapp + "</a>"
+                  : "From now on, communication will happen via WhatsApp: <a href=\"https://wa.me/" + whatsapp + "\">+" + whatsapp + "</a>")
+              : "";
+            const subject = isEl
+              ? "✅ Κράτηση #" + bookingNumber + " επιβεβαιώθηκε — " + pd.from + " → " + pd.to
+              : "✅ Booking #" + bookingNumber + " confirmed — " + pd.from + " → " + pd.to;
+
+            const logoHtml = logoUrl
+              ? "<img src=\"" + logoUrl + "\" alt=\"" + businessName + "\" style=\"max-height:56px;margin-bottom:16px;\"><br>"
+              : "";
+            const footerContactLine = [footerPhone, footerEmail].filter(Boolean).join(" · ");
+            const footerHtml =
+              "<table style=\"margin-top:28px;border-top:1px solid #eee;padding-top:16px;\"><tr>" +
+              (logoUrl ? "<td style=\"padding-right:14px;vertical-align:middle;\"><img src=\"" + logoUrl + "\" alt=\"\" style=\"max-height:44px;\"></td>" : "") +
+              "<td style=\"vertical-align:middle;color:#666;font-size:13px;\">" +
+              "<b style=\"color:#333;\">" + businessName + "</b>" +
+              (footerContactLine ? "<br>" + footerContactLine : "") +
+              "</td></tr></table>";
+
+            const bodyEl =
               "<h2 style=\"color:#1a1a2e;\">Η κράτησή σας επιβεβαιώθηκε!</h2>" +
               "<p>Γεια σας " + pd.clientName + ",</p>" +
               "<p>Η προκαταβολή πληρώθηκε με επιτυχία και η κράτησή σας είναι οριστική.</p>" +
               "<table style=\"border-collapse:collapse;margin:12px 0;\">" +
-              "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Αριθμός κράτησης:</td><td><b>#" + bookingNumber + "</b></td></tr>" +
+              "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Booking ID:</td><td><b>#" + bookingNumber + "</b></td></tr>" +
               "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Διαδρομή:</td><td><b>" + pd.from + " → " + pd.to + "</b></td></tr>" +
               "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Ημερομηνία/ώρα:</td><td>" + whenStr + "</td></tr>" +
               "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Πληρώθηκε:</td><td>" + pd.depositAmount + "€" + (pd.fullyPaid ? " (πλήρης πληρωμή)" : " (προκαταβολή)") + "</td></tr>" +
               "</table>" +
-              "<p>" + waLine + "</p>" +
-              "<p style=\"color:#999;font-size:13px;margin-top:24px;\">" + businessName + "</p>" +
-              "</div>"
-            : "<div style=\"font-family:sans-serif;font-size:15px;color:#222;\">" +
+              "<p>" + waLine + "</p>";
+            const bodyEn =
               "<h2 style=\"color:#1a1a2e;\">Your booking is confirmed!</h2>" +
               "<p>Hi " + pd.clientName + ",</p>" +
               "<p>Your deposit was paid successfully and your booking is now confirmed.</p>" +
               "<table style=\"border-collapse:collapse;margin:12px 0;\">" +
-              "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Booking number:</td><td><b>#" + bookingNumber + "</b></td></tr>" +
+              "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Booking ID:</td><td><b>#" + bookingNumber + "</b></td></tr>" +
               "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Route:</td><td><b>" + pd.from + " → " + pd.to + "</b></td></tr>" +
               "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Date/time:</td><td>" + whenStr + "</td></tr>" +
               "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Paid:</td><td>€" + pd.depositAmount + (pd.fullyPaid ? " (full payment)" : " (deposit)") + "</td></tr>" +
               "</table>" +
-              "<p>" + waLine + "</p>" +
-              "<p style=\"color:#999;font-size:13px;margin-top:24px;\">" + businessName + "</p>" +
+              "<p>" + waLine + "</p>";
+
+            const html =
+              "<div style=\"font-family:sans-serif;font-size:15px;color:#222;max-width:520px;margin:0 auto;\">" +
+              logoHtml +
+              (isEl ? bodyEl : bodyEn) +
+              footerHtml +
               "</div>";
-          await sendCustomerEmailViaResend({
-            to: pd.clientEmail, subject, html, fromName: businessName,
-          });
+
+            await sendCustomerEmailViaResend({
+              to: pd.clientEmail, subject, html, fromName: businessName, fromEmail, apiKeyOverride,
+            });
+          }
         } catch (e) {
           console.error("customer confirmation email failed:", e);
         }
@@ -4269,6 +4407,7 @@ exports.listClients = onRequest(
           fromName: d.fromName || "",
           fromLat: d.fromLat != null ? d.fromLat : null,
           fromLng: d.fromLng != null ? d.fromLng : null,
+          hasShuttleBus: d.hasShuttleBus === true,
           routes,
         };
       }).filter((c) => c.name && c.fromLat != null && c.fromLng != null);
@@ -4288,6 +4427,66 @@ exports.listClients = onRequest(
 //  (για ΟΠΟΙΟΝΔΗΠΟΤΕ tenant), είτε ο ίδιος ο tenant-owner (μόνο για τον
 //  ΔΙΚΟ ΤΟΥ tenant — ελέγχεται μέσω presence.tenantId + presence.tenantOwner).
 // ═══════════════════════════════════════════════════════════════════════════
+
+// ── updateTenantResendKey: ο tenant βάζει το ΔΙΚΟ ΤΟΥ Resend API key ώστε τα
+// email επιβεβαίωσης να στέλνονται μέσω του δικού του λογαριασμού Resend
+// (και άρα από το δικό του verified domain) αντί για το κοινό μας. Μόλις το
+// βάλει, ενεργοποιείται αυτόματα το emailsEnabled (αν ο master το είχε
+// κλείσει προηγουμένως, ξανανοίγει — έχει πλέον τον δικό του μηχανισμό).
+// ── updateTenantEmailsEnabled: ο master ανοιγοκλείνει τα αυτόματα email
+// επιβεβαίωσης πελάτη για ΣΥΓΚΕΚΡΙΜΕΝΟ tenant (σελίδα Διαχειριστές). Αν ο
+// tenant βάλει μετά ΔΙΚΟ ΤΟΥ Resend key, το updateTenantResendKey το
+// ξανανοίγει αυτόματα (βλ. εκεί) — ο master δεν χρειάζεται να το ξανακάνει.
+exports.updateTenantEmailsEnabled = onCall(
+  { region: "us-central1" },
+  async (request) => {
+    if (!request.auth || request.auth.token.email !== "techtacy@gmail.com") {
+      throw new HttpsError("permission-denied", "Μόνο ο master μπορεί να το αλλάξει.");
+    }
+    const d = request.data || {};
+    const tenantId = s(d.tenantId);
+    if (!tenantId) throw new HttpsError("invalid-argument", "Μη έγκυρο tenantId.");
+    const db = getFirestore();
+    const tenantRef = db.collection("tenants").doc(tenantId);
+    await tenantRef.set({ emailsEnabled: d.enabled !== false }, { merge: true });
+    return { ok: true, emailsEnabled: d.enabled !== false };
+  }
+);
+
+exports.updateTenantResendKey = onCall(
+  { region: "us-central1", secrets: [] },
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Χρειάζεται σύνδεση.");
+    const d = request.data || {};
+    const tenantId = s(d.tenantId);
+    if (!tenantId || tenantId === "default") {
+      throw new HttpsError("invalid-argument", "Μη έγκυρο tenantId.");
+    }
+    const isSuperAdmin = request.auth.token.email === "techtacy@gmail.com";
+    if (!isSuperAdmin) {
+      const db0 = getFirestore();
+      const presDoc = await db0.collection("presence").doc(request.auth.uid).get();
+      const pres = presDoc.data() || {};
+      if (!(pres.tenantOwner === true && pres.tenantId === tenantId)) {
+        throw new HttpsError("permission-denied",
+          "Μόνο ο super-admin ή ο tenant-owner αυτού του tenant μπορεί να το αλλάξει.");
+      }
+    }
+    const db = getFirestore();
+    const tenantRef = db.collection("tenants").doc(tenantId);
+    if (!(await tenantRef.get()).exists) throw new HttpsError("not-found", "Άγνωστο tenant.");
+
+    const key = s(d.resendApiKey);
+    if (!key) {
+      // Άδειο κλειδί = αφαίρεση δικού του — γυρνάει στο κοινό μας.
+      await tenantRef.set({ hasOwnResendKey: false }, { merge: true });
+      return { ok: true, hasOwnResendKey: false };
+    }
+    await upsertSecret(tenantSecretId(tenantId, "resend-api-key"), key);
+    await tenantRef.set({ hasOwnResendKey: true, emailsEnabled: true }, { merge: true });
+    return { ok: true, hasOwnResendKey: true };
+  }
+);
 
 exports.updateTenantVivaCredentials = onCall(
   { region: "us-central1" },
@@ -4359,13 +4558,16 @@ exports.updateTenantBusinessInfo = onCall(
   async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Χρειάζεται σύνδεση.");
     const d = request.data || {};
-    const tenantId = s(d.tenantId);
-    if (!tenantId || tenantId === "default") {
-      throw new HttpsError("invalid-argument", "Μη έγκυρο tenantId.");
-    }
+    const tenantId = s(d.tenantId) || "default";
 
     const isSuperAdmin = request.auth.token.email === "techtacy@gmail.com";
-    if (!isSuperAdmin) {
+    if (tenantId === "default") {
+      // ⚠️ Το "default" (η δική σου σελίδα) ΔΕΝ έχει tenantOwner — μόνο ο
+      // super-admin μπορεί να αλλάξει τα δικά του στοιχεία επιχείρησης.
+      if (!isSuperAdmin) {
+        throw new HttpsError("permission-denied", "Μόνο ο master μπορεί να το αλλάξει.");
+      }
+    } else if (!isSuperAdmin) {
       const db0 = getFirestore();
       const presDoc = await db0.collection("presence").doc(request.auth.uid).get();
       const pres = presDoc.data() || {};
@@ -4376,13 +4578,18 @@ exports.updateTenantBusinessInfo = onCall(
     }
 
     const db = getFirestore();
-    const tenantDoc = await db.collection("tenants").doc(tenantId).get();
-    if (!tenantDoc.exists) throw new HttpsError("not-found", "Άγνωστο tenant.");
+    const tenantRef = db.collection("tenants").doc(tenantId);
+    const tenantDoc = await tenantRef.get();
+    // Το "default" (η δική σου σελίδα) δεν έχει ποτέ δημιουργηθεί μέσω
+    // createTenant — αν δεν υπάρχει ακόμα το doc, το φτιάχνουμε τώρα εδώ.
+    if (!tenantDoc.exists && tenantId !== "default") {
+      throw new HttpsError("not-found", "Άγνωστο tenant.");
+    }
 
     const updates = {};
     // Όνομα επιχείρησης — επιτρέπεται και στον ίδιο τον tenant-owner να το
     // διορθώσει (π.χ. αν το έγραψε λάθος αρχικά), όχι μόνο ο super-admin.
-    if (d.businessName != null)   updates.businessName   = s(d.businessName) || tenantDoc.data().businessName;
+    if (d.businessName != null)   updates.businessName   = s(d.businessName) || (tenantDoc.exists ? tenantDoc.data().businessName : null);
     if (d.contactPhone != null)   updates.contactPhone   = s(d.contactPhone) || null;
     if (d.contactEmail != null)   updates.contactEmail   = s(d.contactEmail) || null;
     if (d.whatsappNumber != null) updates.whatsappNumber = s(d.whatsappNumber) || null;
@@ -4392,7 +4599,7 @@ exports.updateTenantBusinessInfo = onCall(
     // domain στο ίδιο το Google Cloud Console, όχι από μυστικότητα).
     if (d.mapsApiKey != null)     updates.mapsApiKey     = s(d.mapsApiKey) || null;
     if (Object.keys(updates).length) {
-      await db.collection("tenants").doc(tenantId).update(updates);
+      await tenantRef.set(updates, { merge: true });
     }
     return { ok: true };
   }
@@ -4428,6 +4635,8 @@ exports.getTenantBusinessInfo = onRequest(
         // ΠΡΟΕΠΙΛΟΓΗ true (ενεργά) αν δεν έχουν οριστεί ρητά ποτέ.
         mapEnabled:     t.mapEnabled     !== false,
         placesEnabled:  t.placesEnabled  !== false,
+        hasOwnResendKey: t.hasOwnResendKey === true,
+        emailsEnabled:   t.emailsEnabled  !== false,
       });
     } catch (e) {
       console.error("getTenantBusinessInfo error:", e);

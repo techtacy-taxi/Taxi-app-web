@@ -247,6 +247,21 @@ class _OpenJobsTabState extends State<_OpenJobsTab>
   Map<String, ShareLevel> _shared = const {};
   StreamSubscription<Map<String, ShareLevel>>? _shareSub;
 
+  // ── Αναζήτηση — Booking ID, όνομα πελάτη, τηλέφωνο, διαδρομή, δημιουργός.
+  String _searchQuery = '';
+  bool _matchesSearch(Job j) {
+    final q = _searchQuery.trim().toLowerCase();
+    if (q.isEmpty) return true;
+    return (j.bookingNumber != null && j.bookingNumber.toString().contains(q)) ||
+        (j.clientName?.toLowerCase().contains(q) ?? false) ||
+        (j.clientPhone?.toLowerCase().contains(q) ?? false) ||
+        j.from.toLowerCase().contains(q) ||
+        j.to.toLowerCase().contains(q) ||
+        j.createdByName.toLowerCase().contains(q) ||
+        (j.takenByName?.toLowerCase().contains(q) ?? false) ||
+        (j.note?.toLowerCase().contains(q) ?? false);
+  }
+
   /// Επίπεδο πρόσβασης που έχω σε μια συγκεκριμένη ανοιχτή δουλειά.
   ShareLevel _levelFor(Job j) {
     if (widget.isMaster) return ShareLevel.full;
@@ -401,6 +416,23 @@ class _OpenJobsTabState extends State<_OpenJobsTab>
   @override
   Widget build(BuildContext context) {
     return Column(children: [
+      Padding(
+        padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
+        child: TextField(
+          decoration: InputDecoration(
+            hintText:   'Αναζήτηση: Booking ID, όνομα, τηλέφωνο, διαδρομή...',
+            prefixIcon: const Icon(Icons.search_rounded),
+            filled:     true,
+            fillColor:  Colors.white,
+            isDense:    true,
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide(color: Colors.grey.shade300),
+            ),
+          ),
+          onChanged: (v) => setState(() => _searchQuery = v),
+        ),
+      ),
       _buildFilterBar(),
       Divider(height: 1, color: Colors.grey.shade200),
       Expanded(
@@ -420,6 +452,7 @@ class _OpenJobsTabState extends State<_OpenJobsTab>
                     (j.status == JobStatus.expired && j.scheduledAt != null))
                 .where(_baseVisible)
                 .where(_matchesFilters)
+                .where(_matchesSearch)
                 .toList();
 
             // ── AUTO-RETURN ληγμένων αδιεκδίκητων στις «Αποθηκευμένες» ──
@@ -866,6 +899,21 @@ class _HistoryTabState extends State<_HistoryTab> {
   StreamSubscription<List<Job>>? _liveSub;
   Timer? _debounce;
 
+  // ── Αναζήτηση — Booking ID, όνομα πελάτη, τηλέφωνο, διαδρομή, δημιουργός.
+  String _searchQuery = '';
+  bool _matchesSearch(Job j) {
+    final q = _searchQuery.trim().toLowerCase();
+    if (q.isEmpty) return true;
+    return (j.bookingNumber != null && j.bookingNumber.toString().contains(q)) ||
+        (j.clientName?.toLowerCase().contains(q) ?? false) ||
+        (j.clientPhone?.toLowerCase().contains(q) ?? false) ||
+        j.from.toLowerCase().contains(q) ||
+        j.to.toLowerCase().contains(q) ||
+        j.createdByName.toLowerCase().contains(q) ||
+        (j.takenByName?.toLowerCase().contains(q) ?? false) ||
+        (j.note?.toLowerCase().contains(q) ?? false);
+  }
+
   @override
   void initState() {
     super.initState();
@@ -979,6 +1027,21 @@ class _HistoryTabState extends State<_HistoryTab> {
         color: Colors.white,
         padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
         child: Column(children: [
+          TextField(
+            decoration: InputDecoration(
+              hintText:   'Αναζήτηση: Booking ID, όνομα, τηλέφωνο, διαδρομή...',
+              prefixIcon: const Icon(Icons.search_rounded),
+              filled:     true,
+              fillColor:  Colors.grey.shade100,
+              isDense:    true,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide(color: Colors.grey.shade300),
+              ),
+            ),
+            onChanged: (v) => setState(() => _searchQuery = v),
+          ),
+          const SizedBox(height: 8),
           Row(children: [
             _dateBtn(fmt.format(_from), () async {
               final d = await showDatePicker(context: context,
@@ -1125,10 +1188,15 @@ class _HistoryTabState extends State<_HistoryTab> {
                   Icons.phone_iphone_rounded, Colors.blue.shade700),
             ]),
             const SizedBox(height: 16),
-            if ((_summary!['jobs'] as List<Job>).isEmpty)
-              jobEmpty('Δεν βρέθηκαν δουλειές\nστο επιλεγμένο διάστημα')
-            else
-              ...(_summary!['jobs'] as List<Job>).map((j) =>
+            Builder(builder: (_) {
+              final filtered = (_summary!['jobs'] as List<Job>)
+                  .where(_matchesSearch).toList();
+              if (filtered.isEmpty) {
+                return jobEmpty(_searchQuery.trim().isEmpty
+                    ? 'Δεν βρέθηκαν δουλειές\nστο επιλεγμένο διάστημα'
+                    : 'Καμία δουλειά δεν ταιριάζει\nστην αναζήτηση');
+              }
+              return Column(children: filtered.map((j) =>
                   HistoryJobCard(
                     job:            j,
                     isAdmin:        widget.isAdmin || widget.isMaster,
@@ -1139,7 +1207,8 @@ class _HistoryTabState extends State<_HistoryTab> {
                         ? widget.managedGroupIds
                         : widget.userGroupIds,
                     onChanged:      _loadSummary,
-                  )),
+                  )).toList());
+            }),
           ],
         )),
     ]);

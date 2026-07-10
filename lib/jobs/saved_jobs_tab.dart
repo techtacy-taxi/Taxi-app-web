@@ -18,6 +18,7 @@
 //   • Αλλιώς → κάθε δουλειά βγαίνει ξεχωριστά, μία-μία (κανονική διαδικασία).
 
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
@@ -57,6 +58,21 @@ class _SavedJobsTabState extends State<SavedJobsTab> {
   // Φίλτρα master
   bool   _onlyMine = false;            // μόνο δικές μου
   String _ownerFilter = '__all__';     // __all__ ή ownerUid
+
+  // ── Αναζήτηση — Booking ID, όνομα πελάτη, τηλέφωνο, διαδρομή, δημιουργός.
+  String _searchQuery = '';
+  bool _matchesSearch(SavedJob s) {
+    final q = _searchQuery.trim().toLowerCase();
+    if (q.isEmpty) return true;
+    final j = s.job;
+    return (s.bookingNumber != null && s.bookingNumber.toString().contains(q)) ||
+        (j.clientName?.toLowerCase().contains(q) ?? false) ||
+        (j.clientPhone?.toLowerCase().contains(q) ?? false) ||
+        j.from.toLowerCase().contains(q) ||
+        j.to.toLowerCase().contains(q) ||
+        s.ownerName.toLowerCase().contains(q) ||
+        (j.note?.toLowerCase().contains(q) ?? false);
+  }
 
   // Κοινή πρόσβαση: ownerUid -> επίπεδο που έχω εγώ πάνω του
   Map<String, ShareLevel> _shared = const {};
@@ -138,6 +154,10 @@ class _SavedJobsTabState extends State<SavedJobsTab> {
 
         var items = snap.data ?? const <SavedJob>[];
 
+        // ── Κρύψε ό,τι έχει απορροφηθεί σε ενωμένο Shuttle — φαίνεται μόνο
+        // μέσα στο container, όχι σαν ξεχωριστή κάρτα εδώ.
+        items = items.where((s) => !s.isMergedAway).toList();
+
         // ── Φίλτρα master ──
         if (widget.isMaster) {
           if (_onlyMine) {
@@ -146,6 +166,9 @@ class _SavedJobsTabState extends State<SavedJobsTab> {
             items = items.where((s) => s.ownerUid == _ownerFilter).toList();
           }
         }
+
+        // ── Αναζήτηση ──
+        items = items.where(_matchesSearch).toList();
 
         // ── Ταξινόμηση: πιο κοντινό ραντεβού πάνω, πιο μακρινό κάτω.
         //    Άμεσες (χωρίς ραντεβού) = «τώρα» → πρώτες. Ισοπαλία → σειρά
@@ -169,6 +192,25 @@ class _SavedJobsTabState extends State<SavedJobsTab> {
 
         return Column(
           children: [
+            // ── Αναζήτηση ──
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
+              child: TextField(
+                decoration: InputDecoration(
+                  hintText:   'Αναζήτηση: Booking ID, όνομα, τηλέφωνο, διαδρομή...',
+                  prefixIcon: const Icon(Icons.search_rounded),
+                  filled:     true,
+                  fillColor:  Colors.white,
+                  isDense:    true,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide(color: Colors.grey.shade300),
+                  ),
+                ),
+                onChanged: (v) => setState(() => _searchQuery = v),
+              ),
+            ),
+
             // ── Φίλτρα (μόνο master) ──
             if (widget.isMaster) _buildMasterFilters(snap.data ?? const []),
 
@@ -186,6 +228,16 @@ class _SavedJobsTabState extends State<SavedJobsTab> {
                         final lvl = _levelFor(items[i]);
                         final isForeign =
                             !widget.isMaster && items[i].ownerUid != widget.adminUid;
+                        if (items[i].isShuttleContainer) {
+                          return FadeSlideIn(
+                            index: i,
+                            child: _ShuttleContainerCard(
+                              saved: items[i],
+                              onSplit: () => _splitShuttle(items[i]),
+                              onTapStop: (stop) => _showStopDetails(stop),
+                            ),
+                          );
+                        }
                         return FadeSlideIn(
                           index: i,
                           child: _SavedJobCard(
@@ -360,9 +412,211 @@ class _SavedJobsTabState extends State<SavedJobsTab> {
               ),
             ),
           ]),
+          if (count >= 2) ...[
+            const SizedBox(height: 8),
+            SizedBox(
+              width: double.infinity,
+              child: AppButtonTonal(
+                icon: Icons.directions_bus_filled_rounded,
+                label: 'Ένωση σε Shuttle ($count)',
+                fg: Colors.amber.shade900,
+                onPressed: _sending
+                    ? null
+                    : () => _openMergeDialog(
+                        items.where((e) => _selected.contains(e.id)).toList()),
+              ),
+            ),
+          ],
         ],
       ),
     );
+  }
+
+  // ─── Split ενωμένου Shuttle πίσω στα αρχικά κομμάτια ──────────────────────
+  Future<void> _splitShuttle(SavedJob container) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dctx) => AlertDialog(
+        title: const Text('Διαχωρισμός Shuttle'),
+        content: const Text('Θα ξαναφανούν οι αρχικές, ξεχωριστές δουλειές. Σίγουρα;'),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(dctx).pop(false), child: const Text('Άκυρο')),
+          FilledButton(onPressed: () => Navigator.of(dctx).pop(true), child: const Text('Διαχωρισμός')),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      await SavedJobService.splitShuttle(container);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Διαχωρίστηκε.'),
+          backgroundColor: Color(0xFF1E8E3E),
+        ));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Σφάλμα: $e'), backgroundColor: Colors.red));
+      }
+    }
+  }
+
+  void _showStopDetails(ShuttleStop stop) {
+    showDialog<void>(
+      context: context,
+      builder: (dctx) => AlertDialog(
+        title: Text(stop.name.isNotEmpty ? stop.name : '(χωρίς όνομα)'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (stop.phone != null && stop.phone!.isNotEmpty)
+              Row(children: [
+                const Icon(Icons.phone_rounded, size: 16, color: Colors.grey),
+                const SizedBox(width: 8),
+                Text(stop.phone!),
+              ]),
+            if (stop.email != null && stop.email!.isNotEmpty) ...[
+              const SizedBox(height: 6),
+              Row(children: [
+                const Icon(Icons.email_rounded, size: 16, color: Colors.grey),
+                const SizedBox(width: 8),
+                Expanded(child: Text(stop.email!)),
+              ]),
+            ],
+            if (stop.flightOrShip != null && stop.flightOrShip!.isNotEmpty) ...[
+              const SizedBox(height: 6),
+              Row(children: [
+                const Icon(Icons.flight_rounded, size: 16, color: Colors.grey),
+                const SizedBox(width: 8),
+                Text(stop.flightOrShip!),
+              ]),
+            ],
+            const SizedBox(height: 6),
+            Row(children: [
+              const Icon(Icons.place_rounded, size: 16, color: Colors.grey),
+              const SizedBox(width: 8),
+              Expanded(child: Text(stop.address)),
+            ]),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(dctx).pop(), child: const Text('Κλείσιμο')),
+        ],
+      ),
+    );
+  }
+
+  // ─── Ένωση πολλών αποθηκευμένων σε ΜΙΑ δουλειά Shuttle ─────────────────────
+  double _haversineKmReal(double lat1, double lng1, double lat2, double lng2) {
+    const r = 6371.0;
+    final dLat = (lat2 - lat1) * (math.pi / 180);
+    final dLng = (lng2 - lng1) * (math.pi / 180);
+    final a = math.sin(dLat / 2) * math.sin(dLat / 2) +
+        math.cos(lat1 * math.pi / 180) * math.cos(lat2 * math.pi / 180) *
+            math.sin(dLng / 2) * math.sin(dLng / 2);
+    final c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a));
+    return r * c;
+  }
+
+  Future<void> _openMergeDialog(List<SavedJob> items) async {
+    // ── Ανίχνευση κοινού σημείου: είτε όλες οι αφετηρίες κοντά (≤400μ) —
+    // κοινή παραλαβή, πολλαπλές αφήσεις — είτε όλοι οι προορισμοί κοντά —
+    // κοινή άφεση, πολλαπλές παραλαβές.
+    bool closeEnough(List<double?> lats, List<double?> lngs) {
+      for (var i = 0; i < lats.length; i++) {
+        if (lats[i] == null || lngs[i] == null) return false;
+      }
+      for (var i = 1; i < lats.length; i++) {
+        if (_haversineKmReal(lats[0]!, lngs[0]!, lats[i]!, lngs[i]!) > 0.4) return false;
+      }
+      return true;
+    }
+
+    final fromLats = items.map((e) => e.job.fromLat).toList();
+    final fromLngs = items.map((e) => e.job.fromLng).toList();
+    final toLats = items.map((e) => e.job.toLat).toList();
+    final toLngs = items.map((e) => e.job.toLng).toList();
+
+    final fromShared = closeEnough(fromLats, fromLngs);
+    final toShared = !fromShared && closeEnough(toLats, toLngs);
+
+    if (!fromShared && !toShared) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Δεν βρέθηκε κοινό σημείο (ούτε παραλαβή ούτε άφεση) — '
+              'η ένωση χρειάζεται είτε ίδια αφετηρία είτε ίδιο προορισμό.'),
+          backgroundColor: Colors.red,
+        ));
+      }
+      return;
+    }
+
+    final sharedIsPickup = fromShared;
+    final sharedName = sharedIsPickup ? items.first.job.from : items.first.job.to;
+    final sharedLat = sharedIsPickup ? items.first.job.fromLat : items.first.job.toLat;
+    final sharedLng = sharedIsPickup ? items.first.job.fromLng : items.first.job.toLng;
+
+    // ── Συμβατότητα ώρας: κάθε πελάτης «χωράει» [ώρα-25, ώρα+15]. Ενωμένη
+    // ώρα = οποιαδήποτε μέσα στην τομή όλων αυτών των διαστημάτων.
+    final withTime = items.where((e) => e.job.scheduledAt != null).toList();
+    DateTime? suggested;
+    bool timeCompatible = true;
+    if (withTime.length == items.length && items.isNotEmpty) {
+      final starts = items.map((e) => e.job.scheduledAt!.subtract(const Duration(minutes: 25))).toList();
+      final ends = items.map((e) => e.job.scheduledAt!.add(const Duration(minutes: 15))).toList();
+      final maxStart = starts.reduce((a, b) => a.isAfter(b) ? a : b);
+      final minEnd = ends.reduce((a, b) => a.isBefore(b) ? a : b);
+      timeCompatible = !maxStart.isAfter(minEnd);
+      final sortedTimes = items.map((e) => e.job.scheduledAt!).toList()..sort();
+      suggested = sortedTimes[sortedTimes.length ~/ 2];
+      if (timeCompatible) {
+        if (suggested.isBefore(maxStart)) suggested = maxStart;
+        if (suggested.isAfter(minEnd)) suggested = minEnd;
+      }
+    }
+
+    final anyNonShuttle = items.any((e) => e.job.vehicleType != 'shuttle');
+
+    if (!mounted) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dctx) => _MergeShuttleDialog(
+        items: items,
+        sharedIsPickup: sharedIsPickup,
+        sharedName: sharedName,
+        suggestedTime: suggested,
+        timeCompatible: timeCompatible,
+        anyNonShuttle: anyNonShuttle,
+      ),
+    );
+    if (confirmed != true || suggested == null) return;
+
+    try {
+      await SavedJobService.mergeIntoShuttle(
+        items: items,
+        sharedPointName: sharedName,
+        sharedPointLat: sharedLat,
+        sharedPointLng: sharedLng,
+        sharedIsPickup: sharedIsPickup,
+        unifiedScheduledAt: suggested,
+        ownerUid: widget.adminUid,
+        ownerName: widget.adminName,
+      );
+      setState(() => _selected.clear());
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Οι δουλειές ενώθηκαν σε ένα Shuttle.'),
+          backgroundColor: Color(0xFF1E8E3E),
+        ));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Σφάλμα ένωσης: $e'), backgroundColor: Colors.red));
+      }
+    }
   }
 
   // ─── Άνοιγμα λεπτομερειών (όπως στις ανοιχτές δουλειές) ──────────────────
@@ -481,7 +735,7 @@ class _SavedJobsTabState extends State<SavedJobsTab> {
   // ─── Αποστολή στον ΕΑΥΤΟ μου ────────────────────────────────────────────
   Future<void> _sendToSelf(List<SavedJob> saved) async {
     if (saved.isEmpty) return;
-    final jobs = saved.map((s) => s.job).toList();
+    final jobs = saved.map((s) => s.job.copyWith(bookingNumber: s.bookingNumber)).toList();
 
     setState(() => _sending = true);
     try {
@@ -526,7 +780,7 @@ class _SavedJobsTabState extends State<SavedJobsTab> {
   // ─── Αποστολή ──────────────────────────────────────────────────────────
   Future<void> _sendJobs(List<SavedJob> saved) async {
     if (saved.isEmpty) return;
-    final jobs = saved.map((s) => s.job).toList();
+    final jobs = saved.map((s) => s.job.copyWith(bookingNumber: s.bookingNumber)).toList();
 
     // ── pop-up επιλογής παραλήπτη (ίδιο με φωνητικά/φόρμα) ──
     final sel = await showRecipientPicker(
@@ -923,6 +1177,242 @@ class _SavedJobCard extends StatelessWidget {
               ],
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Διάλογος επιβεβαίωσης ένωσης σε Shuttle
+// ─────────────────────────────────────────────────────────────────────────
+class _MergeShuttleDialog extends StatefulWidget {
+  final List<SavedJob> items;
+  final bool sharedIsPickup;
+  final String sharedName;
+  final DateTime? suggestedTime;
+  final bool timeCompatible;
+  final bool anyNonShuttle;
+
+  const _MergeShuttleDialog({
+    required this.items,
+    required this.sharedIsPickup,
+    required this.sharedName,
+    required this.suggestedTime,
+    required this.timeCompatible,
+    required this.anyNonShuttle,
+  });
+
+  @override
+  State<_MergeShuttleDialog> createState() => _MergeShuttleDialogState();
+}
+
+class _MergeShuttleDialogState extends State<_MergeShuttleDialog> {
+  bool _confirm1 = false;
+  bool _confirm2 = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final needsDouble = widget.anyNonShuttle;
+    final canProceed = widget.suggestedTime != null &&
+        (!needsDouble || (_confirm1 && _confirm2));
+
+    return AlertDialog(
+      title: const Text('Ένωση σε Shuttle'),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              widget.sharedIsPickup
+                  ? 'Κοινή παραλαβή από: ${widget.sharedName}\nΔιαφορετική άφεση για κάθε επιβάτη.'
+                  : 'Κοινή άφεση στο: ${widget.sharedName}\nΔιαφορετική παραλαβή για κάθε επιβάτη.',
+              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13.5),
+            ),
+            const SizedBox(height: 12),
+            ...widget.items.map((s) => Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 3),
+                  child: Row(children: [
+                    const Icon(Icons.person_rounded, size: 16, color: Colors.grey),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        (s.job.clientName?.isNotEmpty == true ? s.job.clientName! : '(χωρίς όνομα)') +
+                            '  ·  ' +
+                            (widget.sharedIsPickup ? s.job.to : s.job.from),
+                        style: const TextStyle(fontSize: 12.5),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    if (s.job.vehicleType != 'shuttle')
+                      Container(
+                        margin: const EdgeInsets.only(left: 4),
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: Colors.red.shade50,
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text('όχι Shuttle',
+                            style: TextStyle(fontSize: 10, color: Colors.red.shade800, fontWeight: FontWeight.bold)),
+                      ),
+                  ]),
+                )),
+            const SizedBox(height: 12),
+            if (widget.suggestedTime != null)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: widget.timeCompatible ? Colors.green.shade50 : Colors.orange.shade50,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                      color: widget.timeCompatible ? Colors.green.shade200 : Colors.orange.shade300),
+                ),
+                child: Text(
+                  widget.timeCompatible
+                      ? 'Κοινή ώρα: ${DateFormat('HH:mm').format(widget.suggestedTime!)} '
+                        '(μέσα στο ανεκτό περιθώριο -25/+15 λεπτών όλων)'
+                      : '⚠️ Οι ώρες δεν συμπίπτουν καλά μεταξύ τους (εκτός -25/+15 λεπτών) — '
+                        'προτεινόμενη ώρα ${DateFormat('HH:mm').format(widget.suggestedTime!)}, έλεγξε το χειροκίνητα.',
+                  style: TextStyle(
+                      fontSize: 12,
+                      color: widget.timeCompatible ? Colors.green.shade900 : Colors.orange.shade900),
+                ),
+              )
+            else
+              const Text('Δεν βρέθηκε ραντεβού σε όλες τις δουλειές — δεν μπορεί να υπολογιστεί κοινή ώρα.',
+                  style: TextStyle(fontSize: 12, color: Colors.red)),
+            if (needsDouble) ...[
+              const SizedBox(height: 14),
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: Colors.red.shade50,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.red.shade300),
+                ),
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text('Μία ή περισσότερες δουλειές ΔΕΝ είναι Shuttle. Η ένωση '
+                      'μη-Shuttle δουλειών είναι ασυνήθιστη — επιβεβαίωσε ρητά:',
+                      style: TextStyle(fontSize: 12, color: Colors.red.shade900)),
+                  CheckboxListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    value: _confirm1,
+                    onChanged: (v) => setState(() => _confirm1 = v ?? false),
+                    title: const Text('Κατάλαβα ότι δεν είναι όλες Shuttle',
+                        style: TextStyle(fontSize: 12)),
+                  ),
+                  CheckboxListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    value: _confirm2,
+                    onChanged: (v) => setState(() => _confirm2 = v ?? false),
+                    title: const Text('Θέλω σίγουρα να τις ενώσω παρ\' όλα αυτά',
+                        style: TextStyle(fontSize: 12)),
+                  ),
+                ]),
+              ),
+            ],
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Άκυρο')),
+        FilledButton(
+          onPressed: canProceed ? () => Navigator.of(context).pop(true) : null,
+          child: const Text('Ένωση'),
+        ),
+      ],
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Κάρτα ενωμένης δουλειάς Shuttle — δείχνει το κοινό σημείο + στάσεις
+// ─────────────────────────────────────────────────────────────────────────
+class _ShuttleContainerCard extends StatelessWidget {
+  final SavedJob saved;
+  final VoidCallback onSplit;
+  final void Function(ShuttleStop) onTapStop;
+
+  const _ShuttleContainerCard({
+    required this.saved,
+    required this.onSplit,
+    required this.onTapStop,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final stops = saved.shuttleStops;
+    final sharedLabel = saved.shuttleSharedIsPickup
+        ? 'Από ${saved.shuttleSharedPointName ?? "—"} παίρνεις:'
+        : 'Παίρνεις από αλλού, πάνε στο ${saved.shuttleSharedPointName ?? "—"}:';
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 10),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(14),
+        side: BorderSide(color: Colors.amber.shade400, width: 1.5),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(children: [
+              Icon(Icons.directions_bus_filled_rounded, color: Colors.amber.shade800, size: 20),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text('Ενωμένο Shuttle · ${stops.length} επιβάτες',
+                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+              ),
+              IconButton(
+                icon: const Icon(Icons.call_split_rounded, size: 20),
+                tooltip: 'Διαχωρισμός',
+                onPressed: onSplit,
+              ),
+            ]),
+            if (saved.job.scheduledAt != null) ...[
+              const SizedBox(height: 4),
+              Text('Ραντεβού: ${DateFormat('dd/MM HH:mm').format(saved.job.scheduledAt!)}',
+                  style: TextStyle(fontSize: 12.5, color: Colors.grey[700])),
+            ],
+            const SizedBox(height: 10),
+            Text(sharedLabel,
+                style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 12.5)),
+            const SizedBox(height: 6),
+            ...stops.map((s) => InkWell(
+                  onTap: () => onTapStop(s),
+                  borderRadius: BorderRadius.circular(8),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 5),
+                    child: Row(children: [
+                      const Icon(Icons.person_pin_circle_rounded, size: 16, color: Colors.amber),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(s.name.isNotEmpty ? s.name : '(χωρίς όνομα)',
+                                style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+                            Text(
+                                (s.isPickupHere ? 'Παραλαβή: ' : 'Άφηση: ') + s.address,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(fontSize: 11.5, color: Colors.grey[600])),
+                          ],
+                        ),
+                      ),
+                      Icon(Icons.info_outline_rounded, size: 15, color: Colors.grey[400]),
+                    ]),
+                  ),
+                )),
+            const SizedBox(height: 4),
+            Text('Σύνολο: ${saved.job.persons} άτομα · ${saved.job.price.toStringAsFixed(2)}€',
+                style: TextStyle(fontSize: 12, color: Colors.grey[600])),
+          ],
         ),
       ),
     );

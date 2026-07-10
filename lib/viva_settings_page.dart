@@ -62,6 +62,10 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
   final _whatsappNumberCtrl = TextEditingController();
   final _logoUrlCtrl        = TextEditingController();
   final _mapsApiKeyCtrl     = TextEditingController();
+  final _resendKeyCtrl      = TextEditingController();
+  bool _hasOwnResendKey = false;
+  bool _emailsEnabled = true;
+  bool _savingResendKey = false;
 
   bool _demo = true;
   bool _loading = true;
@@ -166,6 +170,7 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
     _whatsappNumberCtrl.dispose();
     _logoUrlCtrl.dispose();
     _mapsApiKeyCtrl.dispose();
+    _resendKeyCtrl.dispose();
     super.dispose();
   }
 
@@ -208,6 +213,8 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
               _whatsappNumberCtrl.text = bi['whatsappNumber'] as String? ?? '';
               _logoUrlCtrl.text        = bi['logoUrl'] as String? ?? '';
               _mapsApiKeyCtrl.text     = bi['mapsApiKey'] as String? ?? '';
+              _hasOwnResendKey         = bi['hasOwnResendKey'] as bool? ?? false;
+              _emailsEnabled           = bi['emailsEnabled'] as bool? ?? true;
             });
           }
           // ── Αυτόματη προσυμπλήρωση (ΜΟΝΟ αν είναι ακόμα κενά, ώστε να μην
@@ -341,6 +348,21 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
           if (_apiKeyCtrl.text.trim().isNotEmpty) 'vivaApiKey': _apiKeyCtrl.text.trim(),
           'vivaDemo': _demo,
         });
+        // Στοιχεία επιχείρησης — τώρα δουλεύει και για τον δικό σου (default)
+        // λογαριασμό, όχι μόνο για τους tenants.
+        final biCallable =
+            FirebaseFunctions.instance.httpsCallable('updateTenantBusinessInfo');
+        await biCallable.call({
+          'tenantId': 'default',
+          'businessName': _businessNameCtrl.text.trim(),
+          'contactPhone': _contactPhoneCtrl.text.trim(),
+          'contactEmail': _contactEmailCtrl.text.trim(),
+          'whatsappNumber': _whatsappNumberCtrl.text.trim(),
+          'logoUrl': _logoUrlCtrl.text.trim(),
+        });
+        if (_businessNameCtrl.text.trim().isNotEmpty) {
+          _tenantName = _businessNameCtrl.text.trim();
+        }
         final data = Map<String, dynamic>.from(res.data);
         if (mounted) {
           await showDialog<void>(
@@ -439,8 +461,9 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
         body: const Center(child: CircularProgressIndicator()),
       );
     }
+    final tabCount = _isDefault ? 3 : 4;
     return DefaultTabController(
-      length: 3,
+      length: tabCount,
       child: Scaffold(
         appBar: AppBar(
           backgroundColor: Colors.teal,
@@ -457,14 +480,16 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
                   style: const TextStyle(fontSize: 12, fontWeight: FontWeight.normal, color: Colors.white70)),
             ],
           ),
-          bottom: const TabBar(
+          bottom: TabBar(
             indicatorColor: Colors.white,
             labelColor: Colors.white,
             unselectedLabelColor: Colors.white70,
             tabs: [
-              Tab(icon: Icon(Icons.payment_rounded, size: 20), text: 'Viva'),
-              Tab(icon: Icon(Icons.cloud_rounded, size: 20), text: 'Google Cloud'),
-              Tab(icon: Icon(Icons.storefront_rounded, size: 20), text: 'Επιχείρηση'),
+              const Tab(icon: Icon(Icons.payment_rounded, size: 20), text: 'Viva'),
+              const Tab(icon: Icon(Icons.cloud_rounded, size: 20), text: 'Google Cloud'),
+              const Tab(icon: Icon(Icons.storefront_rounded, size: 20), text: 'Επιχείρηση'),
+              if (!_isDefault)
+                const Tab(icon: Icon(Icons.mail_rounded, size: 20), text: 'Email'),
             ],
           ),
         ),
@@ -478,6 +503,7 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
                     _buildVivaTab(),
                     _buildGoogleCloudTab(),
                     _buildBusinessTab(),
+                    if (!_isDefault) _buildEmailTab(),
                   ],
                 ),
               ),
@@ -794,73 +820,220 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (!_isDefault) ...[
-            Row(children: [
-              Icon(Icons.storefront_rounded, size: 18, color: Colors.indigo[700]),
-              const SizedBox(width: 6),
-              const Text('Στοιχεία Επιχείρησης',
-                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+          Row(children: [
+            Icon(Icons.storefront_rounded, size: 18, color: Colors.indigo[700]),
+            const SizedBox(width: 6),
+            const Text('Στοιχεία Επιχείρησης',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+          ]),
+          const SizedBox(height: 4),
+          Text(
+            _isDefault
+                ? 'Εμφανίζονται αυτόματα στη δική σου φόρμα κράτησης (booking.html) '
+                  'και στο email επιβεβαίωσης προς τον πελάτη — δεν χρειάζεται να '
+                  'επεξεργαστείς κώδικα.'
+                : 'Εμφανίζονται αυτόματα στη δική σου φόρμα κράτησης (booking2.html) '
+                  'και στο email επιβεβαίωσης προς τον πελάτη — δεν χρειάζεται να '
+                  'επεξεργαστείς κώδικα.',
+            style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _businessNameCtrl,
+            decoration: const InputDecoration(
+                isDense: true,
+                labelText: 'Όνομα επιχείρησης',
+                helperText: 'Εμφανίζεται στη φόρμα κράτησης (footer) — μπορείς να το διορθώσεις όποτε θες',
+                border: OutlineInputBorder()),
+          ),
+          const SizedBox(height: 10),
+          TextField(
+            controller: _contactPhoneCtrl,
+            keyboardType: TextInputType.phone,
+            decoration: const InputDecoration(
+                isDense: true,
+                labelText: 'Τηλέφωνο επικοινωνίας',
+                hintText: '+30 6900000000',
+                border: OutlineInputBorder()),
+          ),
+          const SizedBox(height: 10),
+          TextField(
+            controller: _contactEmailCtrl,
+            keyboardType: TextInputType.emailAddress,
+            decoration: const InputDecoration(
+                isDense: true,
+                labelText: 'Email επικοινωνίας',
+                hintText: 'info@τοδικοσουdomain.com',
+                border: OutlineInputBorder()),
+          ),
+          const SizedBox(height: 10),
+          TextField(
+            controller: _whatsappNumberCtrl,
+            keyboardType: TextInputType.phone,
+            decoration: const InputDecoration(
+                isDense: true,
+                labelText: 'Αριθμός WhatsApp',
+                helperText: 'Μόνο αριθμοί, με κωδικό χώρας — π.χ. 306900000000 (χωρίς +)',
+                border: OutlineInputBorder()),
+          ),
+          const SizedBox(height: 10),
+          TextField(
+            controller: _logoUrlCtrl,
+            decoration: const InputDecoration(
+                isDense: true,
+                labelText: 'Link λογότυπου (εικόνα)',
+                helperText: 'Ανέβασε το λογότυπό σου κάπου (π.χ. imgur.com) '
+                    'και επικόλλησε εδώ το link της εικόνας — εμφανίζεται και '
+                    'στην κορυφή/υποσέλιδο του email επιβεβαίωσης.',
+                border: OutlineInputBorder()),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ─── Tab 4: Email (Resend) — μόνο για tenants, όχι για default ──────────
+  Future<void> _saveResendKey() async {
+    setState(() => _savingResendKey = true);
+    try {
+      final callable = FirebaseFunctions.instance.httpsCallable('updateTenantResendKey');
+      final res = await callable.call({
+        'tenantId': _tenantId,
+        'resendApiKey': _resendKeyCtrl.text.trim(),
+      });
+      setState(() {
+        _hasOwnResendKey = res.data['hasOwnResendKey'] == true;
+        if (_hasOwnResendKey) _emailsEnabled = true;
+        _resendKeyCtrl.clear();
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(_hasOwnResendKey
+              ? 'Αποθηκεύτηκε — τα email θα στέλνονται πλέον από τον δικό σου Resend λογαριασμό.'
+              : 'Αφαιρέθηκε — τα email θα στέλνονται ξανά από το κοινό μας σύστημα.'),
+          backgroundColor: const Color(0xFF1E8E3E),
+        ));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Σφάλμα: $e'), backgroundColor: Colors.red.shade700));
+      }
+    } finally {
+      if (mounted) setState(() => _savingResendKey = false);
+    }
+  }
+
+  Widget _buildEmailTab() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            Icon(Icons.mail_rounded, size: 18, color: Colors.indigo[700]),
+            const SizedBox(width: 6),
+            const Text('Email επιβεβαίωσης πελάτη',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+          ]),
+          const SizedBox(height: 8),
+          Text(
+            'Αυτή τη στιγμή τα email επιβεβαίωσης στέλνονται μέσω του κοινού '
+            'μας συστήματος (Resend). Αν έχεις δικό σου λογαριασμό Resend με '
+            'δικό σου επαληθευμένο domain, βάλε εδώ το API key σου ώστε τα '
+            'email να φαίνονται 100% δικά σου.',
+            style: TextStyle(fontSize: 12.5, color: Colors.grey[700]),
+          ),
+          const SizedBox(height: 16),
+
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: _hasOwnResendKey ? Colors.green.shade50 : Colors.grey.shade100,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(
+                  color: _hasOwnResendKey ? Colors.green.shade300 : Colors.grey.shade300),
+            ),
+            child: Row(children: [
+              Icon(
+                  _hasOwnResendKey ? Icons.check_circle_rounded : Icons.info_outline_rounded,
+                  color: _hasOwnResendKey ? Colors.green.shade700 : Colors.grey.shade600,
+                  size: 20),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  _hasOwnResendKey
+                      ? 'Χρησιμοποιείς το δικό σου Resend key.'
+                      : 'Χρησιμοποιείς το κοινό μας σύστημα email (προεπιλογή).',
+                  style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: _hasOwnResendKey ? Colors.green.shade900 : Colors.grey.shade800),
+                ),
+              ),
             ]),
-            const SizedBox(height: 4),
+          ),
+          const SizedBox(height: 16),
+
+          TextField(
+            controller: _resendKeyCtrl,
+            obscureText: true,
+            decoration: InputDecoration(
+                isDense: true,
+                labelText: 'Resend API Key',
+                hintText: _hasOwnResendKey ? '•••••••••••• (ήδη αποθηκευμένο)' : 're_xxxxxxxxxxxx',
+                helperText: 'Άδειασέ το και πάτα Αποθήκευση για να αφαιρέσεις το δικό σου '
+                    'key και να γυρίσεις στο κοινό μας σύστημα.',
+                border: const OutlineInputBorder()),
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              onPressed: _savingResendKey ? null : _saveResendKey,
+              icon: _savingResendKey
+                  ? const SizedBox(width: 16, height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                  : const Icon(Icons.save_rounded),
+              label: Text(_savingResendKey ? 'Αποθήκευση…' : 'Αποθήκευση Resend key'),
+            ),
+          ),
+
+          const SizedBox(height: 20),
+          const Divider(),
+          const SizedBox(height: 12),
+          Row(children: [
+            Icon(Icons.power_settings_new_rounded, size: 18,
+                color: _emailsEnabled ? Colors.green[700] : Colors.red[700]),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                _emailsEnabled
+                    ? 'Τα αυτόματα email είναι ενεργά.'
+                    : 'Ο master έχει απενεργοποιήσει τα αυτόματα email για σένα.',
+                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+              ),
+            ),
+          ]),
+          if (!_emailsEnabled) ...[
+            const SizedBox(height: 6),
             Text(
-              'Εμφανίζονται αυτόματα στη δική σου φόρμα κράτησης '
-              '(booking2.html) — δεν χρειάζεται να επεξεργαστείς κώδικα.',
-              style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+              'Βάλε το δικό σου Resend key παραπάνω για να ενεργοποιηθούν '
+              'ξανά αυτόματα.',
+              style: TextStyle(fontSize: 12, color: Colors.grey[600]),
             ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _businessNameCtrl,
-              decoration: const InputDecoration(
-                  isDense: true,
-                  labelText: 'Όνομα επιχείρησης',
-                  helperText: 'Εμφανίζεται στη φόρμα κράτησης (footer) — μπορείς να το διορθώσεις όποτε θες',
-                  border: OutlineInputBorder()),
+          ],
+
+          const SizedBox(height: 20),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: () => launchUrl(Uri.parse('https://resend.com/api-keys'),
+                  mode: LaunchMode.externalApplication),
+              icon: const Icon(Icons.open_in_new_rounded),
+              label: const Text('Άνοιγμα Resend — Δημιουργία API Key'),
             ),
-            const SizedBox(height: 10),
-            TextField(
-              controller: _contactPhoneCtrl,
-              keyboardType: TextInputType.phone,
-              decoration: const InputDecoration(
-                  isDense: true,
-                  labelText: 'Τηλέφωνο επικοινωνίας',
-                  hintText: '+30 6900000000',
-                  border: OutlineInputBorder()),
-            ),
-            const SizedBox(height: 10),
-            TextField(
-              controller: _contactEmailCtrl,
-              keyboardType: TextInputType.emailAddress,
-              decoration: const InputDecoration(
-                  isDense: true,
-                  labelText: 'Email επικοινωνίας',
-                  hintText: 'info@τοδικοσουdomain.com',
-                  border: OutlineInputBorder()),
-            ),
-            const SizedBox(height: 10),
-            TextField(
-              controller: _whatsappNumberCtrl,
-              keyboardType: TextInputType.phone,
-              decoration: const InputDecoration(
-                  isDense: true,
-                  labelText: 'Αριθμός WhatsApp',
-                  helperText: 'Μόνο αριθμοί, με κωδικό χώρας — π.χ. 306900000000 (χωρίς +)',
-                  border: OutlineInputBorder()),
-            ),
-            const SizedBox(height: 10),
-            TextField(
-              controller: _logoUrlCtrl,
-              decoration: const InputDecoration(
-                  isDense: true,
-                  labelText: 'Link λογότυπου (εικόνα)',
-                  helperText: 'Ανέβασε το λογότυπό σου κάπου (π.χ. imgur.com) '
-                      'και επικόλλησε εδώ το link της εικόνας',
-                  border: OutlineInputBorder()),
-            ),
-          ] else
-            const Text(
-              'Δεν εφαρμόζεται για τον δικό σου (default) λογαριασμό.',
-              style: TextStyle(fontSize: 12.5, color: Colors.grey),
-            ),
+          ),
         ],
       ),
     );

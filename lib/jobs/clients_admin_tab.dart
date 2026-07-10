@@ -782,10 +782,10 @@ class _ClientEditorPageState extends State<ClientEditorPage> {
               contentPadding: const EdgeInsets.symmetric(horizontal: 14),
               secondary: Icon(Icons.directions_bus_filled_rounded,
                   color: _hasShuttleBus ? Colors.amber.shade800 : Colors.grey),
-              title: const Text('Υπηρεσία Shuttle Bus',
+              title: const Text('Υπηρεσία Shuttle',
                   style: TextStyle(fontSize: 14.5, fontWeight: FontWeight.w600)),
               subtitle: const Text(
-                  'Ενεργοποίησε αν προσφέρεις σε αυτόν τον πελάτη υπηρεσία shuttle bus',
+                  'Ενεργοποίησε αν προσφέρεις σε αυτόν τον πελάτη υπηρεσία shuttle',
                   style: TextStyle(fontSize: 12)),
               value: _hasShuttleBus,
               onChanged: (v) => setState(() => _hasShuttleBus = v),

@@ -744,9 +744,34 @@ class _PlaceSearchSheetState extends State<_PlaceSearchSheet> {
                     child: const Icon(Icons.person_pin_circle_rounded,
                         color: Colors.amber, size: 20),
                   ),
-                  title: Text(c.name,
-                      style: const TextStyle(
-                          fontWeight: FontWeight.w700, fontSize: 14)),
+                  title: Row(children: [
+                    Flexible(
+                      child: Text(c.name,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                              fontWeight: FontWeight.w700, fontSize: 14)),
+                    ),
+                    if (c.hasShuttleBus) ...[
+                      const SizedBox(width: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                        decoration: BoxDecoration(
+                          color: Colors.amber.shade100,
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Row(mainAxisSize: MainAxisSize.min, children: [
+                          Icon(Icons.directions_bus_filled_rounded,
+                              size: 11, color: Colors.amber.shade900),
+                          const SizedBox(width: 2),
+                          Text('Shuttle',
+                              style: TextStyle(
+                                  fontSize: 9.5,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.amber.shade900)),
+                        ]),
+                      ),
+                    ],
+                  ]),
                   subtitle: c.fromName.isEmpty
                       ? null
                       : Text(c.fromName,

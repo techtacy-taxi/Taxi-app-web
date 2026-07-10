@@ -323,7 +323,8 @@ class JobDetailsSheet extends StatelessWidget {
           // ── Μπάρα «ΠΡΟΠΛΗΡΩΜΕΝΗ» — μόνο για πλήρη πληρωμή (online ή
           // χειροκίνητη). Ίδιο στυλ με τη μπλε μπάρα «Ραντεβού» παρακάτω.
           if (job.fullyPaid) ...[
-            Container(
+            BlinkingBox(
+              child: Container(
               width: double.infinity,
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
               margin: const EdgeInsets.only(bottom: 10),
@@ -338,6 +339,7 @@ class JobDetailsSheet extends StatelessWidget {
                     color: Colors.white, fontSize: 12.5,
                     fontWeight: FontWeight.w900, letterSpacing: .5)),
               ]),
+              ),
             ),
           ],
 
@@ -345,43 +347,9 @@ class JobDetailsSheet extends StatelessWidget {
           // (Το job.price είναι ΗΔΗ η καθαρή τιμή μετά την προκαταβολή — ΔΕΝ
           // αφαιρείται τίποτα άλλο. Το γράφουμε ρητά ώστε να μην μπερδεύεται
           // με «υπόλοιπο ΜΕΙΟΝ προκαταβολή».)
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: Colors.grey.shade50,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: Colors.grey.shade200),
-            ),
-            child: Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
-              Expanded(
-                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text(job.fullyPaid ? 'Πληρώθηκε online — μηδέν είσπραξη' : 'Να εισπράξεις',
-                      style: TextStyle(fontSize: 12, color: Colors.grey[600], fontWeight: FontWeight.w600)),
-                  Text('${job.price.toStringAsFixed(2)}€', style: const TextStyle(
-                      fontSize: 24, fontWeight: FontWeight.bold, color: Color(0xFF1E8E3E))),
-                  if (job.depositPaid)
-                    Text(job.fullyPaid
-                         ? 'Ο πελάτης πλήρωσε ήδη ΟΛΟΚΛΗΡΗ την τιμή (${job.depositAmount.toStringAsFixed(2)}€) online στον master.'
-                         : 'Ο πελάτης πλήρωσε ήδη ${job.depositAmount.toStringAsFixed(2)}€ προκαταβολή online στον master — δεν αφαιρείται από το ποσό πάνω, είναι ήδη υπολογισμένη.',
-                        style: TextStyle(fontSize: 11, color: Colors.blue.shade700)),
-                ]),
-              ),
-              Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-                if (job.commission > 0)
-                  Text('-${job.commission.toStringAsFixed(2)}€ γιαούρτι',
-                      style: TextStyle(fontSize: 12,
-                          color: Colors.red.shade700, fontWeight: FontWeight.w600)),
-                if (job.appCommission > 0)
-                  Text('-${job.appCommission.toStringAsFixed(2)}€ app',
-                      style: TextStyle(fontSize: 12,
-                          color: Colors.indigo.shade700, fontWeight: FontWeight.w600)),
-                Text('Κέρδος: ${job.driverEarning.toStringAsFixed(2)}€',
-                    style: const TextStyle(fontSize: 14,
-                        fontWeight: FontWeight.bold, color: Colors.purple)),
-              ]),
-            ]),
-          ),
+          job.depositPaid
+              ? BlinkingBox(child: _buildMoneyBox(job))
+              : _buildMoneyBox(job),
           const SizedBox(height: 12),
 
           // ── Διαδρομή — ΜΕΤΑ την τιμή, πλήρους πλάτους (όχι στριμωγμένη) ──
@@ -753,6 +721,49 @@ class JobDetailsSheet extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+
+  // ─── Κουτί τιμής/είσπραξης/κέρδους — εξαγμένο ώστε να μπορεί να τυλιχτεί
+  // σε BlinkingBox όταν υπάρχει προπληρωμή (depositPaid), για να μην μπερδέψει
+  // ποτέ ο οδηγός πόσα να πάρει από τον πελάτη.
+  Widget _buildMoneyBox(Job job) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.grey.shade50,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      child: Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
+        Expanded(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(job.fullyPaid ? 'Πληρώθηκε online — μηδέν είσπραξη' : 'Να εισπράξεις',
+                style: TextStyle(fontSize: 12, color: Colors.grey[600], fontWeight: FontWeight.w600)),
+            Text('${job.price.toStringAsFixed(2)}€', style: const TextStyle(
+                fontSize: 24, fontWeight: FontWeight.bold, color: Color(0xFF1E8E3E))),
+            if (job.depositPaid)
+              Text(job.fullyPaid
+                   ? 'Ο πελάτης πλήρωσε ήδη ΟΛΟΚΛΗΡΗ την τιμή (${job.depositAmount.toStringAsFixed(2)}€) online στον master.'
+                   : 'Ο πελάτης πλήρωσε ήδη ${job.depositAmount.toStringAsFixed(2)}€ προκαταβολή online στον master — δεν αφαιρείται από το ποσό πάνω, είναι ήδη υπολογισμένη.',
+                  style: TextStyle(fontSize: 11, color: Colors.blue.shade700)),
+          ]),
+        ),
+        Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+          if (job.commission > 0)
+            Text('-${job.commission.toStringAsFixed(2)}€ γιαούρτι',
+                style: TextStyle(fontSize: 12,
+                    color: Colors.red.shade700, fontWeight: FontWeight.w600)),
+          if (job.appCommission > 0)
+            Text('-${job.appCommission.toStringAsFixed(2)}€ app',
+                style: TextStyle(fontSize: 12,
+                    color: Colors.indigo.shade700, fontWeight: FontWeight.w600)),
+          Text('Κέρδος: ${job.driverEarning.toStringAsFixed(2)}€',
+              style: const TextStyle(fontSize: 14,
+                  fontWeight: FontWeight.bold, color: Colors.purple)),
+        ]),
+      ]),
     );
   }
 

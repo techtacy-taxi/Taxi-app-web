@@ -1026,13 +1026,15 @@ class MyJobTile extends StatelessWidget {
                 _routeRow(Icons.place_rounded, Colors.red, job.to),
                 const SizedBox(height: 6),
                 Wrap(spacing: 6, runSpacing: 4, children: [
-                  _chip(Icons.euro_rounded,
-                      job.fullyPaid
-                          ? 'Πληρώθηκε online — 0,00€'
-                          : (job.depositPaid
-                              ? 'Είσπραξη ${job.remainingToCollect.toStringAsFixed(2)}€'
-                              : '${job.price.toStringAsFixed(2)}€'),
-                      const Color(0xFF1E8E3E)),
+                  job.depositPaid
+                      ? _Pulse(active: true, child: _chip(Icons.euro_rounded,
+                          job.fullyPaid
+                              ? 'Πληρώθηκε online — 0,00€'
+                              : 'Είσπραξη ${job.remainingToCollect.toStringAsFixed(2)}€',
+                          const Color(0xFF1E8E3E)))
+                      : _chip(Icons.euro_rounded,
+                          '${job.price.toStringAsFixed(2)}€',
+                          const Color(0xFF1E8E3E)),
                   if (job.depositPaid)
                     _chip(Icons.verified_rounded,
                         job.fullyPaid
@@ -1048,9 +1050,13 @@ class MyJobTile extends StatelessWidget {
                     _chip(Icons.phone_iphone_rounded,
                         'App -${job.appCommission.toStringAsFixed(2)}€',
                         Colors.indigo.shade700),
-                  _chip(Icons.account_balance_wallet_rounded,
-                      'Κέρδος ${job.driverEarning.toStringAsFixed(2)}€',
-                      Colors.green.shade800),
+                  job.depositPaid
+                      ? _Pulse(active: true, child: _chip(Icons.account_balance_wallet_rounded,
+                          'Κέρδος ${job.driverEarning.toStringAsFixed(2)}€',
+                          Colors.green.shade800))
+                      : _chip(Icons.account_balance_wallet_rounded,
+                          'Κέρδος ${job.driverEarning.toStringAsFixed(2)}€',
+                          Colors.green.shade800),
                   _chip(Icons.person_rounded, '${job.persons}', Colors.blue),
                   if (job.luggage > 0)
                     _chip(Icons.luggage_rounded, '${job.luggage}', Colors.grey),

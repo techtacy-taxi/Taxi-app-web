@@ -465,6 +465,20 @@ class _JobFormPageState extends State<JobFormPage> {
       }
     });
 
+    // Ειδοποίηση αν αυτός ο πελάτης έχει δικό του Shuttle Bus — να το ξέρει
+    // ο admin που φτιάχνει τη δουλειά (π.χ. να μη στείλει ταξί άδικα).
+    if (c.hasShuttleBus && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Row(children: const [
+          Icon(Icons.directions_bus_filled_rounded, color: Colors.white, size: 18),
+          SizedBox(width: 8),
+          Expanded(child: Text('Αυτός ο πελάτης διαθέτει δικό του Shuttle.')),
+        ]),
+        backgroundColor: Colors.amber.shade900,
+        duration: const Duration(seconds: 3),
+      ));
+    }
+
     if (c.routes.isEmpty) {
       _recomputeRoute();
       return;
@@ -912,6 +926,8 @@ class _JobFormPageState extends State<JobFormPage> {
           ? widget.editJob!.fullyPaid
           : _fullyPaidManual,
       vivaOrderCode:    widget.editJob?.vivaOrderCode,
+      // Read-only, ΠΟΤΕ δεν αλλάζει χειροκίνητα — απλά διατηρείται.
+      bookingNumber:    widget.editJob?.bookingNumber ?? widget.editSavedJob?.bookingNumber,
     );
   }
 
@@ -1122,6 +1138,36 @@ class _JobFormPageState extends State<JobFormPage> {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
+
+          // ── Booking ID — read-only, ΠΟΤΕ δεν αλλάζει χειροκίνητα. Αν η
+          // δουλειά ήρθε από δημόσια φόρμα, δείχνει τον αριθμό· αν είναι
+          // δική σου χειροκίνητη δουλειά, μένει κενό/γκρι.
+          Builder(builder: (_) {
+            final bn = widget.editJob?.bookingNumber ?? widget.editSavedJob?.bookingNumber;
+            return Container(
+              margin: const EdgeInsets.only(bottom: 14),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              decoration: BoxDecoration(
+                color: Colors.grey.shade200,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: Colors.grey.shade400),
+              ),
+              child: Row(children: [
+                Icon(Icons.confirmation_number_outlined,
+                    size: 18, color: Colors.grey.shade600),
+                const SizedBox(width: 10),
+                Text('Booking ID',
+                    style: TextStyle(
+                        fontSize: 13, fontWeight: FontWeight.w600,
+                        color: Colors.grey.shade700)),
+                const Spacer(),
+                Text(bn != null ? '#$bn' : '—',
+                    style: TextStyle(
+                        fontSize: 14, fontWeight: FontWeight.bold,
+                        color: bn != null ? Colors.grey.shade900 : Colors.grey.shade500)),
+              ]),
+            );
+          }),
 
           // ── Από / Προς (Google Maps) ───────────────────────────────────────
           _section('Διαδρομή'),

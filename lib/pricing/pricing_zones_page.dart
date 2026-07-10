@@ -121,6 +121,11 @@ class PricingRoute {
   final double van;
   final double? taxiForeign;
   final double? vanForeign;
+  // ── Shuttle (ανά άτομο) ──
+  final double? shuttlePricePerPerson;
+  final double? shuttleNightPricePerPerson;
+  final String  shuttleMinType;  // 'price' ή 'persons'
+  final double  shuttleMinValue; // ελάχιστη τιμή (€) ή ελάχιστα άτομα, ανάλογα το type
 
   PricingRoute({
     required this.id,
@@ -130,7 +135,13 @@ class PricingRoute {
     required this.van,
     this.taxiForeign,
     this.vanForeign,
+    this.shuttlePricePerPerson,
+    this.shuttleNightPricePerPerson,
+    this.shuttleMinType = 'price',
+    this.shuttleMinValue = 0,
   });
+
+  bool get hasShuttle => shuttlePricePerPerson != null && shuttlePricePerPerson! > 0;
 
   factory PricingRoute.fromDoc(QueryDocumentSnapshot<Map<String, dynamic>> d) {
     final m = d.data();
@@ -143,6 +154,10 @@ class PricingRoute {
       van:         (m['van']  as num?)?.toDouble() ?? 0,
       taxiForeign: numOrNull(m['taxiForeign']),
       vanForeign:  numOrNull(m['vanForeign']),
+      shuttlePricePerPerson:      numOrNull(m['shuttlePricePerPerson']),
+      shuttleNightPricePerPerson: numOrNull(m['shuttleNightPricePerPerson']),
+      shuttleMinType:  (m['shuttleMinType'] as String?) ?? 'price',
+      shuttleMinValue: (m['shuttleMinValue'] as num?)?.toDouble() ?? 0,
     );
   }
 }
@@ -960,7 +975,8 @@ class _RoutesTab extends StatelessWidget {
                                   'Ταξί ${r.taxi.toStringAsFixed(0)}€'
                                   '${r.taxiForeign != null ? " / ξένος ${r.taxiForeign!.toStringAsFixed(0)}€" : ""}'
                                   '  ·  Βαν ${r.van.toStringAsFixed(0)}€'
-                                  '${r.vanForeign != null ? " / ξένος ${r.vanForeign!.toStringAsFixed(0)}€" : ""}',
+                                  '${r.vanForeign != null ? " / ξένος ${r.vanForeign!.toStringAsFixed(0)}€" : ""}'
+                                  '${r.hasShuttle ? "  ·  Shuttle ${r.shuttlePricePerPerson!.toStringAsFixed(0)}€/άτομο" : ""}',
                                 ),
                                 trailing: Row(
                                   mainAxisSize: MainAxisSize.min,
@@ -1004,6 +1020,13 @@ class _RoutesTab extends StatelessWidget {
     final vanCtrl   = TextEditingController(text: existing?.van.toStringAsFixed(0) ?? '');
     final taxiFCtrl = TextEditingController(text: existing?.taxiForeign?.toStringAsFixed(0) ?? '');
     final vanFCtrl  = TextEditingController(text: existing?.vanForeign?.toStringAsFixed(0) ?? '');
+    // ── Shuttle ──
+    final shuttleCtrl      = TextEditingController(text: existing?.shuttlePricePerPerson?.toStringAsFixed(0) ?? '');
+    final shuttleNightCtrl = TextEditingController(text: existing?.shuttleNightPricePerPerson?.toStringAsFixed(0) ?? '');
+    final shuttleMinCtrl   = TextEditingController(text: existing != null && existing.shuttleMinValue > 0
+        ? existing.shuttleMinValue.toStringAsFixed(existing.shuttleMinType == 'persons' ? 0 : 2)
+        : '');
+    String shuttleMinType = existing?.shuttleMinType ?? 'price';
 
     await showDialog<void>(
       context: context,
@@ -1049,6 +1072,59 @@ class _RoutesTab extends StatelessWidget {
                     controller: vanFCtrl, keyboardType: TextInputType.number,
                     decoration: const InputDecoration(labelText: 'Τιμή Βαν ξένου πελάτη (€) — προαιρετικό'),
                   ),
+
+                  const SizedBox(height: 18),
+                  const Divider(),
+                  const SizedBox(height: 6),
+                  Row(children: [
+                    Icon(Icons.directions_bus_filled_rounded, size: 18, color: Colors.amber.shade800),
+                    const SizedBox(width: 6),
+                    const Text('Shuttle (ανά άτομο)',
+                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                  ]),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Άδειασε το «Τιμή/άτομο» για να ΜΗΝ προσφέρεται καθόλου Shuttle σε αυτή τη διαδρομή.',
+                    style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: shuttleCtrl, keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(labelText: 'Τιμή/άτομο (€)'),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: shuttleNightCtrl, keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                        labelText: 'Τιμή/άτομο τη ΝΥΧΤΑ (€) — προαιρετικό',
+                        helperText: 'Αν το αφήσεις κενό, χρησιμοποιείται η ίδια τιμή και τη νύχτα'),
+                  ),
+                  const SizedBox(height: 10),
+                  Row(children: [
+                    Expanded(
+                      flex: 3,
+                      child: TextField(
+                        controller: shuttleMinCtrl, keyboardType: TextInputType.number,
+                        decoration: InputDecoration(
+                            labelText: shuttleMinType == 'persons'
+                                ? 'Ελάχιστα άτομα'
+                                : 'Ελάχιστη χρέωση (€)'),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      flex: 2,
+                      child: DropdownButtonFormField<String>(
+                        initialValue: shuttleMinType,
+                        decoration: const InputDecoration(labelText: 'Τύπος'),
+                        items: const [
+                          DropdownMenuItem(value: 'price', child: Text('Τιμή')),
+                          DropdownMenuItem(value: 'persons', child: Text('Άτομα')),
+                        ],
+                        onChanged: (v) => setLocal(() => shuttleMinType = v ?? 'price'),
+                      ),
+                    ),
+                  ]),
                 ],
               ),
             ),
@@ -1066,6 +1142,12 @@ class _RoutesTab extends StatelessWidget {
                         ? null : double.tryParse(taxiFCtrl.text.replaceAll(',', '.')),
                     'vanForeign': vanFCtrl.text.trim().isEmpty
                         ? null : double.tryParse(vanFCtrl.text.replaceAll(',', '.')),
+                    'shuttlePricePerPerson': shuttleCtrl.text.trim().isEmpty
+                        ? null : double.tryParse(shuttleCtrl.text.replaceAll(',', '.')),
+                    'shuttleNightPricePerPerson': shuttleNightCtrl.text.trim().isEmpty
+                        ? null : double.tryParse(shuttleNightCtrl.text.replaceAll(',', '.')),
+                    'shuttleMinType': shuttleMinType,
+                    'shuttleMinValue': double.tryParse(shuttleMinCtrl.text.replaceAll(',', '.')) ?? 0,
                     'tenantId': tenantId,
                   };
                   try {
@@ -1166,6 +1248,9 @@ class _PricingConfigTabState extends State<_PricingConfigTab> {
   // ── Ποσοστό προκαταβολής στη δημόσια φόρμα (προεπιλογή 10%) — η
   // στρογγυλοποίηση στο επόμενο ευρώ παραμένει ίδια, ό,τι ποσοστό κι αν βάλεις.
   final _depositPercentCtrl = TextEditingController();
+  // Έκπτωση «γνωριμίας» στη δυναμική τιμολόγηση (όχι ζώνες) — προεπιλογή 8%.
+  // 0 = δείξε ΚΑΤΕΥΘΕΙΑΝ την τελική τιμή, χωρίς διαγραμμένη «αρχική»/badge έκπτωσης.
+  final _dynamicDiscountCtrl = TextEditingController();
 
   bool _loaded = false;
   bool _saving = false;
@@ -1179,6 +1264,7 @@ class _PricingConfigTabState extends State<_PricingConfigTab> {
       ctrl.dispose();
     }
     _depositPercentCtrl.dispose();
+    _dynamicDiscountCtrl.dispose();
     super.dispose();
   }
 
@@ -1224,6 +1310,11 @@ class _PricingConfigTabState extends State<_PricingConfigTab> {
           _depositPercentCtrl.text = (depositPercent == depositPercent.roundToDouble())
               ? depositPercent.toStringAsFixed(0)
               : depositPercent.toString();
+
+          final dynamicDiscount = (data['dynamicDiscountPercent'] as num?)?.toDouble() ?? 8;
+          _dynamicDiscountCtrl.text = (dynamicDiscount == dynamicDiscount.roundToDouble())
+              ? dynamicDiscount.toStringAsFixed(0)
+              : dynamicDiscount.toString();
 
           _loaded = true;
         }
@@ -1374,6 +1465,25 @@ class _PricingConfigTabState extends State<_PricingConfigTab> {
                     border: OutlineInputBorder()),
               ),
 
+              const SizedBox(height: 20),
+              const Divider(),
+              const SizedBox(height: 8),
+              const Text('Έκπτωση δυναμικής τιμολόγησης',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _dynamicDiscountCtrl,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                decoration: const InputDecoration(
+                    isDense: true,
+                    labelText: 'Έκπτωση «γνωριμίας» (%)',
+                    suffixText: '%',
+                    helperText: 'Αφορά ΜΟΝΟ τη δυναμική τιμολόγηση (εκτός ζωνών) — όχι το Shuttle. '
+                        'Προεπιλογή 8%. Βάλε 0 για να δείχνει η φόρμα ΚΑΤΕΥΘΕΙΑΝ την τελική τιμή, '
+                        'χωρίς διαγραμμένη «αρχική» τιμή/ένδειξη έκπτωσης.',
+                    border: OutlineInputBorder()),
+              ),
+
               const SizedBox(height: 12),
               AppButton(
                 label: _saving ? 'Αποθήκευση…' : 'Αποθήκευση',
@@ -1497,6 +1607,8 @@ class _PricingConfigTabState extends State<_PricingConfigTab> {
       'blackoutEndMinute': _blackoutEndMinute,
       'depositPercent': (double.tryParse(_depositPercentCtrl.text.replaceAll(',', '.')) ?? 10)
           .clamp(1, 100),
+      'dynamicDiscountPercent': (double.tryParse(_dynamicDiscountCtrl.text.replaceAll(',', '.')) ?? 8)
+          .clamp(0, 90),
     };
     try {
       await _pricingDocRef.set(data, SetOptions(merge: true));
