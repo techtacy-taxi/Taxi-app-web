@@ -235,6 +235,7 @@ class _SavedJobsTabState extends State<SavedJobsTab> {
                               saved: items[i],
                               onSplit: () => _splitShuttle(items[i]),
                               onTapStop: (stop) => _showStopDetails(stop),
+                              onEditPrice: (stop) => _editStopPrice(items[i], stop),
                             ),
                           );
                         }
@@ -462,6 +463,40 @@ class _SavedJobsTabState extends State<SavedJobsTab> {
     }
   }
 
+  // ─── Επεξεργασία τιμής ενός επιβάτη μέσα σε ήδη ενωμένο Shuttle ──────────
+  Future<void> _editStopPrice(SavedJob container, ShuttleStop stop) async {
+    final ctrl = TextEditingController(text: stop.price.toStringAsFixed(2));
+    final newPrice = await showDialog<double>(
+      context: context,
+      builder: (dctx) => AlertDialog(
+        title: Text('Τιμή — ${stop.name.isNotEmpty ? stop.name : "(χωρίς όνομα)"}'),
+        content: TextField(
+          controller: ctrl,
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          autofocus: true,
+          decoration: const InputDecoration(suffixText: '€', border: OutlineInputBorder()),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(dctx).pop(), child: const Text('Άκυρο')),
+          FilledButton(
+            onPressed: () => Navigator.of(dctx).pop(
+                double.tryParse(ctrl.text.replaceAll(',', '.')) ?? stop.price),
+            child: const Text('Αποθήκευση'),
+          ),
+        ],
+      ),
+    );
+    if (newPrice == null) return;
+    try {
+      await SavedJobService.updateShuttleStopPrice(container, stop.savedJobId, newPrice);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Σφάλμα: $e'), backgroundColor: Colors.red));
+      }
+    }
+  }
+
   void _showStopDetails(ShuttleStop stop) {
     showDialog<void>(
       context: context,
@@ -580,7 +615,7 @@ class _SavedJobsTabState extends State<SavedJobsTab> {
     final anyNonShuttle = items.any((e) => e.job.vehicleType != 'shuttle');
 
     if (!mounted) return;
-    final confirmed = await showDialog<bool>(
+    final priceOverrides = await showDialog<Map<String, double>>(
       context: context,
       builder: (dctx) => _MergeShuttleDialog(
         items: items,
@@ -591,7 +626,7 @@ class _SavedJobsTabState extends State<SavedJobsTab> {
         anyNonShuttle: anyNonShuttle,
       ),
     );
-    if (confirmed != true || suggested == null) return;
+    if (priceOverrides == null || suggested == null) return;
 
     try {
       await SavedJobService.mergeIntoShuttle(
@@ -603,6 +638,7 @@ class _SavedJobsTabState extends State<SavedJobsTab> {
         unifiedScheduledAt: suggested,
         ownerUid: widget.adminUid,
         ownerName: widget.adminName,
+        priceOverrides: priceOverrides,
       );
       setState(() => _selected.clear());
       if (mounted) {
@@ -1210,6 +1246,32 @@ class _MergeShuttleDialog extends StatefulWidget {
 class _MergeShuttleDialogState extends State<_MergeShuttleDialog> {
   bool _confirm1 = false;
   bool _confirm2 = false;
+  late final Map<String, TextEditingController> _priceCtrls;
+
+  @override
+  void initState() {
+    super.initState();
+    _priceCtrls = {
+      for (final s in widget.items)
+        s.id: TextEditingController(text: s.job.price.toStringAsFixed(2)),
+    };
+  }
+
+  @override
+  void dispose() {
+    for (final c in _priceCtrls.values) {
+      c.dispose();
+    }
+    super.dispose();
+  }
+
+  double get _total => _priceCtrls.values.fold<double>(
+      0, (sum, c) => sum + (double.tryParse(c.text.replaceAll(',', '.')) ?? 0));
+
+  Map<String, double> get _priceOverrides => {
+        for (final e in _priceCtrls.entries)
+          e.key: double.tryParse(e.value.text.replaceAll(',', '.')) ?? 0,
+      };
 
   @override
   Widget build(BuildContext context) {
@@ -1219,109 +1281,146 @@ class _MergeShuttleDialogState extends State<_MergeShuttleDialog> {
 
     return AlertDialog(
       title: const Text('Ένωση σε Shuttle'),
-      content: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              widget.sharedIsPickup
-                  ? 'Κοινή παραλαβή από: ${widget.sharedName}\nΔιαφορετική άφεση για κάθε επιβάτη.'
-                  : 'Κοινή άφεση στο: ${widget.sharedName}\nΔιαφορετική παραλαβή για κάθε επιβάτη.',
-              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13.5),
-            ),
-            const SizedBox(height: 12),
-            ...widget.items.map((s) => Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 3),
-                  child: Row(children: [
-                    const Icon(Icons.person_rounded, size: 16, color: Colors.grey),
-                    const SizedBox(width: 6),
-                    Expanded(
-                      child: Text(
-                        (s.job.clientName?.isNotEmpty == true ? s.job.clientName! : '(χωρίς όνομα)') +
-                            '  ·  ' +
-                            (widget.sharedIsPickup ? s.job.to : s.job.from),
-                        style: const TextStyle(fontSize: 12.5),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                    if (s.job.vehicleType != 'shuttle')
-                      Container(
-                        margin: const EdgeInsets.only(left: 4),
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: Colors.red.shade50,
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                        child: Text('όχι Shuttle',
-                            style: TextStyle(fontSize: 10, color: Colors.red.shade800, fontWeight: FontWeight.bold)),
-                      ),
-                  ]),
-                )),
-            const SizedBox(height: 12),
-            if (widget.suggestedTime != null)
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: widget.timeCompatible ? Colors.green.shade50 : Colors.orange.shade50,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(
-                      color: widget.timeCompatible ? Colors.green.shade200 : Colors.orange.shade300),
-                ),
-                child: Text(
-                  widget.timeCompatible
-                      ? 'Κοινή ώρα: ${DateFormat('HH:mm').format(widget.suggestedTime!)} '
-                        '(μέσα στο ανεκτό περιθώριο -25/+15 λεπτών όλων)'
-                      : '⚠️ Οι ώρες δεν συμπίπτουν καλά μεταξύ τους (εκτός -25/+15 λεπτών) — '
-                        'προτεινόμενη ώρα ${DateFormat('HH:mm').format(widget.suggestedTime!)}, έλεγξε το χειροκίνητα.',
-                  style: TextStyle(
-                      fontSize: 12,
-                      color: widget.timeCompatible ? Colors.green.shade900 : Colors.orange.shade900),
-                ),
-              )
-            else
-              const Text('Δεν βρέθηκε ραντεβού σε όλες τις δουλειές — δεν μπορεί να υπολογιστεί κοινή ώρα.',
-                  style: TextStyle(fontSize: 12, color: Colors.red)),
-            if (needsDouble) ...[
-              const SizedBox(height: 14),
-              Container(
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: Colors.red.shade50,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.red.shade300),
-                ),
-                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text('Μία ή περισσότερες δουλειές ΔΕΝ είναι Shuttle. Η ένωση '
-                      'μη-Shuttle δουλειών είναι ασυνήθιστη — επιβεβαίωσε ρητά:',
-                      style: TextStyle(fontSize: 12, color: Colors.red.shade900)),
-                  CheckboxListTile(
-                    dense: true,
-                    contentPadding: EdgeInsets.zero,
-                    value: _confirm1,
-                    onChanged: (v) => setState(() => _confirm1 = v ?? false),
-                    title: const Text('Κατάλαβα ότι δεν είναι όλες Shuttle',
-                        style: TextStyle(fontSize: 12)),
-                  ),
-                  CheckboxListTile(
-                    dense: true,
-                    contentPadding: EdgeInsets.zero,
-                    value: _confirm2,
-                    onChanged: (v) => setState(() => _confirm2 = v ?? false),
-                    title: const Text('Θέλω σίγουρα να τις ενώσω παρ\' όλα αυτά',
-                        style: TextStyle(fontSize: 12)),
-                  ),
-                ]),
+      content: SizedBox(
+        width: 380,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                widget.sharedIsPickup
+                    ? 'Κοινή παραλαβή από: ${widget.sharedName}\nΔιαφορετική άφεση για κάθε επιβάτη.'
+                    : 'Κοινή άφεση στο: ${widget.sharedName}\nΔιαφορετική παραλαβή για κάθε επιβάτη.',
+                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13.5),
               ),
+              const SizedBox(height: 12),
+              const Text('Ποιος πληρώνει τι — μπορείς να αλλάξεις τις τιμές:',
+                  style: TextStyle(fontWeight: FontWeight.w600, fontSize: 12.5)),
+              const SizedBox(height: 6),
+              ...widget.items.map((s) => Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 4),
+                    child: Row(children: [
+                      const Icon(Icons.person_rounded, size: 16, color: Colors.grey),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              s.job.clientName?.isNotEmpty == true ? s.job.clientName! : '(χωρίς όνομα)',
+                              style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600),
+                            ),
+                            Text(widget.sharedIsPickup ? s.job.to : s.job.from,
+                                style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+                                maxLines: 1, overflow: TextOverflow.ellipsis),
+                          ],
+                        ),
+                      ),
+                      if (s.job.vehicleType != 'shuttle')
+                        Container(
+                          margin: const EdgeInsets.only(right: 6),
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: Colors.red.shade50,
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Text('όχι Shuttle',
+                              style: TextStyle(fontSize: 9.5, color: Colors.red.shade800, fontWeight: FontWeight.bold)),
+                        ),
+                      SizedBox(
+                        width: 80,
+                        child: TextField(
+                          controller: _priceCtrls[s.id],
+                          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                          textAlign: TextAlign.right,
+                          style: const TextStyle(fontSize: 13),
+                          decoration: const InputDecoration(
+                              isDense: true,
+                              suffixText: '€',
+                              contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                              border: OutlineInputBorder()),
+                          onChanged: (_) => setState(() {}),
+                        ),
+                      ),
+                    ]),
+                  )),
+              const Divider(height: 20),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text('Σύνολο', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                  Text('${_total.toStringAsFixed(2)}€',
+                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Color(0xFF1E8E3E))),
+                ],
+              ),
+              const SizedBox(height: 12),
+              if (widget.suggestedTime != null)
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: widget.timeCompatible ? Colors.green.shade50 : Colors.orange.shade50,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                        color: widget.timeCompatible ? Colors.green.shade200 : Colors.orange.shade300),
+                  ),
+                  child: Text(
+                    widget.timeCompatible
+                        ? 'Κοινή ώρα: ${DateFormat('HH:mm').format(widget.suggestedTime!)} '
+                          '(μέσα στο ανεκτό περιθώριο -25/+15 λεπτών όλων)'
+                        : '⚠️ Οι ώρες δεν συμπίπτουν καλά μεταξύ τους (εκτός -25/+15 λεπτών) — '
+                          'προτεινόμενη ώρα ${DateFormat('HH:mm').format(widget.suggestedTime!)}, έλεγξε το χειροκίνητα.',
+                    style: TextStyle(
+                        fontSize: 12,
+                        color: widget.timeCompatible ? Colors.green.shade900 : Colors.orange.shade900),
+                  ),
+                )
+              else
+                const Text('Δεν βρέθηκε ραντεβού σε όλες τις δουλειές — δεν μπορεί να υπολογιστεί κοινή ώρα.',
+                    style: TextStyle(fontSize: 12, color: Colors.red)),
+              if (needsDouble) ...[
+                const SizedBox(height: 14),
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: Colors.red.shade50,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.red.shade300),
+                  ),
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text('Μία ή περισσότερες δουλειές ΔΕΝ είναι Shuttle. Η ένωση '
+                        'μη-Shuttle δουλειών είναι ασυνήθιστη — επιβεβαίωσε ρητά:',
+                        style: TextStyle(fontSize: 12, color: Colors.red.shade900)),
+                    CheckboxListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      value: _confirm1,
+                      onChanged: (v) => setState(() => _confirm1 = v ?? false),
+                      title: const Text('Κατάλαβα ότι δεν είναι όλες Shuttle',
+                          style: TextStyle(fontSize: 12)),
+                    ),
+                    CheckboxListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      value: _confirm2,
+                      onChanged: (v) => setState(() => _confirm2 = v ?? false),
+                      title: const Text('Θέλω σίγουρα να τις ενώσω παρ\' όλα αυτά',
+                          style: TextStyle(fontSize: 12)),
+                    ),
+                  ]),
+                ),
+              ],
             ],
-          ],
+          ),
         ),
       ),
       actions: [
-        TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Άκυρο')),
+        TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Άκυρο')),
         FilledButton(
-          onPressed: canProceed ? () => Navigator.of(context).pop(true) : null,
+          onPressed: canProceed
+              ? () => Navigator.of(context).pop(_priceOverrides)
+              : null,
           child: const Text('Ένωση'),
         ),
       ],
@@ -1336,11 +1435,13 @@ class _ShuttleContainerCard extends StatelessWidget {
   final SavedJob saved;
   final VoidCallback onSplit;
   final void Function(ShuttleStop) onTapStop;
+  final void Function(ShuttleStop) onEditPrice;
 
   const _ShuttleContainerCard({
     required this.saved,
     required this.onSplit,
     required this.onTapStop,
+    required this.onEditPrice,
   });
 
   @override
@@ -1405,13 +1506,32 @@ class _ShuttleContainerCard extends StatelessWidget {
                           ],
                         ),
                       ),
-                      Icon(Icons.info_outline_rounded, size: 15, color: Colors.grey[400]),
+                      InkWell(
+                        onTap: () => onEditPrice(s),
+                        borderRadius: BorderRadius.circular(6),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+                          child: Row(mainAxisSize: MainAxisSize.min, children: [
+                            Text('${s.price.toStringAsFixed(2)}€',
+                                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12.5, color: Color(0xFF1E8E3E))),
+                            const SizedBox(width: 3),
+                            Icon(Icons.edit_rounded, size: 12, color: Colors.grey[400]),
+                          ]),
+                        ),
+                      ),
                     ]),
                   ),
                 )),
-            const SizedBox(height: 4),
-            Text('Σύνολο: ${saved.job.persons} άτομα · ${saved.job.price.toStringAsFixed(2)}€',
-                style: TextStyle(fontSize: 12, color: Colors.grey[600])),
+            const Divider(height: 16),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text('Σύνολο: ${saved.job.persons} άτομα',
+                    style: TextStyle(fontSize: 12, color: Colors.grey[600])),
+                Text('${saved.job.price.toStringAsFixed(2)}€',
+                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Color(0xFF1E8E3E))),
+              ],
+            ),
           ],
         ),
       ),

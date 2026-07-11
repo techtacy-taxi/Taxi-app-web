@@ -39,6 +39,7 @@ class ShuttleStop {
   final double? lat;
   final double? lng;
   final bool    isPickupHere;
+  final double  price; // πόσο πληρώνει ΑΥΤΟΣ ο επιβάτης — ο admin μπορεί να το αλλάξει
 
   const ShuttleStop({
     required this.savedJobId,
@@ -50,6 +51,7 @@ class ShuttleStop {
     this.lat,
     this.lng,
     required this.isPickupHere,
+    this.price = 0,
   });
 
   factory ShuttleStop.fromMap(Map<String, dynamic> m) => ShuttleStop(
@@ -62,6 +64,7 @@ class ShuttleStop {
         lat:          (m['lat'] as num?)?.toDouble(),
         lng:          (m['lng'] as num?)?.toDouble(),
         isPickupHere: m['isPickupHere'] == true,
+        price:        (m['price'] as num?)?.toDouble() ?? 0,
       );
 
   Map<String, dynamic> toMap() => {
@@ -74,7 +77,14 @@ class ShuttleStop {
         if (lat != null) 'lat': lat,
         if (lng != null) 'lng': lng,
         'isPickupHere': isPickupHere,
+        'price':        price,
       };
+
+  ShuttleStop copyWith({double? price}) => ShuttleStop(
+        savedJobId: savedJobId, name: name, phone: phone, email: email,
+        flightOrShip: flightOrShip, address: address, lat: lat, lng: lng,
+        isPickupHere: isPickupHere, price: price ?? this.price,
+      );
 }
 
 class SavedJob {
@@ -260,12 +270,15 @@ class SavedJobService {
     required DateTime unifiedScheduledAt,
     required String ownerUid,
     required String ownerName,
+    Map<String, double>? priceOverrides, // savedJobId -> τιμή αυτού του επιβάτη (αλλιώς η αρχική του τιμή)
   }) async {
     if (items.length < 2) throw ArgumentError('χρειάζονται τουλάχιστον 2 δουλειές');
 
+    double priceFor(SavedJob i) => priceOverrides?[i.id] ?? i.job.price;
+
     final totalPersons = items.fold<int>(0, (s, i) => s + i.job.persons);
     final totalLuggage = items.fold<int>(0, (s, i) => s + i.job.luggage);
-    final totalPrice   = items.fold<double>(0, (s, i) => s + i.job.price);
+    final totalPrice   = items.fold<double>(0, (s, i) => s + priceFor(i));
 
     final stops = items.map((i) => ShuttleStop(
           savedJobId:   i.id,
@@ -277,6 +290,7 @@ class SavedJobService {
           lat:          sharedIsPickup ? i.job.toLat : i.job.fromLat,
           lng:          sharedIsPickup ? i.job.toLng : i.job.fromLng,
           isPickupHere: !sharedIsPickup,
+          price:        priceFor(i),
         )).toList();
 
     final combinedFrom = sharedIsPickup ? sharedPointName : 'Πολλαπλές παραλαβές (${items.length})';
@@ -336,6 +350,23 @@ class SavedJobService {
     }
     batch.delete(_fs.collection(_coll).doc(container.id));
     await batch.commit();
+  }
+
+  /// Αλλάζει την τιμή ΕΝΟΣ επιβάτη μέσα σε ήδη ενωμένο Shuttle — ο admin
+  /// μπορεί να παρέμβει οποιαδήποτε στιγμή, όχι μόνο στη στιγμή της ένωσης.
+  /// Ξαναϋπολογίζει αυτόματα το συνολικό price του container.
+  static Future<void> updateShuttleStopPrice(
+    SavedJob container, String savedJobId, double newPrice,
+  ) async {
+    if (!container.isShuttleContainer) return;
+    final updatedStops = container.shuttleStops.map((s) {
+      return s.savedJobId == savedJobId ? s.copyWith(price: newPrice) : s;
+    }).toList();
+    final newTotal = updatedStops.fold<double>(0, (sum, s) => sum + s.price);
+    await _fs.collection(_coll).doc(container.id).update({
+      'shuttleStops': updatedStops.map((s) => s.toMap()).toList(),
+      'price': newTotal,
+    });
   }
 
   /// Stream αποθηκευμένων για συγκεκριμένη λίστα owner uids (δικές μου + κοινές).

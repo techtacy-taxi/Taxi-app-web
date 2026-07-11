@@ -121,6 +121,13 @@ class PricingRoute {
   final double van;
   final double? taxiForeign;
   final double? vanForeign;
+  // ── Σταθερή νυχτερινή τιμή διαδρομής (προαιρετική) — αν οριστεί,
+  // αντικαθιστά εντελώς το ποσοστιαίο νυχτερινό των δυναμικών τύπων για
+  // αυτή τη διαδρομή. Αν μείνει κενή, ισχύει το κανονικό ποσοστό όπως πριν.
+  final double? taxiNight;
+  final double? vanNight;
+  final double? taxiNightForeign;
+  final double? vanNightForeign;
   // ── Shuttle (ανά άτομο) ──
   final double? shuttlePricePerPerson;
   final double? shuttleNightPricePerPerson;
@@ -135,6 +142,10 @@ class PricingRoute {
     required this.van,
     this.taxiForeign,
     this.vanForeign,
+    this.taxiNight,
+    this.vanNight,
+    this.taxiNightForeign,
+    this.vanNightForeign,
     this.shuttlePricePerPerson,
     this.shuttleNightPricePerPerson,
     this.shuttleMinType = 'price',
@@ -154,6 +165,10 @@ class PricingRoute {
       van:         (m['van']  as num?)?.toDouble() ?? 0,
       taxiForeign: numOrNull(m['taxiForeign']),
       vanForeign:  numOrNull(m['vanForeign']),
+      taxiNight:         numOrNull(m['taxiNight']),
+      vanNight:          numOrNull(m['vanNight']),
+      taxiNightForeign:  numOrNull(m['taxiNightForeign']),
+      vanNightForeign:   numOrNull(m['vanNightForeign']),
       shuttlePricePerPerson:      numOrNull(m['shuttlePricePerPerson']),
       shuttleNightPricePerPerson: numOrNull(m['shuttleNightPricePerPerson']),
       shuttleMinType:  (m['shuttleMinType'] as String?) ?? 'price',
@@ -976,6 +991,8 @@ class _RoutesTab extends StatelessWidget {
                                   '${r.taxiForeign != null ? " / ξένος ${r.taxiForeign!.toStringAsFixed(0)}€" : ""}'
                                   '  ·  Βαν ${r.van.toStringAsFixed(0)}€'
                                   '${r.vanForeign != null ? " / ξένος ${r.vanForeign!.toStringAsFixed(0)}€" : ""}'
+                                  '${r.taxiNight != null ? "  ·  🌙 Ταξί ${r.taxiNight!.toStringAsFixed(0)}€" : ""}'
+                                  '${r.vanNight != null ? " / Βαν ${r.vanNight!.toStringAsFixed(0)}€" : ""}'
                                   '${r.hasShuttle ? "  ·  Shuttle ${r.shuttlePricePerPerson!.toStringAsFixed(0)}€/άτομο" : ""}',
                                 ),
                                 trailing: Row(
@@ -1020,6 +1037,10 @@ class _RoutesTab extends StatelessWidget {
     final vanCtrl   = TextEditingController(text: existing?.van.toStringAsFixed(0) ?? '');
     final taxiFCtrl = TextEditingController(text: existing?.taxiForeign?.toStringAsFixed(0) ?? '');
     final vanFCtrl  = TextEditingController(text: existing?.vanForeign?.toStringAsFixed(0) ?? '');
+    final taxiNightCtrl = TextEditingController(text: existing?.taxiNight?.toStringAsFixed(0) ?? '');
+    final vanNightCtrl  = TextEditingController(text: existing?.vanNight?.toStringAsFixed(0) ?? '');
+    final taxiNightFCtrl = TextEditingController(text: existing?.taxiNightForeign?.toStringAsFixed(0) ?? '');
+    final vanNightFCtrl  = TextEditingController(text: existing?.vanNightForeign?.toStringAsFixed(0) ?? '');
     // ── Shuttle ──
     final shuttleCtrl      = TextEditingController(text: existing?.shuttlePricePerPerson?.toStringAsFixed(0) ?? '');
     final shuttleNightCtrl = TextEditingController(text: existing?.shuttleNightPricePerPerson?.toStringAsFixed(0) ?? '');
@@ -1071,6 +1092,43 @@ class _RoutesTab extends StatelessWidget {
                   TextField(
                     controller: vanFCtrl, keyboardType: TextInputType.number,
                     decoration: const InputDecoration(labelText: 'Τιμή Βαν ξένου πελάτη (€) — προαιρετικό'),
+                  ),
+
+                  const SizedBox(height: 18),
+                  const Divider(),
+                  const SizedBox(height: 6),
+                  Row(children: [
+                    Icon(Icons.nightlight_round, size: 16, color: Colors.indigo.shade700),
+                    const SizedBox(width: 6),
+                    const Text('Σταθερή νυχτερινή τιμή (προαιρετικό)',
+                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                  ]),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Άδειασε για να ισχύει το κανονικό ποσοστό νυχτερινής προσαύξησης '
+                    '(από τους δυναμικούς τύπους). Αν βάλεις τιμή εδώ, αυτή ισχύει '
+                    'ΑΠΟΚΛΕΙΣΤΙΚΑ τη νύχτα σε αυτή τη διαδρομή — αγνοείται το ποσοστό.',
+                    style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: taxiNightCtrl, keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(labelText: 'Τιμή Ταξί τη ΝΥΧΤΑ (€)'),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: taxiNightFCtrl, keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(labelText: 'Τιμή Ταξί ξένου τη ΝΥΧΤΑ (€) — προαιρετικό'),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: vanNightCtrl, keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(labelText: 'Τιμή Βαν τη ΝΥΧΤΑ (€)'),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: vanNightFCtrl, keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(labelText: 'Τιμή Βαν ξένου τη ΝΥΧΤΑ (€) — προαιρετικό'),
                   ),
 
                   const SizedBox(height: 18),
@@ -1142,6 +1200,14 @@ class _RoutesTab extends StatelessWidget {
                         ? null : double.tryParse(taxiFCtrl.text.replaceAll(',', '.')),
                     'vanForeign': vanFCtrl.text.trim().isEmpty
                         ? null : double.tryParse(vanFCtrl.text.replaceAll(',', '.')),
+                    'taxiNight': taxiNightCtrl.text.trim().isEmpty
+                        ? null : double.tryParse(taxiNightCtrl.text.replaceAll(',', '.')),
+                    'vanNight': vanNightCtrl.text.trim().isEmpty
+                        ? null : double.tryParse(vanNightCtrl.text.replaceAll(',', '.')),
+                    'taxiNightForeign': taxiNightFCtrl.text.trim().isEmpty
+                        ? null : double.tryParse(taxiNightFCtrl.text.replaceAll(',', '.')),
+                    'vanNightForeign': vanNightFCtrl.text.trim().isEmpty
+                        ? null : double.tryParse(vanNightFCtrl.text.replaceAll(',', '.')),
                     'shuttlePricePerPerson': shuttleCtrl.text.trim().isEmpty
                         ? null : double.tryParse(shuttleCtrl.text.replaceAll(',', '.')),
                     'shuttleNightPricePerPerson': shuttleNightCtrl.text.trim().isEmpty

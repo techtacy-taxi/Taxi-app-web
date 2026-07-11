@@ -601,6 +601,15 @@ class _ClientEditorPageState extends State<ClientEditorPage> {
   List<JobSource> _sources = [];
   bool _saving = false;
 
+  // ── Ιδιοκτήτης πελάτη — μόνο ο master μπορεί να διαλέξει σε ΠΟΙΟΝ admin
+  // θα ανήκει ο πελάτης (νέος ή ήδη υπάρχων). Χωρίς αυτή την επιλογή, η
+  // ιδιοκτησία ΠΑΝΤΑ μένει όπως ήταν (δικός σου αν φτιάχνεις νέο, ή ίδια
+  // με πριν αν επεξεργάζεσαι ξένο πελάτη — δεν αλλάζει ποτέ κατά λάθος).
+  List<_AdminOption> _admins = [];
+  String? _selectedOwnerUid;
+  String? _selectedOwnerName;
+  bool _adminsLoaded = false;
+
   @override
   void initState() {
     super.initState();
@@ -619,6 +628,41 @@ class _ClientEditorPageState extends State<ClientEditorPage> {
             sourceId: r.sourceId,
             sourceName: r.sourceName,
           )).toList();
+      _selectedOwnerUid  = c.createdBy.isNotEmpty ? c.createdBy : widget.adminUid;
+      _selectedOwnerName = c.createdByName.isNotEmpty ? c.createdByName : widget.adminName;
+    } else {
+      _selectedOwnerUid  = widget.adminUid;
+      _selectedOwnerName = widget.adminName;
+    }
+    if (widget.isMaster) _loadAdmins();
+  }
+
+  Future<void> _loadAdmins() async {
+    try {
+      final snap = await FirebaseFirestore.instance
+          .collection('presence')
+          .where('isApproved', isEqualTo: true)
+          .get();
+      final list = snap.docs
+          .where((d) => d.data()['admin'] == true || d.data()['tenantOwner'] == true)
+          .map((d) {
+            final data = d.data();
+            final name = ('${data['displayName'] ?? ''} ${data['lastName'] ?? ''}').trim();
+            return _AdminOption(uid: d.id, name: name.isEmpty ? '(χωρίς όνομα)' : name);
+          })
+          .toList()
+        ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+      // Βεβαιώσου ότι ο τρέχων ιδιοκτήτης (π.χ. ήδη υπάρχων πελάτης άλλου
+      // admin) εμφανίζεται στη λίστα ακόμα κι αν κάτι δεν ταιριάζει παραπάνω.
+      if (_selectedOwnerUid != null &&
+          !list.any((a) => a.uid == _selectedOwnerUid)) {
+        list.insert(0, _AdminOption(
+            uid: _selectedOwnerUid!,
+            name: _selectedOwnerName?.isNotEmpty == true ? _selectedOwnerName! : '(τρέχων ιδιοκτήτης)'));
+      }
+      if (mounted) setState(() { _admins = list; _adminsLoaded = true; });
+    } catch (_) {
+      if (mounted) setState(() => _adminsLoaded = true);
     }
   }
 
@@ -683,12 +727,14 @@ class _ClientEditorPageState extends State<ClientEditorPage> {
           : null,
       hasShuttleBus: _hasShuttleBus,
       routes:        routes,
-      createdBy:     widget.client?.createdBy.isNotEmpty == true
-          ? widget.client!.createdBy
-          : widget.adminUid,
-      createdByName: widget.client?.createdByName.isNotEmpty == true
-          ? widget.client!.createdByName
-          : widget.adminName,
+      createdBy:     _selectedOwnerUid ??
+          (widget.client?.createdBy.isNotEmpty == true
+              ? widget.client!.createdBy
+              : widget.adminUid),
+      createdByName: _selectedOwnerName ??
+          (widget.client?.createdByName.isNotEmpty == true
+              ? widget.client!.createdByName
+              : widget.adminName),
       createdAt:     widget.client?.createdAt,
     );
 
@@ -760,6 +806,37 @@ class _ClientEditorPageState extends State<ClientEditorPage> {
             ),
           ),
           const SizedBox(height: 10),
+          if (widget.isMaster) ...[
+            if (!_adminsLoaded)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 8),
+                child: SizedBox(height: 16, width: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2)),
+              )
+            else
+              DropdownButtonFormField<String>(
+                initialValue: _admins.any((a) => a.uid == _selectedOwnerUid)
+                    ? _selectedOwnerUid
+                    : null,
+                decoration: InputDecoration(
+                  labelText: 'Ιδιοκτήτης πελάτη',
+                  prefixIcon: const Icon(Icons.person_pin_rounded),
+                  helperText: 'Μόνο εσύ (master) βλέπεις αυτή την επιλογή — '
+                      'διάλεξε σε ποιον admin θα ανήκει αυτός ο πελάτης.',
+                  filled: true, fillColor: Colors.white,
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+                items: _admins
+                    .map((a) => DropdownMenuItem(value: a.uid, child: Text(a.name)))
+                    .toList(),
+                onChanged: (v) {
+                  if (v == null) return;
+                  final picked = _admins.firstWhere((a) => a.uid == v);
+                  setState(() { _selectedOwnerUid = picked.uid; _selectedOwnerName = picked.name; });
+                },
+              ),
+            const SizedBox(height: 10),
+          ],
           TextField(
             controller: _phoneCtrl,
             keyboardType: TextInputType.phone,
@@ -934,4 +1011,11 @@ class _EditableRoute {
     this.sourceName,
   }) : priceCtrl = TextEditingController(
             text: price > 0 ? price.toStringAsFixed(2) : '');
+}
+
+// ─── Επιλογή admin/tenant-owner για ιδιοκτήτη πελάτη (μόνο master) ─────────
+class _AdminOption {
+  final String uid;
+  final String name;
+  const _AdminOption({required this.uid, required this.name});
 }

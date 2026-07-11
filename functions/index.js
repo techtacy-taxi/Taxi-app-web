@@ -2548,12 +2548,33 @@ async function computeEstimate({
   let routePolyline = null; // για εμφάνιση στον χάρτη (booking.html)
   const departureTime = scheduledNaive ? athensNaiveToRealDate(scheduledNaive) : null;
 
+  // ── Νυχτερινό — υπολογίζεται ΝΩΡΙΣ γιατί χρειάζεται ήδη εδώ για να
+  // διαλέξουμε σταθερή νυχτερινή τιμή διαδρομής, αν υπάρχει ορισμένη.
+  const isNightNow = !!scheduledNaive && isNightWindow(scheduledNaive);
+  const nightApplies = isNightNow && (!zoneRoute || cfg.nightAppliesToZones);
+
+  let usedFixedNightPrice = false;
   if (zoneRoute) {
     zoneMatch = true;
     const ownField = vehicle === "van" ? "van" : "taxi";
     const foreignField = vehicle === "van" ? "vanForeign" : "taxiForeign";
-    const ownPrice = Number(zoneRoute[ownField] || 0);
-    const foreignPrice = zoneRoute[foreignField] != null ? Number(zoneRoute[foreignField]) : null;
+    // ── Σταθερή νυχτερινή τιμή διαδρομής (προαιρετική, ανά ζώνη-σε-ζώνη).
+    // Αν οριστεί, ΑΝΤΙΚΑΘΙΣΤΑ εντελώς το ποσοστιαίο νυχτερινό των δυναμικών
+    // τύπων — γι' αυτή τη διαδρομή. Αν ΔΕΝ οριστεί, ισχύει το κανονικό
+    // ποσοστό (cfg.nightPctTaxi/nightPctVan), όπως πάντα.
+    const ownNightField = vehicle === "van" ? "vanNight" : "taxiNight";
+    const foreignNightField = vehicle === "van" ? "vanNightForeign" : "taxiNightForeign";
+    const hasFixedNight = isNightNow && Number(zoneRoute[ownNightField]) > 0;
+    usedFixedNightPrice = hasFixedNight;
+
+    const ownPrice = hasFixedNight ? Number(zoneRoute[ownNightField]) : Number(zoneRoute[ownField] || 0);
+    let foreignPrice = null;
+    if (hasFixedNight) {
+      foreignPrice = zoneRoute[foreignNightField] != null ? Number(zoneRoute[foreignNightField]) : null;
+    } else {
+      foreignPrice = zoneRoute[foreignField] != null ? Number(zoneRoute[foreignField]) : null;
+    }
+
     if (foreignPrice != null && isGreek) {
       basePrice = ownPrice;
       baseOtherPrice = foreignPrice; // ο ξένος είναι η βάση αναφοράς (τυπικό -8%)
@@ -2658,12 +2679,11 @@ async function computeEstimate({
 
   // ── Νυχτερινό — για ζώνες κοινό ποσοστό (η διαφοροποίηση Έλληνα/ξένου
   // γίνεται ήδη μέσω taxi/taxiForeign στη διαδρομή), για δυναμικό τύπο ανά
-  // εθνικότητα αν έχει οριστεί ξεχωριστό ποσοστό.
-  const isNightNow = !!scheduledNaive && isNightWindow(scheduledNaive);
-  const nightApplies = isNightNow && (!zoneMatch || cfg.nightAppliesToZones);
-
+  // εθνικότητα αν έχει οριστεί ξεχωριστό ποσοστό. (isNightNow/nightApplies
+  // υπολογίστηκαν ΝΩΡΙΤΕΡΑ, πριν την επιλογή τιμής ζώνης.)
   function nightMultFor(useGreek) {
     if (!nightApplies) return 1;
+    if (usedFixedNightPrice) return 1; // η τιμή ΕΙΝΑΙ ήδη η σταθερή νυχτερινή — δεν ξαναπολλαπλασιάζουμε
     const pct = zoneMatch
       ? (vehicle === "van" ? cfg.nightPctVan : cfg.nightPctTaxi)
       : pick(vehicle === "van" ? "nightPctVan" : "nightPctTaxi", useGreek);
@@ -3654,10 +3674,20 @@ exports.vivaWebhook = onRequest(
           const tDoc = await db.collection("tenants").doc(tid).get();
           const t = tDoc.exists ? tDoc.data() : {};
 
-          // ── Ο master μπορεί να έχει κλείσει χειροκίνητα τα αυτόματα email
-          // για αυτόν τον tenant (σελίδα Διαχειριστές) — σεβόμαστε το.
-          if (t.emailsEnabled === false) {
-            console.log("customer email: emailsEnabled=false για tenant", tid, "— παραλείπεται.");
+          // ── Σημασιολογία emailsEnabled: «χρησιμοποίησε το ΔΙΚΟ ΜΟΥ (κοινό,
+          // του master) Resend key για αυτόν τον tenant».
+          //   • hasOwnResendKey && emailsEnabled!==true → ΔΙΚΟ ΤΟΥ key (προεπιλογή
+          //     μόλις προσθέσει key — δεν πληρώνει ο master).
+          //   • hasOwnResendKey && emailsEnabled===true → ο master το «παρέκαμψε»
+          //     ρητά· χρησιμοποιείται ΤΟ ΔΙΚΟ ΤΟΥ (master) key (πληρώνει αυτός).
+          //   • !hasOwnResendKey && emailsEnabled===false → ΔΕΝ υπάρχει κανένα
+          //     key διαθέσιμο· δεν στέλνεται τίποτα.
+          //   • !hasOwnResendKey && emailsEnabled!==false → κοινό key (προεπιλογή).
+          const useOwnKey = t.hasOwnResendKey && t.emailsEnabled !== true;
+          const noKeyAtAll = !t.hasOwnResendKey && t.emailsEnabled === false;
+
+          if (noKeyAtAll) {
+            console.log("customer email: χωρίς κανένα διαθέσιμο key για tenant", tid, "— παραλείπεται.");
           } else {
             const businessName   = t.businessName   || (tid === "default" ? "TaxiAthensTransfers.com" : "Taxi Transfers");
             const whatsapp       = (t.whatsappNumber || (tid === "default" ? "306936123322" : "")).replace(/[^0-9]/g, "");
@@ -3676,10 +3706,8 @@ exports.vivaWebhook = onRequest(
               ? "booking@taxiathenstransfers.com"
               : "info@taxiathenstransfers.com";
 
-            // Αν ο tenant έχει βάλει ΔΙΚΟ ΤΟΥ Resend API key (tab «Email» στις
-            // Ρυθμίσεις Viva), το χρησιμοποιούμε αντί για το κοινό μας κλειδί.
             let apiKeyOverride = null;
-            if (t.hasOwnResendKey) {
+            if (useOwnKey) {
               try {
                 apiKeyOverride = await readSecret(tenantSecretId(tid, "resend-api-key"));
               } catch (e) {
@@ -4478,12 +4506,16 @@ exports.updateTenantResendKey = onCall(
 
     const key = s(d.resendApiKey);
     if (!key) {
-      // Άδειο κλειδί = αφαίρεση δικού του — γυρνάει στο κοινό μας.
-      await tenantRef.set({ hasOwnResendKey: false }, { merge: true });
+      // Άδειο κλειδί = αφαίρεση δικού του — γυρνάει στο κοινό μας (προεπιλογή).
+      await tenantRef.set({ hasOwnResendKey: false, emailsEnabled: true }, { merge: true });
       return { ok: true, hasOwnResendKey: false };
     }
     await upsertSecret(tenantSecretId(tenantId, "resend-api-key"), key);
-    await tenantRef.set({ hasOwnResendKey: true, emailsEnabled: true }, { merge: true });
+    // ⚠️ emailsEnabled:false εδώ ΔΕΝ σημαίνει «σβησμένα email» — σημαίνει
+    // «μη χρησιμοποιείς το ΚΟΙΝΟ (του master) key». Αφού μόλις απέκτησε
+    // δικό του key, η προεπιλογή είναι να ΤΟ χρησιμοποιεί (δεν πληρώνει ο
+    // master). Ο master μπορεί χειροκίνητα να "παρακάμψει" αργότερα.
+    await tenantRef.set({ hasOwnResendKey: true, emailsEnabled: false }, { merge: true });
     return { ok: true, hasOwnResendKey: true };
   }
 );

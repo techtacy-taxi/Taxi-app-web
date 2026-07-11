@@ -1414,7 +1414,8 @@ class _TenantEmailsToggle extends StatefulWidget {
 }
 
 class _TenantEmailsToggleState extends State<_TenantEmailsToggle> {
-  bool? _enabled;
+  bool? _enabled; // = χρησιμοποίησε ΤΟ ΔΙΚΟ ΜΟΥ (κοινό, του master) key
+  bool _hasOwnKey = false;
   bool _saving = false;
 
   @override
@@ -1427,13 +1428,22 @@ class _TenantEmailsToggleState extends State<_TenantEmailsToggle> {
     try {
       final doc = await FirebaseFirestore.instance
           .collection('tenants').doc(widget.tenantId).get();
-      if (mounted) setState(() => _enabled = doc.data()?['emailsEnabled'] != false);
+      final data = doc.data();
+      if (mounted) {
+        setState(() {
+          _enabled = data?['emailsEnabled'] == true;
+          _hasOwnKey = data?['hasOwnResendKey'] == true;
+          // Αν ΔΕΝ έχει δικό του key, η προεπιλογή («κοινό») εμφανίζεται σαν
+          // ενεργή εκτός αν ρητά έχει μπει false.
+          if (!_hasOwnKey) _enabled = data?['emailsEnabled'] != false;
+        });
+      }
     } catch (_) {
       if (mounted) setState(() => _enabled = true);
     }
   }
 
-  Future<void> _toggle(bool v) async {
+  Future<void> _apply(bool v) async {
     setState(() { _enabled = v; _saving = true; });
     try {
       final callable = FirebaseFunctions.instance.httpsCallable('updateTenantEmailsEnabled');
@@ -1449,6 +1459,37 @@ class _TenantEmailsToggleState extends State<_TenantEmailsToggle> {
     }
   }
 
+  Future<void> _toggle(bool v) async {
+    // ── Ενεργοποίηση («χρησιμοποίησε το δικό μου key») ΕΝΩ ο tenant έχει
+    // ήδη ΔΙΚΟ ΤΟΥ key → παράκαμψη που κοστίζει στον master. Προειδοποίηση
+    // πριν εφαρμοστεί. Το key του tenant ΔΕΝ διαγράφεται ποτέ — μένει
+    // αποθηκευμένο, και αν ξανακλείσεις τον διακόπτη, ξαναγυρνάει σε αυτό.
+    if (v && _hasOwnKey) {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (dctx) => AlertDialog(
+          title: const Text('Παράκαμψη key tenant'),
+          content: const Text(
+            'Αυτός ο tenant έχει ήδη δικό του Resend key. Αν συνεχίσεις, θα '
+            'χρησιμοποιείται ΤΟ ΔΙΚΟ ΣΟΥ key αντί του δικού του — δηλαδή θα '
+            'πληρώνεις εσύ γι\' αυτόν. Το key του tenant ΔΕΝ διαγράφεται, μένει '
+            'αποθηκευμένο· αν ξανακλείσεις τον διακόπτη, θα ξαναχρησιμοποιηθεί.',
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.of(dctx).pop(false), child: const Text('Άκυρο')),
+            FilledButton(
+              style: FilledButton.styleFrom(backgroundColor: Colors.red),
+              onPressed: () => Navigator.of(dctx).pop(true),
+              child: const Text('Συνέχεια'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true) return;
+    }
+    await _apply(v);
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_enabled == null) {
@@ -1459,18 +1500,29 @@ class _TenantEmailsToggleState extends State<_TenantEmailsToggle> {
             child: CircularProgressIndicator(strokeWidth: 2)),
       );
     }
+
+    final String subtitle;
+    if (_saving) {
+      subtitle = 'Αποθήκευση…';
+    } else if (_hasOwnKey && !_enabled!) {
+      subtitle = 'Χρησιμοποιεί το δικό του Resend key — δεν πληρώνεις εσύ.';
+    } else if (_hasOwnKey && _enabled!) {
+      subtitle = '⚠️ Παρακάμφθηκε — χρησιμοποιείται ΤΟ ΔΙΚΟ ΣΟΥ key, πληρώνεις εσύ.';
+    } else if (!_hasOwnKey && _enabled!) {
+      subtitle = 'Ενεργά — μέσω του κοινού σου Resend (πληρώνεις εσύ).';
+    } else {
+      subtitle = 'Απενεργοποιημένα — δεν υπάρχει κανένα key, δεν στέλνεται τίποτα.';
+    }
+
     return SwitchListTile(
       dense: true,
       contentPadding: EdgeInsets.zero,
       title: const Text('Αυτόματα email επιβεβαίωσης πελάτη',
           style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold)),
-      subtitle: Text(
-          _saving
-              ? 'Αποθήκευση…'
-              : (_enabled!
-                  ? 'Ενεργά — στέλνονται αυτόματα μετά την πληρωμή'
-                  : 'Απενεργοποιημένα από εσένα'),
-          style: const TextStyle(fontSize: 10.5)),
+      subtitle: Text(subtitle,
+          style: TextStyle(
+              fontSize: 10.5,
+              color: (_hasOwnKey && _enabled!) ? Colors.red.shade700 : null)),
       value: _enabled!,
       onChanged: _saving ? null : _toggle,
     );
