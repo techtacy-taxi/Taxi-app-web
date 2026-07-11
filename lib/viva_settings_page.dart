@@ -67,6 +67,31 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
   bool _emailsEnabled = true;
   bool _savingResendKey = false;
 
+  // ── Απόδειξη/Τιμολόγιο — φορολογικά στοιχεία + πάροχος ηλεκτρονικής
+  // τιμολόγησης, ανά tenant. Προαιρετικό: αν δεν οριστεί πάροχος, απλά δεν
+  // εκδίδεται αυτόματα παραστατικό (μένει μόνο το email επιβεβαίωσης).
+  final _afmCtrl          = TextEditingController();
+  final _doyCtrl          = TextEditingController();
+  final _taxAddressCtrl   = TextEditingController();
+  final _kadCtrl          = TextEditingController();
+  final _invoiceApiKeyCtrl = TextEditingController();
+  final _mydataSubKeyCtrl  = TextEditingController();
+  final _mydataUsernameCtrl = TextEditingController();
+  String _invoiceProvider = 'none'; // 'none' | 'epsilon' | 'mydata' | 'oxygen'
+  // ── Φορολογικές παράμετροι myDATA — ΡΩΤΑ ΤΟΝ ΛΟΓΙΣΤΗ ΣΟΥ αν δεν είσαι
+  // σίγουρος. Προεπιλογές: 11.2 = Απόδειξη Παροχής Υπηρεσιών (B2C, ο πιο
+  // συνηθισμένος τύπος για μεμονωμένους πελάτες), ΦΠΑ 24%.
+  String _mydataInvoiceType = '11.2';
+  String _mydataVatCategory = '1'; // 1=24%, 2=13%, 3=6%, 7=0% (εξαίρεση)
+  bool _hasInvoiceApiKey = false;
+  bool _hasMydataSubKey = false;
+  // ── Ρητός διακόπτης — ΠΑΝΤΑ κλειστός εξ ορισμού. Ακόμα κι αν κάποιος
+  // συμπληρώσει πάροχο/κλειδιά, ΔΕΝ εκδίδεται τίποτα μέχρι να το ανοίξει ο
+  // ίδιος ρητά — καμία περίπτωση αυτόματης έκδοσης χωρίς συνειδητή επιλογή.
+  bool _invoiceEnabled = false;
+  final _invoiceSeriesCtrl = TextEditingController();
+  bool _savingReceipt = false;
+
   bool _demo = true;
   bool _loading = true;
   bool _saving = false;
@@ -171,6 +196,14 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
     _logoUrlCtrl.dispose();
     _mapsApiKeyCtrl.dispose();
     _resendKeyCtrl.dispose();
+    _afmCtrl.dispose();
+    _doyCtrl.dispose();
+    _taxAddressCtrl.dispose();
+    _kadCtrl.dispose();
+    _invoiceApiKeyCtrl.dispose();
+    _mydataSubKeyCtrl.dispose();
+    _mydataUsernameCtrl.dispose();
+    _invoiceSeriesCtrl.dispose();
     super.dispose();
   }
 
@@ -215,6 +248,18 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
               _mapsApiKeyCtrl.text     = bi['mapsApiKey'] as String? ?? '';
               _hasOwnResendKey         = bi['hasOwnResendKey'] as bool? ?? false;
               _emailsEnabled           = bi['emailsEnabled'] as bool? ?? true;
+              _afmCtrl.text            = bi['afm'] as String? ?? '';
+              _doyCtrl.text            = bi['doy'] as String? ?? '';
+              _taxAddressCtrl.text     = bi['taxAddress'] as String? ?? '';
+              _kadCtrl.text            = bi['kad'] as String? ?? '';
+              _invoiceProvider         = bi['invoiceProvider'] as String? ?? 'none';
+              _hasInvoiceApiKey        = bi['hasInvoiceApiKey'] as bool? ?? false;
+              _mydataUsernameCtrl.text = bi['mydataUsername'] as String? ?? '';
+              _hasMydataSubKey         = bi['hasMydataSubKey'] as bool? ?? false;
+              _invoiceEnabled          = bi['invoiceEnabled'] as bool? ?? false;
+              _invoiceSeriesCtrl.text  = bi['invoiceSeries'] as String? ?? '';
+              _mydataInvoiceType       = bi['mydataInvoiceType'] as String? ?? '11.2';
+              _mydataVatCategory       = bi['mydataVatCategory'] as String? ?? '1';
             });
           }
           // ── Αυτόματη προσυμπλήρωση (ΜΟΝΟ αν είναι ακόμα κενά, ώστε να μην
@@ -472,7 +517,7 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
         body: const Center(child: CircularProgressIndicator()),
       );
     }
-    final tabCount = _isDefault ? 3 : 4;
+    final tabCount = _isDefault ? 4 : 5;
     return DefaultTabController(
       length: tabCount,
       child: Scaffold(
@@ -495,12 +540,14 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
             indicatorColor: Colors.white,
             labelColor: Colors.white,
             unselectedLabelColor: Colors.white70,
+            isScrollable: true,
             tabs: [
               const Tab(icon: Icon(Icons.payment_rounded, size: 20), text: 'Viva'),
               const Tab(icon: Icon(Icons.cloud_rounded, size: 20), text: 'Google Cloud'),
               const Tab(icon: Icon(Icons.storefront_rounded, size: 20), text: 'Επιχείρηση'),
               if (!_isDefault)
                 const Tab(icon: Icon(Icons.mail_rounded, size: 20), text: 'Email'),
+              const Tab(icon: Icon(Icons.receipt_long_rounded, size: 20), text: 'Απόδειξη'),
             ],
           ),
         ),
@@ -515,6 +562,7 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
                     _buildGoogleCloudTab(),
                     _buildBusinessTab(),
                     if (!_isDefault) _buildEmailTab(),
+                    _buildReceiptTab(),
                   ],
                 ),
               ),
@@ -1043,6 +1091,259 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
                   mode: LaunchMode.externalApplication),
               icon: const Icon(Icons.open_in_new_rounded),
               label: const Text('Άνοιγμα Resend — Δημιουργία API Key'),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ─── Tab: Απόδειξη — φορολογικά στοιχεία + πάροχος τιμολόγησης ──────────
+  Future<void> _saveReceiptInfo() async {
+    setState(() => _savingReceipt = true);
+    try {
+      final callable = FirebaseFunctions.instance.httpsCallable('updateTenantReceiptInfo');
+      final res = await callable.call({
+        'tenantId': _tenantId,
+        'afm': _afmCtrl.text.trim(),
+        'doy': _doyCtrl.text.trim(),
+        'taxAddress': _taxAddressCtrl.text.trim(),
+        'kad': _kadCtrl.text.trim(),
+        'invoiceProvider': _invoiceProvider,
+        'invoiceEnabled': _invoiceEnabled,
+        'invoiceSeries': _invoiceSeriesCtrl.text.trim(),
+        'mydataInvoiceType': _mydataInvoiceType,
+        'mydataVatCategory': _mydataVatCategory,
+        'mydataUsername': _mydataUsernameCtrl.text.trim(),
+        'invoiceApiKey': _invoiceApiKeyCtrl.text.trim(),
+        'mydataSubKey': _mydataSubKeyCtrl.text.trim(),
+      });
+      if (res.data['ok'] == true) {
+        setState(() {
+          if (_invoiceApiKeyCtrl.text.trim().isNotEmpty) _hasInvoiceApiKey = true;
+          if (_mydataSubKeyCtrl.text.trim().isNotEmpty) _hasMydataSubKey = true;
+          _invoiceApiKeyCtrl.clear();
+          _mydataSubKeyCtrl.clear();
+        });
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Αποθηκεύτηκαν τα στοιχεία απόδειξης.'),
+          backgroundColor: Color(0xFF1E8E3E),
+        ));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Σφάλμα: $e'), backgroundColor: Colors.red.shade700));
+      }
+    } finally {
+      if (mounted) setState(() => _savingReceipt = false);
+    }
+  }
+
+  Widget _buildReceiptTab() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            Icon(Icons.receipt_long_rounded, size: 18, color: Colors.indigo[700]),
+            const SizedBox(width: 6),
+            const Text('Απόδειξη / Τιμολόγιο',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+          ]),
+          const SizedBox(height: 6),
+          Text(
+            'Αν βάλεις πάροχο ηλεκτρονικής τιμολόγησης, θα εκδίδεται αυτόματα '
+            'νόμιμο παραστατικό μόλις ολοκληρωθεί μια πληρωμή, με ΜΑΡΚ από το myDATA. '
+            'Προαιρετικό — αν το αφήσεις σε «Κανένα», συνεχίζει να στέλνεται μόνο '
+            'το email επιβεβαίωσης, χωρίς παραστατικό.',
+            style: TextStyle(fontSize: 11.5, color: Colors.grey[600]),
+          ),
+          const SizedBox(height: 16),
+
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: _invoiceEnabled ? Colors.green.shade50 : Colors.grey.shade100,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(
+                  color: _invoiceEnabled ? Colors.green.shade300 : Colors.grey.shade300),
+            ),
+            child: SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: Text('Αυτόματη έκδοση παραστατικού',
+                  style: TextStyle(
+                      fontSize: 13, fontWeight: FontWeight.bold,
+                      color: _invoiceEnabled ? Colors.green.shade900 : Colors.grey.shade800)),
+              subtitle: Text(
+                  _invoiceEnabled
+                      ? 'Ενεργό — εκδίδεται αυτόματα με ΤΑ ΔΙΚΑ ΣΟΥ στοιχεία/κλειδιά.'
+                      : 'Κλειστό εξ ορισμού — ΔΕΝ εκδίδεται τίποτα μέχρι να το ανοίξεις '
+                        'ρητά εσύ, αφού έχεις συμπληρώσει τα στοιχεία σου παρακάτω.',
+                  style: const TextStyle(fontSize: 11)),
+              value: _invoiceEnabled,
+              onChanged: (v) => setState(() => _invoiceEnabled = v),
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          const Text('Φορολογικά στοιχεία', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 12.5)),
+          const SizedBox(height: 8),
+          TextField(
+            controller: _afmCtrl,
+            keyboardType: TextInputType.number,
+            decoration: const InputDecoration(isDense: true, labelText: 'ΑΦΜ', border: OutlineInputBorder()),
+          ),
+          const SizedBox(height: 10),
+          TextField(
+            controller: _doyCtrl,
+            decoration: const InputDecoration(isDense: true, labelText: 'ΔΟΥ', border: OutlineInputBorder()),
+          ),
+          const SizedBox(height: 10),
+          TextField(
+            controller: _taxAddressCtrl,
+            decoration: const InputDecoration(
+                isDense: true, labelText: 'Διεύθυνση επιχείρησης', border: OutlineInputBorder()),
+          ),
+          const SizedBox(height: 10),
+          TextField(
+            controller: _kadCtrl,
+            decoration: const InputDecoration(
+                isDense: true, labelText: 'ΚΑΔ (κωδικός δραστηριότητας)', border: OutlineInputBorder()),
+          ),
+          const SizedBox(height: 10),
+          TextField(
+            controller: _invoiceSeriesCtrl,
+            decoration: const InputDecoration(
+                isDense: true,
+                labelText: 'Σειρά παραστατικών (προαιρετικό)',
+                hintText: 'π.χ. "Ταξί" ή "Β"',
+                helperText: 'Αν κόβεις ήδη παραστατικά αλλού (π.χ. Epsilon για άλλα), '
+                    'όρισε εδώ ΞΕΧΩΡΙΣΤΗ σειρά ώστε να μη συγκρούονται οι αριθμοί — '
+                    'ρώτα τον λογιστή σου αν δεν είσαι σίγουρος.',
+                border: OutlineInputBorder()),
+          ),
+
+          const SizedBox(height: 20),
+          const Divider(),
+          const SizedBox(height: 8),
+          const Text('Πάροχος ηλεκτρονικής τιμολόγησης',
+              style: TextStyle(fontWeight: FontWeight.w600, fontSize: 12.5)),
+          const SizedBox(height: 8),
+          DropdownButtonFormField<String>(
+            initialValue: _invoiceProvider,
+            decoration: const InputDecoration(isDense: true, border: OutlineInputBorder()),
+            items: const [
+              DropdownMenuItem(value: 'none', child: Text('Κανένα (μόνο email επιβεβαίωσης)')),
+              DropdownMenuItem(value: 'epsilon', child: Text('Epsilon Smart (πληρωμένος πάροχος)')),
+              DropdownMenuItem(value: 'mydata', child: Text('Απευθείας myDATA API (δωρεάν, της ΑΑΔΕ)')),
+              DropdownMenuItem(value: 'oxygen', child: Text('Oxygen Pelatologio (πληρωμένος πάροχος)')),
+            ],
+            onChanged: (v) => setState(() => _invoiceProvider = v ?? 'none'),
+          ),
+          const SizedBox(height: 12),
+
+          if (_invoiceProvider == 'epsilon') ...[
+            Text(_hasInvoiceApiKey
+                ? 'Έχει ήδη αποθηκευτεί API key.'
+                : 'Δεν έχει μπει ακόμα API key.',
+                style: TextStyle(fontSize: 11.5, color: Colors.grey[600])),
+            const SizedBox(height: 6),
+            TextField(
+              controller: _invoiceApiKeyCtrl,
+              obscureText: true,
+              decoration: InputDecoration(
+                  isDense: true,
+                  labelText: 'API Key Epsilon Smart',
+                  hintText: _hasInvoiceApiKey ? '•••••••••• (ήδη αποθηκευμένο)' : null,
+                  border: const OutlineInputBorder()),
+            ),
+          ],
+
+          if (_invoiceProvider == 'oxygen') ...[
+            Text(_hasInvoiceApiKey
+                ? 'Έχει ήδη αποθηκευτεί API key.'
+                : 'Δεν έχει μπει ακόμα API key.',
+                style: TextStyle(fontSize: 11.5, color: Colors.grey[600])),
+            const SizedBox(height: 6),
+            TextField(
+              controller: _invoiceApiKeyCtrl,
+              obscureText: true,
+              decoration: InputDecoration(
+                  isDense: true,
+                  labelText: 'API Key Oxygen Pelatologio',
+                  hintText: _hasInvoiceApiKey ? '•••••••••• (ήδη αποθηκευμένο)' : null,
+                  helperText: 'Βρίσκεται στο pelatologio.gr, μετά από εγγραφή: '
+                      'Ρυθμίσεις → API → Δημιουργία κλειδιού (Oxygen MDP).',
+                  border: const OutlineInputBorder()),
+            ),
+          ],
+
+          if (_invoiceProvider == 'mydata') ...[
+            Text(_hasMydataSubKey
+                ? 'Έχει ήδη αποθηκευτεί κλειδί συνδρομητή myDATA.'
+                : 'Δεν έχει μπει ακόμα κλειδί συνδρομητή myDATA.',
+                style: TextStyle(fontSize: 11.5, color: Colors.grey[600])),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _mydataUsernameCtrl,
+              decoration: const InputDecoration(
+                  isDense: true, labelText: 'Username myDATA (εγγραφής REST API)', border: OutlineInputBorder()),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _mydataSubKeyCtrl,
+              obscureText: true,
+              decoration: InputDecoration(
+                  isDense: true,
+                  labelText: 'Subscription Key myDATA',
+                  hintText: _hasMydataSubKey ? '•••••••••• (ήδη αποθηκευμένο)' : null,
+                  helperText: 'Εγγραφή δωρεάν στο myDATA REST API μέσω Taxisnet — '
+                      'aade.gr/mydata → «Φόρμα εγγραφής στο myDATA REST API».',
+                  border: const OutlineInputBorder()),
+            ),
+            const SizedBox(height: 12),
+            Text('⚠️ Ρώτα τον λογιστή σου να επιβεβαιώσει τα παρακάτω δύο:',
+                style: TextStyle(fontSize: 11, color: Colors.orange.shade900, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
+            DropdownButtonFormField<String>(
+              initialValue: _mydataInvoiceType,
+              decoration: const InputDecoration(
+                  isDense: true, labelText: 'Τύπος παραστατικού', border: OutlineInputBorder()),
+              items: const [
+                DropdownMenuItem(value: '11.2', child: Text('11.2 — Απόδειξη Παροχής Υπηρεσιών (B2C)')),
+                DropdownMenuItem(value: '2.1', child: Text('2.1 — Τιμολόγιο Παροχής Υπηρεσιών (B2B)')),
+              ],
+              onChanged: (v) => setState(() => _mydataInvoiceType = v ?? '11.2'),
+            ),
+            const SizedBox(height: 10),
+            DropdownButtonFormField<String>(
+              initialValue: _mydataVatCategory,
+              decoration: const InputDecoration(
+                  isDense: true, labelText: 'Κατηγορία ΦΠΑ', border: OutlineInputBorder()),
+              items: const [
+                DropdownMenuItem(value: '1', child: Text('24%')),
+                DropdownMenuItem(value: '2', child: Text('13%')),
+                DropdownMenuItem(value: '3', child: Text('6%')),
+                DropdownMenuItem(value: '7', child: Text('Χωρίς ΦΠΑ / εξαίρεση')),
+              ],
+              onChanged: (v) => setState(() => _mydataVatCategory = v ?? '1'),
+            ),
+          ],
+
+          const SizedBox(height: 20),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              onPressed: _savingReceipt ? null : _saveReceiptInfo,
+              icon: _savingReceipt
+                  ? const SizedBox(width: 16, height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                  : const Icon(Icons.save_rounded),
+              label: Text(_savingReceipt ? 'Αποθήκευση…' : 'Αποθήκευση'),
             ),
           ),
         ],

@@ -3867,6 +3867,20 @@ exports.vivaWebhook = onRequest(
         }
       }
 
+      // ── Απόδειξη/Τιμολόγιο (myDATA) — best-effort, ΠΟΤΕ δεν μπλοκάρει την
+      // υπόλοιπη ροή. Εκδίδεται ΜΟΝΟ αν ο tenant το έχει ρητά ενεργοποιήσει
+      // (invoiceEnabled) ΚΑΙ διάλεξε πάροχο "mydata".
+      try {
+        const tid2 = pd.tenantId || "default";
+        const tDoc2 = await db.collection("tenants").doc(tid2).get();
+        const t2 = tDoc2.exists ? tDoc2.data() : {};
+        await tryIssueMydataReceipt({
+          tenantId: tid2, t: t2, grossAmount: pd.depositAmount, bookingNumber,
+        });
+      } catch (e) {
+        console.error("receipt issuance failed:", e);
+      }
+
       return res.status(200).json({ ok: true });
     } catch (e) {
       console.error("vivaWebhook POST error:", e);
@@ -3959,6 +3973,163 @@ async function readSecret(secretId) {
 
 // Ονόματα secrets ανά tenant (σταθερό, προβλέψιμο μοτίβο — δεν χρειάζεται
 // να αποθηκεύουμε τίποτα στο Firestore για να τα ξαναβρούμε).
+// ═══════════════════════════════════════════════════════════════════════
+// myDATA — απευθείας αποστολή παραστατικού (δωρεάν, χωρίς πάροχο) ─────────
+// ⚠️ ΣΗΜΑΝΤΙΚΟ: Πριν ενεργοποιηθεί ΠΟΤΕ σε πραγματική συναλλαγή, χρειάζεται
+// δοκιμή στο SANDBOX της ΑΑΔΕ (mydataapidev.aade.gr) με πραγματικό
+// subscription key δοκιμαστικού λογαριασμού. Η δομή του XML ακολουθεί το
+// επίσημο schema InvoicesDoc v1.0.4 — αλλά κωδικοί χαρακτηρισμού εσόδων
+// (income classification) ΔΕΝ αποστέλλονται εδώ σκόπιμα (προαιρετικοί κατά
+// την αρχική διαβίβαση σε πολλές περιπτώσεις) — να επιβεβαιωθεί με λογιστή
+// αν χρειάζονται για τη συγκεκριμένη δραστηριότητα πριν το ενεργοποιήσεις.
+// ═══════════════════════════════════════════════════════════════════════
+
+function mydataHosts(demo) {
+  return demo
+    ? "https://mydataapidev.aade.gr"
+    : "https://mydatapi.aade.gr/myDATA";
+}
+
+function xmlEscape(str) {
+  return String(str || "")
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&apos;");
+}
+
+// Χτίζει το XML ενός απλού παραστατικού (1 γραμμή, 1 τρόπος πληρωμής).
+function buildMydataInvoiceXml({
+  issuerAfm, series, aa, issueDate, invoiceType, vatCategory,
+  netValue, vatAmount, grossValue,
+}) {
+  return '<?xml version="1.0" encoding="UTF-8"?>' +
+    '<InvoicesDoc xmlns="https://www.aade.gr/myDATA/invoice/v1.0">' +
+    "<invoice>" +
+    "<issuer>" +
+    "<vatNumber>" + xmlEscape(issuerAfm) + "</vatNumber>" +
+    "<country>GR</country>" +
+    "<branch>0</branch>" +
+    "</issuer>" +
+    "<invoiceHeader>" +
+    "<series>" + xmlEscape(series) + "</series>" +
+    "<aa>" + xmlEscape(aa) + "</aa>" +
+    "<issueDate>" + xmlEscape(issueDate) + "</issueDate>" +
+    "<invoiceType>" + xmlEscape(invoiceType) + "</invoiceType>" +
+    "<currency>EUR</currency>" +
+    "</invoiceHeader>" +
+    "<paymentMethods>" +
+    "<paymentMethodDetails>" +
+    "<type>3</type>" + // 3 = POS/e-POS/Web Banking (ηλεκτρονική πληρωμή)
+    "<amount>" + grossValue.toFixed(2) + "</amount>" +
+    "</paymentMethodDetails>" +
+    "</paymentMethods>" +
+    "<invoiceDetails>" +
+    "<lineNumber>1</lineNumber>" +
+    "<netValue>" + netValue.toFixed(2) + "</netValue>" +
+    "<vatCategory>" + xmlEscape(vatCategory) + "</vatCategory>" +
+    "<vatAmount>" + vatAmount.toFixed(2) + "</vatAmount>" +
+    "</invoiceDetails>" +
+    "<invoiceSummary>" +
+    "<totalNetValue>" + netValue.toFixed(2) + "</totalNetValue>" +
+    "<totalVatAmount>" + vatAmount.toFixed(2) + "</totalVatAmount>" +
+    "<totalWithheldAmount>0.00</totalWithheldAmount>" +
+    "<totalFeesAmount>0.00</totalFeesAmount>" +
+    "<totalStampDutyAmount>0.00</totalStampDutyAmount>" +
+    "<totalOtherTaxesAmount>0.00</totalOtherTaxesAmount>" +
+    "<totalDeductionsAmount>0.00</totalDeductionsAmount>" +
+    "<totalGrossValue>" + grossValue.toFixed(2) + "</totalGrossValue>" +
+    "</invoiceSummary>" +
+    "</invoice>" +
+    "</InvoicesDoc>";
+}
+
+// Στέλνει το παραστατικό στο myDATA και επιστρέφει το MARK (ή σφάλμα).
+// demo=true -> SANDBOX της ΑΑΔΕ (ασφαλές για δοκιμές, ΔΕΝ μετράει σαν
+// πραγματικό παραστατικό). demo=false -> ΠΑΡΑΓΩΓΗ, πραγματικό παραστατικό.
+async function sendMydataInvoice({ demo, username, subscriptionKey, xml }) {
+  const base = mydataHosts(demo);
+  const resp = await fetch(base + "/SendInvoices", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/xml",
+      "aade-user-id": username,
+      "ocp-apim-subscription-key": subscriptionKey,
+    },
+    body: xml,
+  });
+  const rawText = await resp.text();
+  if (!resp.ok) {
+    console.error("mydata SendInvoices failed:", resp.status, rawText);
+    return { ok: false, error: "mydata_http_" + resp.status, raw: rawText };
+  }
+  const markMatch = rawText.match(/<mark>(\d+)<\/mark>/);
+  const errorMatch = rawText.match(/<message>(.*?)<\/message>/);
+  if (!markMatch) {
+    console.error("mydata: no MARK in response:", rawText);
+    return { ok: false, error: errorMatch ? errorMatch[1] : "no_mark", raw: rawText };
+  }
+  return { ok: true, mark: markMatch[1], raw: rawText };
+}
+
+// Υπολογίζει καθαρή αξία/ΦΠΑ από την τελική (μεικτή) τιμή, ανάλογα με την
+// κατηγορία ΦΠΑ (1=24%, 2=13%, 3=6%, 7=χωρίς ΦΠΑ).
+function splitVat(grossValue, vatCategory) {
+  const rates = { "1": 0.24, "2": 0.13, "3": 0.06, "7": 0 };
+  const rate = rates[vatCategory] != null ? rates[vatCategory] : 0.24;
+  const netValue = rate > 0 ? grossValue / (1 + rate) : grossValue;
+  const vatAmount = grossValue - netValue;
+  return { netValue, vatAmount };
+}
+
+// ── Κεντρική συνάρτηση: εκδίδει παραστατικό για μια ολοκληρωμένη κράτηση,
+// ΜΟΝΟ αν ο tenant έχει invoiceEnabled===true ΚΑΙ invoiceProvider==="mydata".
+// Καλείται από το vivaWebhook μετά την επιτυχή πληρωμή — ΠΟΤΕ μπλοκάρει την
+// υπόλοιπη ροή (email/saved_jobs) αν αποτύχει, απλά καταγράφει το σφάλμα.
+async function tryIssueMydataReceipt({ tenantId, t, grossAmount, bookingNumber }) {
+  try {
+    if (!t.invoiceEnabled || t.invoiceProvider !== "mydata") return null;
+    if (!t.afm) {
+      console.error("mydata receipt: λείπει ΑΦΜ για tenant", tenantId);
+      return null;
+    }
+    const username = t.mydataUsername;
+    const subKey = await readSecret(tenantSecretId(tenantId, "mydata-subscription-key")).catch(() => null);
+    if (!username || !subKey) {
+      console.error("mydata receipt: λείπουν credentials για tenant", tenantId);
+      return null;
+    }
+
+    const vatCategory = t.mydataVatCategory || "1";
+    const invoiceType = t.mydataInvoiceType || "11.2";
+    const series = t.invoiceSeries || "A";
+    const { netValue, vatAmount } = splitVat(Number(grossAmount) || 0, vatCategory);
+    const aa = bookingNumber || Date.now() % 100000; // αύξων αριθμός — ιδανικά θα έπρεπε να είναι δικός του μετρητής ανά σειρά
+
+    const xml = buildMydataInvoiceXml({
+      issuerAfm: t.afm,
+      series,
+      aa,
+      issueDate: athensNaiveDate(new Date()).toISOString().slice(0, 10),
+      invoiceType,
+      vatCategory,
+      netValue,
+      vatAmount,
+      grossValue: Number(grossAmount) || 0,
+    });
+
+    const demo = t.vivaDemo !== false; // ίδιο demo/live flag με τη Viva, για ασφάλεια
+    const result = await sendMydataInvoice({ demo, username, subscriptionKey: subKey, xml });
+    if (!result.ok) {
+      console.error("mydata receipt failed for tenant", tenantId, result.error);
+      return null;
+    }
+    console.log("mydata receipt issued, MARK:", result.mark, "tenant:", tenantId);
+    return { mark: result.mark, provider: "mydata" };
+  } catch (e) {
+    console.error("tryIssueMydataReceipt error:", e);
+    return null;
+  }
+}
+
 function tenantSecretId(tenantId, field) {
   return `tenant-${tenantId}-${field}`;
 }
@@ -4572,6 +4743,75 @@ exports.updateTenantEmailsEnabled = onCall(
   }
 );
 
+// ── updateTenantReceiptInfo: φορολογικά στοιχεία + πάροχος ηλεκτρονικής
+// τιμολόγησης (tab «Απόδειξη»). Επιτρέπεται και για "default" (ο master
+// μπορεί επίσης να θέλει αυτόματο παραστατικό για τις δικές του κρατήσεις).
+exports.updateTenantReceiptInfo = onCall(
+  { region: "us-central1", secrets: [] },
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Χρειάζεται σύνδεση.");
+    const d = request.data || {};
+    const tenantId = s(d.tenantId) || "default";
+
+    const isSuperAdmin = request.auth.token.email === "techtacy@gmail.com";
+    if (tenantId === "default") {
+      if (!isSuperAdmin) throw new HttpsError("permission-denied", "Μόνο ο master μπορεί να το αλλάξει.");
+    } else if (!isSuperAdmin) {
+      const db0 = getFirestore();
+      const presDoc = await db0.collection("presence").doc(request.auth.uid).get();
+      const pres = presDoc.data() || {};
+      if (!(pres.tenantOwner === true && pres.tenantId === tenantId)) {
+        throw new HttpsError("permission-denied",
+          "Μόνο ο super-admin ή ο tenant-owner αυτού του tenant μπορεί να το αλλάξει.");
+      }
+    }
+
+    const db = getFirestore();
+    const tenantRef = db.collection("tenants").doc(tenantId);
+    if (tenantId !== "default" && !(await tenantRef.get()).exists) {
+      throw new HttpsError("not-found", "Άγνωστο tenant.");
+    }
+
+    const updates = {};
+    if (d.afm != null) updates.afm = s(d.afm) || null;
+    if (d.doy != null) updates.doy = s(d.doy) || null;
+    if (d.taxAddress != null) updates.taxAddress = s(d.taxAddress) || null;
+    if (d.kad != null) updates.kad = s(d.kad) || null;
+    if (d.invoiceProvider != null) {
+      const p = s(d.invoiceProvider);
+      updates.invoiceProvider = ["none", "epsilon", "mydata", "oxygen"].includes(p) ? p : "none";
+    }
+    if (d.mydataUsername != null) updates.mydataUsername = s(d.mydataUsername) || null;
+    if (d.invoiceEnabled != null) updates.invoiceEnabled = d.invoiceEnabled === true;
+    if (d.invoiceSeries != null) updates.invoiceSeries = s(d.invoiceSeries) || null;
+    if (d.mydataInvoiceType != null) updates.mydataInvoiceType = s(d.mydataInvoiceType) || "11.2";
+    if (d.mydataVatCategory != null) updates.mydataVatCategory = s(d.mydataVatCategory) || "1";
+
+    // Κλειδιά — σε Secret Manager, ΠΟΤΕ σε απλό πεδίο Firestore.
+    if (d.invoiceApiKey != null) {
+      const key = s(d.invoiceApiKey);
+      if (key) {
+        await upsertSecret(tenantSecretId(tenantId, "invoice-api-key"), key);
+        updates.hasInvoiceApiKey = true;
+      } else {
+        updates.hasInvoiceApiKey = false;
+      }
+    }
+    if (d.mydataSubKey != null) {
+      const key = s(d.mydataSubKey);
+      if (key) {
+        await upsertSecret(tenantSecretId(tenantId, "mydata-subscription-key"), key);
+        updates.hasMydataSubKey = true;
+      } else {
+        updates.hasMydataSubKey = false;
+      }
+    }
+
+    if (Object.keys(updates).length) await tenantRef.set(updates, { merge: true });
+    return { ok: true };
+  }
+);
+
 exports.updateTenantResendKey = onCall(
   { region: "us-central1", secrets: [] },
   async (request) => {
@@ -4743,7 +4983,11 @@ exports.getTenantBusinessInfo = onRequest(
       if (!doc.exists) {
         return res.status(200).json({ ok: true, businessName: null, contactPhone: null,
           contactEmail: null, whatsappNumber: null, logoUrl: null, mapsApiKey: null,
-          mapEnabled: true, placesEnabled: true });
+          mapEnabled: true, placesEnabled: true,
+          afm: null, doy: null, taxAddress: null, kad: null,
+          invoiceProvider: "none", hasInvoiceApiKey: false,
+          mydataUsername: null, hasMydataSubKey: false,
+          invoiceEnabled: false, invoiceSeries: null });
       }
       const t = doc.data();
       return res.status(200).json({
@@ -4760,6 +5004,21 @@ exports.getTenantBusinessInfo = onRequest(
         placesEnabled:  t.placesEnabled  !== false,
         hasOwnResendKey: t.hasOwnResendKey === true,
         emailsEnabled:   t.emailsEnabled  !== false,
+        // ── Φορολογικά στοιχεία + πάροχος ηλεκτρονικής τιμολόγησης ──
+        afm:            t.afm            || null,
+        doy:            t.doy            || null,
+        taxAddress:     t.taxAddress     || null,
+        kad:            t.kad            || null,
+        invoiceProvider: t.invoiceProvider || "none",
+        hasInvoiceApiKey: t.hasInvoiceApiKey === true,
+        mydataUsername:  t.mydataUsername  || null,
+        hasMydataSubKey: t.hasMydataSubKey === true,
+        // ⚠️ ΠΑΝΤΑ false εξ ορισμού — καμία αυτόματη έκδοση χωρίς ρητή,
+        // συνειδητή ενεργοποίηση από τον ίδιο τον tenant.
+        invoiceEnabled:  t.invoiceEnabled === true,
+        invoiceSeries:   t.invoiceSeries   || null,
+        mydataInvoiceType: t.mydataInvoiceType || "11.2",
+        mydataVatCategory: t.mydataVatCategory || "1",
       });
     } catch (e) {
       console.error("getTenantBusinessInfo error:", e);
