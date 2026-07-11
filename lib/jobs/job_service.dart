@@ -1015,17 +1015,38 @@ class JobService {
     return all;
   }
 
+  /// Το tenantId ΤΟΥ ΙΔΙΟΚΤΗΤΗ (client.createdBy) — ΟΧΙ του τρέχοντος
+  /// συνδεδεμένου χρήστη. Κρίσιμο όταν ο master διαλέγει ρητά σε ΠΟΙΟΝ admin
+  /// ανήκει ο πελάτης (dropdown «Ιδιοκτήτης πελάτη») — χωρίς αυτό, ο πελάτης
+  /// αποθηκευόταν με το tenantId του master (π.χ. "default") ενώ το createdBy
+  /// ήταν άλλου admin, και έτσι ΔΕΝ εμφανιζόταν ποτέ σε εκείνον — τα φίλτρα
+  /// tenantId του δικού του app δεν ταίριαζαν ποτέ.
+  static Future<String> _tenantIdForUid(String uid) async {
+    try {
+      final doc = await _fs.collection('presence').doc(uid).get();
+      final tid = doc.data()?['tenantId'] as String?;
+      return (tid != null && tid.isNotEmpty) ? tid : 'default';
+    } catch (_) {
+      return 'default';
+    }
+  }
+
   static Future<String> createClient(Client client) async {
-    final tid = await myTenantId();
+    final tid = client.createdBy.isNotEmpty
+        ? await _tenantIdForUid(client.createdBy)
+        : await myTenantId();
     final data = client.toMap()..['tenantId'] = tid;
     final ref = await _fs.collection(_clients).add(data);
     return ref.id;
   }
 
   static Future<void> updateClient(String id, Client client) async {
-    // Το tenantId ΔΕΝ αλλάζει σε update — γράφουμε το ίδιο με του χρήστη ώστε
-    // να μη «σπάσει» παλιό doc που τυχόν δεν το είχε.
-    final tid = await myTenantId();
+    // Το tenantId ακολουθεί τον ΙΔΙΟΚΤΗΤΗ (createdBy) του πελάτη — π.χ. αν ο
+    // master άλλαξε ρητά τον ιδιοκτήτη σε άλλον admin, το tenantId πρέπει να
+    // γίνει ΤΟΥ admin εκείνου, όχι να μείνει του master.
+    final tid = client.createdBy.isNotEmpty
+        ? await _tenantIdForUid(client.createdBy)
+        : await myTenantId();
     final data = client.toMap()..['tenantId'] = tid;
     await _fs.collection(_clients).doc(id).update(data);
   }

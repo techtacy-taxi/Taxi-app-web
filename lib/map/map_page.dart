@@ -1191,7 +1191,7 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              Text('Ρυθμίσεις Viva',
+                              Text('Ρυθμίσεις Online Φόρμας',
                                   style: TextStyle(
                                       fontWeight: FontWeight.bold,
                                       color: Colors.teal)),

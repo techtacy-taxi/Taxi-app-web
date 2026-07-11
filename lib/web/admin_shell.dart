@@ -213,7 +213,7 @@ class _AdminShellState extends State<AdminShell> {
     // Ρυθμίσεις Viva (credentials — αυτοεξυπηρέτηση) — master ή tenantOwner.
     if (s.isMaster || s.isTenantOwner) {
       sections.add(const _Section(
-        label: 'Ρυθμίσεις Viva',
+        label: 'Ρυθμίσεις Online Φόρμας',
         icon: Icons.payment_rounded,
         page: VivaSettingsPage(),
       ));

@@ -381,6 +381,17 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
           );
         }
       } else {
+        // ── Μόλις βάλει ο tenant ΔΙΚΑ ΤΟΥ credentials (έστω και ένα πεδίο),
+        // κλείνουμε αυτόματα το Demo — αν μπαίνει σε πραγματικά κλειδιά,
+        // σημαίνει ότι πάει για Live, όχι δοκιμή με το κοινό demo λογαριασμό.
+        final enteringOwnKeys = _clientIdCtrl.text.trim().isNotEmpty ||
+            _clientSecretCtrl.text.trim().isNotEmpty ||
+            _merchantIdCtrl.text.trim().isNotEmpty ||
+            _apiKeyCtrl.text.trim().isNotEmpty;
+        if (enteringOwnKeys && _demo) {
+          setState(() => _demo = false);
+        }
+
         final callable =
             FirebaseFunctions.instance.httpsCallable('updateTenantVivaCredentials');
         await callable.call({
@@ -472,7 +483,7 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Text('Ρυθμίσεις (Viva, Google Cloud)',
+              const Text('Ρυθμίσεις Online Φόρμας',
                   style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white)),
               Text(_tenantName,
                   maxLines: 1,
