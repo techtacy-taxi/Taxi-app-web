@@ -33,6 +33,7 @@ import 'job_service.dart';
 import 'job_details_sheet.dart';
 import 'job_shared_widgets.dart';
 import 'saved_job_service.dart';
+import '../pricing/pricing_zones_page.dart' show PricingZone;
 
 class SavedJobsTab extends StatefulWidget {
   final String adminUid;
@@ -86,6 +87,23 @@ class _SavedJobsTabState extends State<SavedJobsTab> {
   // απορρίπτει ολόκληρο το query αν έστω ένα doc αποτυγχάνει τους κανόνες).
   String? _myTenantId;
   bool _tenantLoaded = false;
+  List<PricingZone> _zones = [];
+
+  Future<void> _loadZones() async {
+    try {
+      final tid = _myTenantId ?? 'default';
+      final query = tid == 'default'
+          ? FirebaseFirestore.instance.collection('pricing_zones')
+          : FirebaseFirestore.instance.collection('pricing_zones')
+              .where('tenantId', isEqualTo: tid);
+      final snap = await query.get();
+      if (mounted) {
+        setState(() => _zones = snap.docs.map(PricingZone.fromDoc).toList());
+      }
+    } catch (_) {
+      // Αν αποτύχει, η πρόταση ένωσης απλά δεν θα εμφανιστεί — καμία ζημιά.
+    }
+  }
 
   Future<void> _loadMyTenantId() async {
     if (widget.isMaster) {
@@ -106,7 +124,7 @@ class _SavedJobsTabState extends State<SavedJobsTab> {
   @override
   void initState() {
     super.initState();
-    _loadMyTenantId();
+    _loadMyTenantId().then((_) => _loadZones());
     // Ο master βλέπει ούτως ή άλλως τα πάντα — δεν χρειάζεται shares.
     if (!widget.isMaster) {
       _shareSub = ShareService.sharedOwnersStream(widget.adminUid).listen((m) {
@@ -213,6 +231,10 @@ class _SavedJobsTabState extends State<SavedJobsTab> {
 
             // ── Φίλτρα (μόνο master) ──
             if (widget.isMaster) _buildMasterFilters(snap.data ?? const []),
+
+            // ── Πρόταση αυτόματης ένωσης Shuttle (ίδια ώρα + κοινή διεύθυνση
+            // στην ΙΔΙΑ πλευρά — και οι δύο «από» ή και οι δύο «προς») ──
+            ..._buildMergeSuggestions(items),
 
             // ── Μπάρα επιλογής/αποστολής ──
             if (items.isNotEmpty) _buildSelectionBar(items),
@@ -353,6 +375,86 @@ class _SavedJobsTabState extends State<SavedJobsTab> {
   }
 
   // ─── Μπάρα επιλογής / αποστολής ──────────────────────────────────────────
+  // ─── Πρόταση αυτόματης ένωσης — δύο ξεχωριστές κρατήσεις Shuttle με ΙΔΙΑ
+  // ακριβώς ώρα ραντεβού (ασχέτως τι είχε πληκτρολογήσει αρχικά ο καθένας —
+  // μετράει μόνο το τελικό δρομολόγιο που διάλεξαν) ΚΑΙ που ξεκινούν από την
+  // ΙΔΙΑ ζώνη για την ΙΔΙΑ ζώνη (πραγματικός έλεγχος γεωμετρίας ζώνης, όχι
+  // απλή σύγκριση κειμένου διεύθυνσης) — και οι δύο «από» στην ίδια ζώνη, ή
+  // και οι δύο «προς» στην ίδια ζώνη· ΟΧΙ ανάποδα.
+  List<Widget> _buildMergeSuggestions(List<SavedJob> items) {
+    if (_zones.isEmpty) return [];
+    final shuttleItems = items.where((s) =>
+        s.job.vehicleType == 'shuttle' &&
+        !s.isShuttleContainer &&
+        s.job.scheduledAt != null).toList();
+    if (shuttleItems.length < 2) return [];
+
+    // Cache: id -> (fromZoneId, toZoneId) — υπολογίζουμε μία φορά ανά δουλειά.
+    final fromZoneOf = <String, String?>{};
+    final toZoneOf = <String, String?>{};
+    for (final s in shuttleItems) {
+      fromZoneOf[s.id] = _matchZone(s.job.fromLat, s.job.fromLng, _zones)?.id;
+      toZoneOf[s.id] = _matchZone(s.job.toLat, s.job.toLng, _zones)?.id;
+    }
+
+    final seen = <String>{};
+    final suggestions = <List<SavedJob>>[];
+    for (var i = 0; i < shuttleItems.length; i++) {
+      if (seen.contains(shuttleItems[i].id)) continue;
+      final group = [shuttleItems[i]];
+      for (var j = i + 1; j < shuttleItems.length; j++) {
+        if (seen.contains(shuttleItems[j].id)) continue;
+        final a = shuttleItems[i], b = shuttleItems[j];
+        final sameTime = a.job.scheduledAt!.isAtSameMomentAs(b.job.scheduledAt!);
+        final fa = fromZoneOf[a.id], fb = fromZoneOf[b.id];
+        final ta = toZoneOf[a.id], tb = toZoneOf[b.id];
+        final sameFromZone = fa != null && fa == fb;
+        final sameToZone = ta != null && ta == tb;
+        if (sameTime && (sameFromZone || sameToZone)) {
+          group.add(b);
+          seen.add(b.id);
+        }
+      }
+      if (group.length >= 2) {
+        seen.add(shuttleItems[i].id);
+        suggestions.add(group);
+      }
+    }
+    if (suggestions.isEmpty) return [];
+
+    return suggestions.map((group) {
+      final names = group
+          .map((s) => s.job.clientName?.isNotEmpty == true ? s.job.clientName! : '(χωρίς όνομα)')
+          .join(', ');
+      final time = DateFormat('HH:mm').format(group.first.job.scheduledAt!);
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+        child: Material(
+          color: Colors.amber.shade50,
+          borderRadius: BorderRadius.circular(12),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(12),
+            onTap: () => _openMergeDialog(group),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              child: Row(children: [
+                Icon(Icons.directions_bus_filled_rounded, color: Colors.amber.shade800, size: 20),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    '$names έχουν κοινή ώρα Shuttle ($time) — να τις ενώσω;',
+                    style: TextStyle(fontSize: 12.5, color: Colors.amber.shade900, fontWeight: FontWeight.w600),
+                  ),
+                ),
+                Icon(Icons.chevron_right_rounded, color: Colors.amber.shade800),
+              ]),
+            ),
+          ),
+        ),
+      );
+    }).toList();
+  }
+
   Widget _buildSelectionBar(List<SavedJob> items) {
     final allSelected = _selected.length == items.length && items.isNotEmpty;
     final count = _selected.length;
@@ -534,6 +636,22 @@ class _SavedJobsTabState extends State<SavedJobsTab> {
               const SizedBox(width: 8),
               Expanded(child: Text(stop.address)),
             ]),
+            const SizedBox(height: 6),
+            Row(children: [
+              const Icon(Icons.groups_rounded, size: 16, color: Colors.grey),
+              const SizedBox(width: 8),
+              Text('${stop.persons} άτομα'
+                  '${stop.luggage > 0 ? ' · ${stop.luggage} βαλίτσες' : ''}'
+                  '${stop.childSeatCount > 0 ? ' · ${stop.childSeatCount} παιδικό κάθισμα${stop.childSeatCount > 1 ? "ά" : ""}' : ''}'),
+            ]),
+            if (stop.note != null && stop.note!.isNotEmpty) ...[
+              const SizedBox(height: 6),
+              Row(children: [
+                const Icon(Icons.comment_rounded, size: 16, color: Colors.grey),
+                const SizedBox(width: 8),
+                Expanded(child: Text(stop.note!)),
+              ]),
+            ],
           ],
         ),
         actions: [
@@ -541,6 +659,44 @@ class _SavedJobsTabState extends State<SavedJobsTab> {
         ],
       ),
     );
+  }
+
+  // ─── Ταίριασμα σημείου σε ζώνη — πιστό port του pointInZone/matchZone από
+  // το backend (functions/index.js), ώστε η πρόταση ένωσης να ελέγχει
+  // πραγματική συμμετοχή σε ζώνη, όχι απλή σύγκριση κειμένου διεύθυνσης.
+  bool _pointInZone(double lat, double lng, PricingZone z) {
+    if (z.north != null && z.south != null && z.east != null && z.west != null) {
+      final rot = z.rotationDeg;
+      if (rot == 0) {
+        return lat <= z.north! && lat >= z.south! && lng <= z.east! && lng >= z.west!;
+      }
+      final cLat = (z.north! + z.south!) / 2;
+      final cLng = (z.east! + z.west!) / 2;
+      const mPerDegLat = 111320.0;
+      final cosLat = math.max(0.01, (math.cos(cLat * math.pi / 180)).abs());
+      final halfH = (z.north! - z.south!) / 2 * mPerDegLat;
+      final halfW = (z.east! - z.west!) / 2 * mPerDegLat * cosLat;
+      final dyM = (lat - cLat) * mPerDegLat;
+      final dxM = (lng - cLng) * mPerDegLat * cosLat;
+      final rad = -rot * math.pi / 180;
+      final lx = dxM * math.cos(rad) - dyM * math.sin(rad);
+      final ly = dxM * math.sin(rad) + dyM * math.cos(rad);
+      return lx.abs() <= halfW && ly.abs() <= halfH;
+    }
+    final dKm = _haversineKmReal(lat, lng, z.lat, z.lng);
+    return dKm * 1000 <= z.radius;
+  }
+
+  PricingZone? _matchZone(double? lat, double? lng, List<PricingZone> zones) {
+    if (lat == null || lng == null) return null;
+    PricingZone? best;
+    double bestKm = double.infinity;
+    for (final z in zones) {
+      if (!_pointInZone(lat, lng, z)) continue;
+      final dKm = _haversineKmReal(lat, lng, z.lat, z.lng);
+      if (dKm < bestKm) { best = z; bestKm = dKm; }
+    }
+    return best;
   }
 
   // ─── Ένωση πολλών αποθηκευμένων σε ΜΙΑ δουλειά Shuttle ─────────────────────
@@ -593,23 +749,17 @@ class _SavedJobsTabState extends State<SavedJobsTab> {
     final sharedLat = sharedIsPickup ? items.first.job.fromLat : items.first.job.toLat;
     final sharedLng = sharedIsPickup ? items.first.job.fromLng : items.first.job.toLng;
 
-    // ── Συμβατότητα ώρας: κάθε πελάτης «χωράει» [ώρα-25, ώρα+15]. Ενωμένη
-    // ώρα = οποιαδήποτε μέσα στην τομή όλων αυτών των διαστημάτων.
+    // ── Συμβατότητα ώρας: τώρα οι ώρες Shuttle έρχονται από σταθερά
+    // προγραμματισμένα δρομολόγια (βλ. Ζώνες & Τιμές) — οπότε απλά ελέγχουμε
+    // αν όλες οι δουλειές έχουν ΑΚΡΙΒΩΣ την ίδια ώρα ραντεβού.
     final withTime = items.where((e) => e.job.scheduledAt != null).toList();
     DateTime? suggested;
     bool timeCompatible = true;
     if (withTime.length == items.length && items.isNotEmpty) {
-      final starts = items.map((e) => e.job.scheduledAt!.subtract(const Duration(minutes: 25))).toList();
-      final ends = items.map((e) => e.job.scheduledAt!.add(const Duration(minutes: 15))).toList();
-      final maxStart = starts.reduce((a, b) => a.isAfter(b) ? a : b);
-      final minEnd = ends.reduce((a, b) => a.isBefore(b) ? a : b);
-      timeCompatible = !maxStart.isAfter(minEnd);
       final sortedTimes = items.map((e) => e.job.scheduledAt!).toList()..sort();
-      suggested = sortedTimes[sortedTimes.length ~/ 2];
-      if (timeCompatible) {
-        if (suggested.isBefore(maxStart)) suggested = maxStart;
-        if (suggested.isAfter(minEnd)) suggested = minEnd;
-      }
+      final first = sortedTimes.first;
+      timeCompatible = sortedTimes.every((t) => t.isAtSameMomentAs(first));
+      suggested = first;
     }
 
     final anyNonShuttle = items.any((e) => e.job.vehicleType != 'shuttle');
@@ -1367,9 +1517,8 @@ class _MergeShuttleDialogState extends State<_MergeShuttleDialog> {
                   ),
                   child: Text(
                     widget.timeCompatible
-                        ? 'Κοινή ώρα: ${DateFormat('HH:mm').format(widget.suggestedTime!)} '
-                          '(μέσα στο ανεκτό περιθώριο -25/+15 λεπτών όλων)'
-                        : '⚠️ Οι ώρες δεν συμπίπτουν καλά μεταξύ τους (εκτός -25/+15 λεπτών) — '
+                        ? 'Κοινή ώρα: ${DateFormat('HH:mm').format(widget.suggestedTime!)}'
+                        : '⚠️ Οι ώρες δεν είναι ίδιες μεταξύ τους — '
                           'προτεινόμενη ώρα ${DateFormat('HH:mm').format(widget.suggestedTime!)}, έλεγξε το χειροκίνητα.',
                     style: TextStyle(
                         fontSize: 12,
@@ -1476,9 +1625,24 @@ class _ShuttleContainerCard extends StatelessWidget {
               ),
             ]),
             if (saved.job.scheduledAt != null) ...[
-              const SizedBox(height: 4),
-              Text('Ραντεβού: ${DateFormat('dd/MM HH:mm').format(saved.job.scheduledAt!)}',
-                  style: TextStyle(fontSize: 12.5, color: Colors.grey[700])),
+              Container(
+                width: double.infinity,
+                margin: const EdgeInsets.only(bottom: 8),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF1565C0),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(children: [
+                  const Icon(Icons.alarm_rounded, size: 15, color: Colors.white),
+                  const SizedBox(width: 8),
+                  Text(
+                    'Ραντεβού · ${DateFormat('dd/MM/yyyy  HH:mm').format(saved.job.scheduledAt!)}',
+                    style: const TextStyle(
+                        fontSize: 13, fontWeight: FontWeight.bold, color: Colors.white),
+                  ),
+                ]),
+              ),
             ],
             const SizedBox(height: 10),
             Text(sharedLabel,

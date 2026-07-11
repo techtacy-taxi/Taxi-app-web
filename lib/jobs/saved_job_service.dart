@@ -35,11 +35,15 @@ class ShuttleStop {
   final String? phone;
   final String? email;
   final String? flightOrShip;
+  final String? note;
   final String  address;
   final double? lat;
   final double? lng;
   final bool    isPickupHere;
   final double  price; // πόσο πληρώνει ΑΥΤΟΣ ο επιβάτης — ο admin μπορεί να το αλλάξει
+  final int     persons;
+  final int     luggage;
+  final int     childSeatCount;
 
   const ShuttleStop({
     required this.savedJobId,
@@ -47,11 +51,15 @@ class ShuttleStop {
     this.phone,
     this.email,
     this.flightOrShip,
+    this.note,
     required this.address,
     this.lat,
     this.lng,
     required this.isPickupHere,
     this.price = 0,
+    this.persons = 1,
+    this.luggage = 0,
+    this.childSeatCount = 0,
   });
 
   factory ShuttleStop.fromMap(Map<String, dynamic> m) => ShuttleStop(
@@ -60,11 +68,15 @@ class ShuttleStop {
         phone:        m['phone'] as String?,
         email:        m['email'] as String?,
         flightOrShip: m['flightOrShip'] as String?,
+        note:         m['note'] as String?,
         address:      m['address'] as String? ?? '',
         lat:          (m['lat'] as num?)?.toDouble(),
         lng:          (m['lng'] as num?)?.toDouble(),
         isPickupHere: m['isPickupHere'] == true,
         price:        (m['price'] as num?)?.toDouble() ?? 0,
+        persons:        (m['persons'] as num?)?.toInt() ?? 1,
+        luggage:        (m['luggage'] as num?)?.toInt() ?? 0,
+        childSeatCount: (m['childSeatCount'] as num?)?.toInt() ?? 0,
       );
 
   Map<String, dynamic> toMap() => {
@@ -73,17 +85,22 @@ class ShuttleStop {
         if (phone != null) 'phone': phone,
         if (email != null) 'email': email,
         if (flightOrShip != null) 'flightOrShip': flightOrShip,
+        if (note != null) 'note': note,
         'address':      address,
         if (lat != null) 'lat': lat,
         if (lng != null) 'lng': lng,
         'isPickupHere': isPickupHere,
         'price':        price,
+        'persons':        persons,
+        'luggage':        luggage,
+        'childSeatCount': childSeatCount,
       };
 
   ShuttleStop copyWith({double? price}) => ShuttleStop(
         savedJobId: savedJobId, name: name, phone: phone, email: email,
-        flightOrShip: flightOrShip, address: address, lat: lat, lng: lng,
+        flightOrShip: flightOrShip, note: note, address: address, lat: lat, lng: lng,
         isPickupHere: isPickupHere, price: price ?? this.price,
+        persons: persons, luggage: luggage, childSeatCount: childSeatCount,
       );
 }
 
@@ -278,6 +295,7 @@ class SavedJobService {
 
     final totalPersons = items.fold<int>(0, (s, i) => s + i.job.persons);
     final totalLuggage = items.fold<int>(0, (s, i) => s + i.job.luggage);
+    final totalChildSeats = items.fold<int>(0, (s, i) => s + i.job.childSeatCount);
     final totalPrice   = items.fold<double>(0, (s, i) => s + priceFor(i));
 
     final stops = items.map((i) => ShuttleStop(
@@ -286,11 +304,15 @@ class SavedJobService {
           phone:        i.job.clientPhone,
           email:        i.job.clientEmail,
           flightOrShip: i.job.flightOrShip,
+          note:         i.job.note,
           address:      sharedIsPickup ? i.job.to : i.job.from,
           lat:          sharedIsPickup ? i.job.toLat : i.job.fromLat,
           lng:          sharedIsPickup ? i.job.toLng : i.job.fromLng,
           isPickupHere: !sharedIsPickup,
           price:        priceFor(i),
+          persons:        i.job.persons,
+          luggage:        i.job.luggage,
+          childSeatCount: i.job.childSeatCount,
         )).toList();
 
     final combinedFrom = sharedIsPickup ? sharedPointName : 'Πολλαπλές παραλαβές (${items.length})';
@@ -308,6 +330,7 @@ class SavedJobService {
       price: totalPrice,
       persons: totalPersons,
       luggage: totalLuggage,
+      childSeatCount: totalChildSeats,
       vehicleType: first.vehicleType,
       createdBy: ownerUid,
       createdByName: ownerName,

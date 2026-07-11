@@ -113,6 +113,13 @@ class PricingZone {
   }
 }
 
+// ── Μία γραμμή στο πρόγραμμα ωρών Shuttle (Ζώνες & Τιμές) ───────────────────
+class _ShuttleSlotEntry {
+  String time;   // "HH:mm"
+  String? zoneId; // null = ισχύει για όλες τις ζώνες
+  _ShuttleSlotEntry({required this.time, this.zoneId});
+}
+
 class PricingRoute {
   final String id;
   final String fromZoneId;
@@ -128,6 +135,11 @@ class PricingRoute {
   final double? vanNight;
   final double? taxiNightForeign;
   final double? vanNightForeign;
+  // ── Λεωφορείο (πάνω από 8 άτομα) — ΜΟΝΟ σταθερή τιμή ζώνης, καμία
+  // δυναμική φόρμουλα. Αν κενό, δεν προσφέρεται λεωφορείο σε αυτή τη
+  // διαδρομή (ο πελάτης παραπέμπεται σε WhatsApp).
+  final double? busPrice;
+  final double? busNightPrice;
   // ── Shuttle (ανά άτομο) ──
   final double? shuttlePricePerPerson;
   final double? shuttleNightPricePerPerson;
@@ -146,6 +158,8 @@ class PricingRoute {
     this.vanNight,
     this.taxiNightForeign,
     this.vanNightForeign,
+    this.busPrice,
+    this.busNightPrice,
     this.shuttlePricePerPerson,
     this.shuttleNightPricePerPerson,
     this.shuttleMinType = 'price',
@@ -153,6 +167,7 @@ class PricingRoute {
   });
 
   bool get hasShuttle => shuttlePricePerPerson != null && shuttlePricePerPerson! > 0;
+  bool get hasBus => busPrice != null && busPrice! > 0;
 
   factory PricingRoute.fromDoc(QueryDocumentSnapshot<Map<String, dynamic>> d) {
     final m = d.data();
@@ -169,6 +184,8 @@ class PricingRoute {
       vanNight:          numOrNull(m['vanNight']),
       taxiNightForeign:  numOrNull(m['taxiNightForeign']),
       vanNightForeign:   numOrNull(m['vanNightForeign']),
+      busPrice:      numOrNull(m['busPrice']),
+      busNightPrice: numOrNull(m['busNightPrice']),
       shuttlePricePerPerson:      numOrNull(m['shuttlePricePerPerson']),
       shuttleNightPricePerPerson: numOrNull(m['shuttleNightPricePerPerson']),
       shuttleMinType:  (m['shuttleMinType'] as String?) ?? 'price',
@@ -993,7 +1010,8 @@ class _RoutesTab extends StatelessWidget {
                                   '${r.vanForeign != null ? " / ξένος ${r.vanForeign!.toStringAsFixed(0)}€" : ""}'
                                   '${r.taxiNight != null ? "  ·  🌙 Ταξί ${r.taxiNight!.toStringAsFixed(0)}€" : ""}'
                                   '${r.vanNight != null ? " / Βαν ${r.vanNight!.toStringAsFixed(0)}€" : ""}'
-                                  '${r.hasShuttle ? "  ·  Shuttle ${r.shuttlePricePerPerson!.toStringAsFixed(0)}€/άτομο" : ""}',
+                                  '${r.hasShuttle ? "  ·  Shuttle ${r.shuttlePricePerPerson!.toStringAsFixed(0)}€/άτομο" : ""}'
+                                  '${r.hasBus ? "  ·  🚌 ${r.busPrice!.toStringAsFixed(0)}€" : ""}',
                                 ),
                                 trailing: Row(
                                   mainAxisSize: MainAxisSize.min,
@@ -1048,6 +1066,9 @@ class _RoutesTab extends StatelessWidget {
         ? existing.shuttleMinValue.toStringAsFixed(existing.shuttleMinType == 'persons' ? 0 : 2)
         : '');
     String shuttleMinType = existing?.shuttleMinType ?? 'price';
+    // ── Λεωφορείο (πάνω από 8 άτομα) ──
+    final busCtrl      = TextEditingController(text: existing?.busPrice?.toStringAsFixed(0) ?? '');
+    final busNightCtrl = TextEditingController(text: existing?.busNightPrice?.toStringAsFixed(0) ?? '');
 
     await showDialog<void>(
       context: context,
@@ -1183,6 +1204,35 @@ class _RoutesTab extends StatelessWidget {
                       ),
                     ),
                   ]),
+
+                  const SizedBox(height: 18),
+                  const Divider(),
+                  const SizedBox(height: 6),
+                  Row(children: [
+                    Icon(Icons.directions_bus_rounded, size: 18, color: Colors.indigo.shade700),
+                    const SizedBox(width: 6),
+                    const Text('Λεωφορείο (πάνω από 8 άτομα)',
+                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                  ]),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Άδειασε το «Τιμή ημέρας» για να ΜΗΝ προσφέρεται λεωφορείο σε '
+                    'αυτή τη διαδρομή — ο πελάτης θα παραπέμπεται σε WhatsApp. '
+                    'Χωρίς δυναμική φόρμουλα, μόνο σταθερή τιμή.',
+                    style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: busCtrl, keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(labelText: 'Τιμή λεωφορείου ημέρας (€)'),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: busNightCtrl, keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                        labelText: 'Τιμή λεωφορείου νύχτας (€) — προαιρετικό',
+                        helperText: 'Αν κενό, ισχύει η ίδια τιμή ημέρας και τη νύχτα'),
+                  ),
                 ],
               ),
             ),
@@ -1214,6 +1264,10 @@ class _RoutesTab extends StatelessWidget {
                         ? null : double.tryParse(shuttleNightCtrl.text.replaceAll(',', '.')),
                     'shuttleMinType': shuttleMinType,
                     'shuttleMinValue': double.tryParse(shuttleMinCtrl.text.replaceAll(',', '.')) ?? 0,
+                    'busPrice': busCtrl.text.trim().isEmpty
+                        ? null : double.tryParse(busCtrl.text.replaceAll(',', '.')),
+                    'busNightPrice': busNightCtrl.text.trim().isEmpty
+                        ? null : double.tryParse(busNightCtrl.text.replaceAll(',', '.')),
                     'tenantId': tenantId,
                   };
                   try {
@@ -1317,6 +1371,14 @@ class _PricingConfigTabState extends State<_PricingConfigTab> {
   // Έκπτωση «γνωριμίας» στη δυναμική τιμολόγηση (όχι ζώνες) — προεπιλογή 8%.
   // 0 = δείξε ΚΑΤΕΥΘΕΙΑΝ την τελική τιμή, χωρίς διαγραμμένη «αρχική»/badge έκπτωσης.
   final _dynamicDiscountCtrl = TextEditingController();
+  // Αν false, κρύβεται εντελώς η επιλογή «Πλήρης πληρωμή» στη φόρμα — μένει
+  // μόνο η προκαταβολή (εκτός αν κι αυτή είναι 0%, οπότε δεν μένει καμία
+  // πληρωμή και η κράτηση γίνεται κατευθείαν).
+  bool _fullPaymentEnabled = true;
+
+  // ── Ώρες αναχώρησης Shuttle — σταθερό πρόγραμμα (π.χ. κάθε 13:00 και
+  // 15:00). Αν έχει ζώνη, ισχύει ΜΟΝΟ για αυτή τη ζώνη· αλλιώς για όλες.
+  List<_ShuttleSlotEntry> _shuttleSlots = [];
 
   bool _loaded = false;
   bool _saving = false;
@@ -1381,6 +1443,16 @@ class _PricingConfigTabState extends State<_PricingConfigTab> {
           _dynamicDiscountCtrl.text = (dynamicDiscount == dynamicDiscount.roundToDouble())
               ? dynamicDiscount.toStringAsFixed(0)
               : dynamicDiscount.toString();
+
+          _fullPaymentEnabled = data['fullPaymentEnabled'] != false;
+
+          final rawSlots = (data['shuttleTimeSlots'] as List<dynamic>?) ?? [];
+          _shuttleSlots = rawSlots
+              .map((e) => _ShuttleSlotEntry(
+                    time: (e as Map)['time'] as String? ?? '09:00',
+                    zoneId: e['zoneId'] as String?,
+                  ))
+              .toList();
 
           _loaded = true;
         }
@@ -1527,13 +1599,117 @@ class _PricingConfigTabState extends State<_PricingConfigTab> {
                     labelText: 'Ποσοστό προκαταβολής (%)',
                     suffixText: '%',
                     helperText: 'Προεπιλογή 10%. Η στρογγυλοποίηση στο επόμενο ευρώ '
-                        'παραμένει ίδια — π.χ. 15% σε τιμή 44€ → 7€ προκαταβολή.',
+                        'παραμένει ίδια — π.χ. 15% σε τιμή 44€ → 7€ προκαταβολή. '
+                        'Βάλε 0 για να ΕΞΑΦΑΝΙΣΤΕΙ εντελώς η επιλογή προκαταβολής.',
                     border: OutlineInputBorder()),
+              ),
+              const SizedBox(height: 10),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Πλήρης πληρωμή',
+                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                subtitle: const Text(
+                    'Αν το σβήσεις, εξαφανίζεται η επιλογή «Πλήρης πληρωμή». '
+                    'Αν μείνει μόνο μία από τις δύο επιλογές, η φόρμα τη χρησιμοποιεί '
+                    'κατευθείαν χωρίς να ρωτήσει. Αν εξαφανιστούν ΚΑΙ οι δύο, η '
+                    'κράτηση γίνεται κατευθείαν χωρίς καμία πληρωμή.',
+                    style: TextStyle(fontSize: 11)),
+                value: _fullPaymentEnabled,
+                onChanged: (v) => setState(() => _fullPaymentEnabled = v),
               ),
 
               const SizedBox(height: 20),
               const Divider(),
               const SizedBox(height: 8),
+              Row(children: [
+                Icon(Icons.schedule_rounded, size: 18, color: Colors.amber.shade800),
+                const SizedBox(width: 6),
+                const Text('Ώρες αναχώρησης Shuttle',
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+              ]),
+              const SizedBox(height: 4),
+              Text(
+                'Σταθερό πρόγραμμα δρομολογίων (π.χ. κάθε 13:00 και 15:00). Αν βάλεις '
+                'ζώνη σε μια ώρα, ισχύει ΜΟΝΟ για αυτή τη ζώνη — αλλιώς ισχύει για όλες. '
+                'Στη δημόσια φόρμα, ο πελάτης θα βλέπει τις 2 πλησιέστερες ώρες πριν/μετά '
+                'από αυτή που ζήτησε, και θα είναι υποχρεωμένος να διαλέξει μία.',
+                style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+              ),
+              const SizedBox(height: 10),
+              StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+                stream: widget.db.collection('pricing_zones')
+                    .where('tenantId', isEqualTo: widget.tenantId).snapshots(),
+                builder: (context, zoneSnap) {
+                  final zones = (zoneSnap.data?.docs ?? [])
+                      .map(PricingZone.fromDoc).toList()
+                    ..sort((a, b) => a.name.compareTo(b.name));
+                  return Column(children: [
+                    ..._shuttleSlots.asMap().entries.map((entry) {
+                      final idx = entry.key;
+                      final slot = entry.value;
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: Row(children: [
+                          Expanded(
+                            flex: 2,
+                            child: OutlinedButton.icon(
+                              icon: const Icon(Icons.access_time_rounded, size: 16),
+                              label: Text(slot.time),
+                              onPressed: () async {
+                                final parts = slot.time.split(':');
+                                final picked = await showTimePicker(
+                                  context: context,
+                                  initialTime: TimeOfDay(
+                                      hour: int.tryParse(parts[0]) ?? 9,
+                                      minute: int.tryParse(parts.length > 1 ? parts[1] : '0') ?? 0),
+                                );
+                                if (picked != null) {
+                                  setState(() {
+                                    slot.time = '${picked.hour.toString().padLeft(2, '0')}:'
+                                        '${picked.minute.toString().padLeft(2, '0')}';
+                                  });
+                                }
+                              },
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            flex: 3,
+                            child: DropdownButtonFormField<String?>(
+                              initialValue: slot.zoneId,
+                              isExpanded: true,
+                              decoration: const InputDecoration(
+                                  isDense: true,
+                                  labelText: 'Ζώνη (προαιρετικό)',
+                                  border: OutlineInputBorder()),
+                              items: [
+                                const DropdownMenuItem<String?>(
+                                    value: null, child: Text('Όλες οι ζώνες')),
+                                ...zones.map((z) => DropdownMenuItem<String?>(
+                                    value: z.id, child: Text(z.name, overflow: TextOverflow.ellipsis))),
+                              ],
+                              onChanged: (v) => setState(() => slot.zoneId = v),
+                            ),
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.delete_outline_rounded, size: 20, color: Colors.red),
+                            onPressed: () => setState(() => _shuttleSlots.removeAt(idx)),
+                          ),
+                        ]),
+                      );
+                    }),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: OutlinedButton.icon(
+                        icon: const Icon(Icons.add_rounded, size: 18),
+                        label: const Text('Προσθήκη ώρας'),
+                        onPressed: () => setState(
+                            () => _shuttleSlots.add(_ShuttleSlotEntry(time: '09:00', zoneId: null))),
+                      ),
+                    ),
+                  ]);
+                },
+              ),
               const Text('Έκπτωση δυναμικής τιμολόγησης',
                   style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
               const SizedBox(height: 8),
@@ -1672,9 +1848,13 @@ class _PricingConfigTabState extends State<_PricingConfigTab> {
       'blackoutEndHour': _blackoutEndHour,
       'blackoutEndMinute': _blackoutEndMinute,
       'depositPercent': (double.tryParse(_depositPercentCtrl.text.replaceAll(',', '.')) ?? 10)
-          .clamp(1, 100),
+          .clamp(0, 100),
       'dynamicDiscountPercent': (double.tryParse(_dynamicDiscountCtrl.text.replaceAll(',', '.')) ?? 8)
           .clamp(0, 90),
+      'fullPaymentEnabled': _fullPaymentEnabled,
+      'shuttleTimeSlots': _shuttleSlots
+          .map((s) => {'time': s.time, if (s.zoneId != null) 'zoneId': s.zoneId})
+          .toList(),
     };
     try {
       await _pricingDocRef.set(data, SetOptions(merge: true));

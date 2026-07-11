@@ -2394,6 +2394,31 @@ async function computeShuttleGroupKey({ fromLat, fromLng, toLat, toLng, schedule
 // pricing_zones/pricing_routes ΧΩΡΙΣ tenantId filter — για συμβατότητα με
 // τα δικά σου δεδομένα πριν το backfillDefaultTenantId).
 const _pricingCacheByTenant = new Map(); // tenantId -> { data, at }
+// ── Βρίσκει τις 2 πλησιέστερες ώρες (πριν/μετά) από το σταθερό πρόγραμμα
+// Shuttle, εφαρμόσιμες σε αυτή τη ζώνη (ή γενικές, χωρίς ζώνη). requestedMin
+// = λεπτά από τα μεσάνυχτα (π.χ. 9:15 → 555). Επιστρέφει null αν δεν υπάρχει
+// ΚΑΝΕΝΑ εφαρμόσιμο δρομολόγιο.
+function nearestShuttleSlots(requestedMin, slots, fromZoneId, toZoneId) {
+  const applicable = (slots || []).filter((s) =>
+    !s.zoneId || s.zoneId === fromZoneId || s.zoneId === toZoneId);
+  if (!applicable.length) return null;
+  const toMin = (t) => {
+    const parts = String(t).split(":");
+    return (Number(parts[0]) || 0) * 60 + (Number(parts[1]) || 0);
+  };
+  const sorted = applicable
+    .map((s) => ({ time: s.time, mins: toMin(s.time) }))
+    .sort((a, b) => a.mins - b.mins);
+  let before = null, after = null;
+  for (const s of sorted) {
+    if (s.mins <= requestedMin) before = s;
+    if (s.mins >= requestedMin && !after) after = s;
+  }
+  if (!after) after = sorted[0];   // «μετά» τυλίγεται στο πρώτο δρομολόγιο της επόμενης μέρας
+  if (!before) before = sorted[sorted.length - 1];
+  return { before: before.time, after: after.time };
+}
+
 async function getPricingData(tenantId) {
   const tid = tenantId || "default";
   const now = Date.now();
@@ -2436,6 +2461,8 @@ async function getPricingData(tenantId) {
       blackoutEndHour: 8, blackoutEndMinute: 0,
       // ── Ποσοστό προκαταβολής — προεπιλογή 10%, ρυθμίζεται ανά tenant ──
       depositPercent: 10,
+      // Αν false, κρύβεται εντελώς η επιλογή «Πλήρης πληρωμή» στη φόρμα.
+      fullPaymentEnabled: true,
       // ── Έκπτωση «γνωριμίας» στη δυναμική τιμολόγηση (εκτός ζωνών, εκτός
       // Shuttle) — προεπιλογή 8%. 0 = δείξε κατευθείαν την τελική τιμή.
       dynamicDiscountPercent: 8,
@@ -2522,11 +2549,44 @@ async function computeEstimate({
     }
     price = Math.ceil(price);
 
+    let shuttleSlotOptions = null;
+    if (scheduledNaive) {
+      const reqMin = scheduledNaive.getUTCHours() * 60 + scheduledNaive.getUTCMinutes();
+      shuttleSlotOptions = nearestShuttleSlots(reqMin, cfg.shuttleTimeSlots, fromZone.id, toZone.id);
+    }
+
     return {
       price, nightApplies: isNightNow, vehicle: "shuttle", zoneMatch: true,
       minChargeApplied, displayOriginal: price, discountPercent: 0,
       outsideAttica: false, distanceKm, durationMin, routePolyline,
       shuttleAvailable: true, shuttlePricePerPerson: perPerson,
+      shuttleSlotOptions,
+    };
+  }
+
+  if (vehicleType === "bus") {
+    // ── Λεωφορείο: ΜΟΝΟ σταθερή τιμή ζώνης-σε-ζώνη (καμία δυναμική φόρμουλα
+    // ανά χιλιόμετρο — δεν βγάζει νόημα για λεωφορείο). Αν δεν υπάρχει
+    // ορισμένη τιμή για αυτό το ζεύγος ζωνών, το noRouteAvailable λέει στον
+    // client να δείξει «στείλε μήνυμα στο WhatsApp» αντί για τιμή/κράτηση.
+    const hasBusPrice = !!(zoneRoute && Number(zoneRoute.busPrice) > 0);
+    if (!hasBusPrice) {
+      return {
+        price: 0, nightApplies: false, vehicle: "bus", zoneMatch: false,
+        minChargeApplied: false, displayOriginal: 0, discountPercent: 0,
+        outsideAttica: false, distanceKm: 0, durationMin: 0, routePolyline: null,
+        shuttleAvailable: false, noRouteAvailable: true,
+      };
+    }
+    const isNightNowBus = !!scheduledNaive && isNightWindow(scheduledNaive);
+    const busPrice = (isNightNowBus && Number(zoneRoute.busNightPrice) > 0)
+      ? Number(zoneRoute.busNightPrice)
+      : Number(zoneRoute.busPrice);
+    return {
+      price: Math.ceil(busPrice), nightApplies: isNightNowBus, vehicle: "bus", zoneMatch: true,
+      minChargeApplied: false, displayOriginal: Math.ceil(busPrice), discountPercent: 0,
+      outsideAttica: false, distanceKm: 0, durationMin: 0, routePolyline: null,
+      shuttleAvailable: false, noRouteAvailable: false,
     };
   }
 
@@ -2747,7 +2807,7 @@ exports.estimatePrice = onRequest(
       const persons = Math.max(1, parseInt(b.persons, 10) || 1);
       const luggage = Math.max(0, parseInt(b.luggage, 10) || 0);
       const childSeatCount = Math.max(0, parseInt(b.childSeatCount, 10) || 0);
-      const vehicleType = s(b.vehicleType) === "van" ? "van" : (s(b.vehicleType) === "shuttle" ? "shuttle" : "taxi");
+      const vehicleType = s(b.vehicleType) === "van" ? "van" : (s(b.vehicleType) === "shuttle" ? "shuttle" : (s(b.vehicleType) === "bus" ? "bus" : "taxi"));
       const lang = s(b.lang) || "el";
       const dialCode = s(b.dialCode);
       const isGreek = lang === "el" ? true : dialCode === "+30";
@@ -2789,8 +2849,11 @@ exports.estimatePrice = onRequest(
         durationMin: result.durationMin,
         routePolyline: result.routePolyline,
         depositPercent: Number(cfg.depositPercent) > 0 ? Number(cfg.depositPercent) : 10,
+        fullPaymentEnabled: cfg.fullPaymentEnabled !== false,
         shuttleAvailable: !!result.shuttleAvailable,
         shuttlePricePerPerson: result.shuttlePricePerPerson || null,
+        shuttleSlotOptions: result.shuttleSlotOptions || null,
+        noRouteAvailable: !!result.noRouteAvailable,
       });
     } catch (e) {
       console.error("estimatePrice error:", e);
@@ -2857,7 +2920,7 @@ exports.submitPublicBooking = onRequest(
       const persons = Math.max(1, parseInt(b.persons, 10) || 1);
       const luggage = Math.max(0, parseInt(b.luggage, 10) || 0);
       const childSeatCount = Math.max(0, parseInt(b.childSeatCount, 10) || 0);
-      const vehicleType = (s(b.vehicleType) === "van") ? "van" : ((s(b.vehicleType) === "shuttle") ? "shuttle" : "taxi");
+      const vehicleType = (s(b.vehicleType) === "van") ? "van" : ((s(b.vehicleType) === "shuttle") ? "shuttle" : ((s(b.vehicleType) === "bus") ? "bus" : "taxi"));
       const email = s(b.email), flight = s(b.flight), note = s(b.note);
       const lang = s(b.lang) || "el";
 
@@ -3310,21 +3373,23 @@ exports.createVivaOrder = onRequest(
       const persons = Math.max(1, parseInt(b.persons, 10) || 1);
       const luggage = Math.max(0, parseInt(b.luggage, 10) || 0);
       const childSeatCount = Math.max(0, parseInt(b.childSeatCount, 10) || 0);
-      const vehicleType = (s(b.vehicleType) === "van") ? "van" : ((s(b.vehicleType) === "shuttle") ? "shuttle" : "taxi");
+      const vehicleType = (s(b.vehicleType) === "van") ? "van" : ((s(b.vehicleType) === "shuttle") ? "shuttle" : ((s(b.vehicleType) === "bus") ? "bus" : "taxi"));
       const email = s(b.email), flight = s(b.flight), note = s(b.note);
       const lang = s(b.lang) || "el";
 
-      // ── Πάνω από 8 άτομα: το Βαν παίρνει ΜΕΧΡΙ 8 — χρειάζεται Mini Bus,
-      // που ΔΕΝ διαχειρίζεται η φόρμα online. ΠΟΤΕ δεν επιτρέπουμε online
-      // πληρωμή σε αυτή την περίπτωση — ασφάλεια server-side, ανεξάρτητα
-      // από το αν παρακάμφθηκε ο έλεγχος στο client (JavaScript της φόρμας).
-      if (persons > 8) {
+      // ── Πάνω από 8 άτομα: το Βαν παίρνει ΜΕΧΡΙ 8 — χρειάζεται Λεωφορείο.
+      // Το επιτρέπουμε ΜΟΝΟ αν vehicleType==="bus" (και υπάρχει ορισμένη
+      // τιμή ζώνης για λεωφορείο — ελέγχεται παρακάτω στο computeEstimate).
+      // Αλλιώς ΠΟΤΕ δεν επιτρέπουμε online πληρωμή σε Ταξί/Βαν πάνω από 8 —
+      // ασφάλεια server-side, ανεξάρτητα από το αν παρακάμφθηκε ο έλεγχος
+      // στο client (JavaScript της φόρμας).
+      if (persons > 8 && vehicleType !== "bus") {
         return res.status(400).json({
           ok: false,
           error: "van_capacity",
           message: lang === "el"
-            ? "Πάνω από 8 άτομα χρειάζονται Mini Bus — επικοινωνήστε μαζί μας μέσω WhatsApp."
-            : "More than 8 people need a Mini Bus — please contact us via WhatsApp.",
+            ? "Πάνω από 8 άτομα χρειάζονται Λεωφορείο — επικοινωνήστε μαζί μας μέσω WhatsApp."
+            : "More than 8 people need a Bus — please contact us via WhatsApp.",
         });
       }
 
@@ -3353,6 +3418,32 @@ exports.createVivaOrder = onRequest(
       if (estimate.outsideAttica && !gateReasons.includes("outside_attica")) {
         gateReasons.push("outside_attica");
       }
+
+      // ── Shuttle: η ζητούμενη ώρα ΠΡΕΠΕΙ να ταιριάζει ακριβώς με κάποιο
+      // δρομολόγιο του σταθερού προγράμματος — ΠΟΤΕ ελεύθερη ώρα, ασφάλεια
+      // server-side ανεξάρτητα από το τι έστειλε ο client.
+      if (vehicleType === "shuttle" && scheduledNaive) {
+        const { zones: zonesForSlots } = await getPricingData(tenantId);
+        const fz = fromLat != null && fromLng != null ? matchZone(fromLat, fromLng, zonesForSlots) : null;
+        const tz = toLat != null && toLng != null ? matchZone(toLat, toLng, zonesForSlots) : null;
+        const reqMin = scheduledNaive.getUTCHours() * 60 + scheduledNaive.getUTCMinutes();
+        const slots = (cfg.shuttleTimeSlots || []).filter((s) =>
+          !s.zoneId || s.zoneId === (fz && fz.id) || s.zoneId === (tz && tz.id));
+        const matchesSlot = slots.some((s) => {
+          const parts = String(s.time).split(":");
+          return ((Number(parts[0]) || 0) * 60 + (Number(parts[1]) || 0)) === reqMin;
+        });
+        if (!matchesSlot) {
+          return res.status(400).json({
+            ok: false,
+            error: "invalid_shuttle_time",
+            message: lang === "el"
+              ? "Η ώρα του shuttle πρέπει να ταιριάζει με ένα από τα προγραμματισμένα δρομολόγια."
+              : "The shuttle time must match one of the scheduled departures.",
+          });
+        }
+      }
+
       if (gateReasons.length) {
         return res.status(400).json({ ok: false, error: "outside_booking_window", reasons: gateReasons });
       }
