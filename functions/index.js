@@ -1,4 +1,4 @@
-const { onDocumentCreated, onDocumentUpdated } = require("firebase-functions/v2/firestore");
+const { onDocumentCreated, onDocumentUpdated, onDocumentDeleted } = require("firebase-functions/v2/firestore");
 const { initializeApp }   = require("firebase-admin/app");
 const { getFirestore, FieldValue }    = require("firebase-admin/firestore");
 const { getMessaging }    = require("firebase-admin/messaging");
@@ -386,7 +386,57 @@ exports.onJobClosed = onDocumentUpdated("jobs/{jobId}", async (event) => {
   );
 });
 
-// ─── Επιβίβαση: ειδοποίηση στον admin που έβγαλε τη δουλειά ──────────────────
+// ─── Ακύρωση κράτησης που είχε ήδη εκδοθεί παραστατικό ──────────────────────
+// Η ακύρωση σήμερα σημαίνει ΔΙΑΓΡΑΦΗ του saved_job doc (όχι αλλαγή status) —
+// γι' αυτό «ακούμε» onDelete. ΔΕΝ εκδίδουμε αυτόματα πιστωτικό/διορθωτικό
+// παραστατικό εδώ — η ακριβής μορφή XML για διόρθωση/ακύρωση αποδείξεων
+// λιανικής στο myDATA χρειάζεται δική της, ξεχωριστή επιβεβαίωση σχήματος
+// πριν αυτοματοποιηθεί (ίδιο σκεπτικό με το αρχικό παραστατικό — δεν θέλουμε
+// να «μαντέψουμε» κάτι τόσο ευαίσθητο). Αντ' αυτού, ειδοποιούμε τον
+// υπεύθυνο (master/tenant-owner) να το χειριστεί ο ίδιος στο myDATA, με όλα
+// τα στοιχεία έτοιμα μπροστά του.
+exports.onSavedJobDeleted = onDocumentDeleted("saved_jobs/{savedJobId}", async (event) => {
+  const data = event.data && event.data.data();
+  if (!data || !data.invoiceMark) return; // δεν είχε εκδοθεί παραστατικό — τίποτα να γίνει
+
+  try {
+    const tenantId = data.tenantId || "default";
+    const tDoc = await getFirestore().collection("tenants").doc(tenantId).get();
+    const t = tDoc.exists ? tDoc.data() : {};
+
+    // ── Αυτόματο πιστωτικό — ΜΟΝΟ αν ήταν myDATA (Epsilon δεν έχει ακόμα
+    // επιβεβαιωμένο μηχανισμό ακύρωσης εδώ, μένει χειροκίνητο προς το παρόν).
+    const credit = await tryIssueMydataCreditNote({ tenantId, t, savedJobData: data });
+
+    const masterUid = await findMasterUid(tenantId);
+    if (!masterUid) return;
+    const tokens = await getTokensForUid(masterUid);
+    if (!tokens.length) return;
+
+    if (credit && credit.ok) {
+      await sendDataOnly(tokens, {
+        type: "invoice_credit_issued",
+        savedJobId: String(event.params.savedJobId),
+        title: "✅ Εκδόθηκε αυτόματα πιστωτικό",
+        body: "Booking #" + (data.bookingNumber || "-") + " ακυρώθηκε — πιστωτικό MARK: " + credit.mark +
+          " (αρχικό: " + data.invoiceMark + ").",
+      });
+    } else {
+      await sendDataOnly(tokens, {
+        type: "invoice_cancellation_needed",
+        savedJobId: String(event.params.savedJobId),
+        title: "⚠️ Ακυρώθηκε κράτηση με ήδη εκδομένο παραστατικό",
+        body: "Booking #" + (data.bookingNumber || "-") + " · MARK: " + data.invoiceMark +
+          (credit ? " — αποτυχία αυτόματου πιστωτικού, χρειάζεται χειροκίνητα στο myDATA." : " — πάροχος " + (data.invoiceProvider || "-") + ", χρειάζεται χειροκίνητα."),
+      });
+    }
+    console.log("onSavedJobDeleted: ολοκληρώθηκε, MARK:", data.invoiceMark, "credit:", credit);
+  } catch (e) {
+    console.error("onSavedJobDeleted error:", e);
+  }
+});
+
+
 // Χτυπάει όταν status: * → "boarded". Στέλνει ΜΟΝΟ στον createdBy.
 exports.onJobBoarded = onDocumentUpdated("jobs/{jobId}", async (event) => {
   const before = event.data.before.data();
@@ -600,19 +650,24 @@ const RESEND_API_KEY = defineSecret("RESEND_API_KEY");
 
 // Στέλνει email μέσω Resend. Best-effort — ποτέ δεν πετάει exception προς τα
 // έξω (η αποτυχία εδώ δεν πρέπει ΠΟΤΕ να μπλοκάρει την επιβεβαίωση πληρωμής).
-async function sendCustomerEmailViaResend({ to, subject, html, fromName, fromEmail, apiKeyOverride }) {
+async function sendCustomerEmailViaResend({ to, subject, html, fromName, fromEmail, apiKeyOverride, attachments }) {
   try {
     const apiKey = apiKeyOverride || RESEND_API_KEY.value();
     if (!apiKey || !to) return false;
+    const body = {
+      from: (fromName || "Athens Taxi Booking") + " <" + (fromEmail || "bookings@taxiathenstransfers.com") + ">",
+      to: [to],
+      subject,
+      html,
+    };
+    // attachments: [{ filename, content }] — content = base64 string (χωρίς data: πρόθεμα).
+    if (Array.isArray(attachments) && attachments.length) {
+      body.attachments = attachments;
+    }
     const res = await fetch("https://api.resend.com/emails", {
       method: "POST",
       headers: { "Authorization": "Bearer " + apiKey, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        from: (fromName || "Athens Taxi Booking") + " <" + (fromEmail || "bookings@taxiathenstransfers.com") + ">",
-        to: [to],
-        subject,
-        html,
-      }),
+      body: JSON.stringify(body),
     });
     if (!res.ok) {
       console.error("Resend send error:", res.status, await res.text());
@@ -840,6 +895,23 @@ async function freshAccessTokenFor(uid) {
 async function nextBookingNumber(tenantId) {
   const db = getFirestore();
   const ref = db.collection("counters").doc(tenantId || "default");
+  return await db.runTransaction(async (tx) => {
+    const doc = await tx.get(ref);
+    const next = (doc.exists ? (doc.data().value || 0) : 0) + 1;
+    tx.set(ref, { value: next }, { merge: true });
+    return next;
+  });
+}
+
+// ── Ξεχωριστός μετρητής παραστατικών (myDATA/Epsilon) — ΠΡΕΠΕΙ να είναι
+// αυστηρά συνεχόμενος, χωρίς κενά, ξεκινώντας από 1, ανά tenant ΚΑΙ ανά
+// σειρά (series) ξεχωριστά. ΔΕΝ πρέπει να μπερδεύεται με το bookingNumber
+// (που μπορεί να έχει κενά αν διαγραφεί μια κράτηση) — το myDATA απορρίπτει
+// παραστατικά με κενά στην αρίθμηση.
+async function nextInvoiceNumber(tenantId, series) {
+  const db = getFirestore();
+  const key = (tenantId || "default") + "__invoice__" + (series || "A");
+  const ref = db.collection("counters").doc(key);
   return await db.runTransaction(async (tx) => {
     const doc = await tx.get(ref);
     const next = (doc.exists ? (doc.data().value || 0) : 0) + 1;
@@ -2272,7 +2344,50 @@ function haversineKm(a, b) {
   return R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
 }
 
-// ── Πραγματική απόσταση/διάρκεια μέσω Routes API (κλειδί ΜΟΝΟ server-side) ──
+// ── Ταίριασμα διαδρομής με αποθηκευμένο πελάτη (Αγαπημένοι προορισμοί) ──────
+// Αν το «Από» Ή το «Προς» πέφτει κοντά στη βάση ενός πελάτη (≤400μ), ΚΑΙ το
+// ΑΛΛΟ άκρο πέφτει κοντά σε μία από τις αποθηκευμένες διαδρομές του ίδιου
+// πελάτη, χρησιμοποιούμε ΤΗ ΔΙΚΗ ΤΟΥ τιμή — αγνοώντας ζώνη/δυναμικό τύπο.
+// Δουλεύει ΚΑΙ προς τις δύο κατευθύνσεις (πελάτης στο «από» ή στο «προς»).
+const CLIENT_MATCH_KM = 0.4; // 400 μέτρα ανοχή
+async function findClientRouteMatch(fromLat, fromLng, toLat, toLng, tenantId) {
+  if (fromLat == null || fromLng == null || toLat == null || toLng == null) return null;
+  try {
+    const db = getFirestore();
+    const q = tenantId && tenantId !== "default"
+      ? db.collection("clients").where("tenantId", "==", tenantId)
+      : db.collection("clients");
+    const snap = await q.get();
+    for (const doc of snap.docs) {
+      const c = doc.data();
+      if (c.fromLat == null || c.fromLng == null || !Array.isArray(c.routes)) continue;
+      const base = { lat: c.fromLat, lng: c.fromLng };
+      const distFrom = haversineKm({ lat: fromLat, lng: fromLng }, base);
+      const distTo = haversineKm({ lat: toLat, lng: toLng }, base);
+      let otherLat = null, otherLng = null;
+      if (distFrom <= CLIENT_MATCH_KM) { otherLat = toLat; otherLng = toLng; }
+      else if (distTo <= CLIENT_MATCH_KM) { otherLat = fromLat; otherLng = fromLng; }
+      else continue;
+      for (const r of c.routes) {
+        if (r.toLat == null || r.toLng == null) continue;
+        const d = haversineKm({ lat: otherLat, lng: otherLng }, { lat: r.toLat, lng: r.toLng });
+        if (d <= CLIENT_MATCH_KM) {
+          return {
+            price: Number(r.price) || 0,
+            nightPrice: r.nightPrice != null ? Number(r.nightPrice) : null,
+            clientName: c.name || "",
+          };
+        }
+      }
+    }
+    return null;
+  } catch (e) {
+    console.error("findClientRouteMatch error:", e);
+    return null;
+  }
+}
+
+
 async function routesDistanceDuration(origin, dest, apiKey, departureTime) {
   if (!apiKey) return null;
   try {
@@ -2491,7 +2606,7 @@ async function computeEstimate({
   fromLat, fromLng, toLat, toLng, persons, luggage, childSeatCount,
   vehicleType, isGreek, scheduledNaive, apiKey,
   cachedDistanceKm, cachedDurationMin, cachedRoutePolyline, needMap,
-  tenantId,
+  tenantId, clientsOnlyMode,
 }) {
   const { zones, routes, cfg } = await getPricingData(tenantId);
   const forced = persons >= 5 || luggage >= 5;
@@ -2614,7 +2729,32 @@ async function computeEstimate({
   const nightApplies = isNightNow && (!zoneRoute || cfg.nightAppliesToZones);
 
   let usedFixedNightPrice = false;
-  if (zoneRoute) {
+
+  // ── Τιμή πελάτη (Αγαπημένοι προορισμοί) — αν το «Από» ή το «Προς» ταιριάζει
+  // με πελάτη ΚΑΙ το άλλο άκρο με μία αποθηκευμένη διαδρομή του, η τιμή ΤΟΥ
+  // υπερισχύει ΠΑΝΤΑ ζώνης/δυναμικού τύπου. Ισχύει ΜΟΝΟ για Ταξί/Βαν (το
+  // Shuttle/Λεωφορείο έχουν δικά τους ξεχωριστά συστήματα τιμολόγησης).
+  const clientMatch = await findClientRouteMatch(fromLat, fromLng, toLat, toLng, tenantId);
+
+  // ── Λειτουργία «μόνο πελάτες» (Places απενεργοποιημένο για τον tenant) —
+  // χωρίς πραγματική διεύθυνση Google, ΔΕΝ έχει νόημα ζωνική/δυναμική τιμή.
+  // Αν δεν βρέθηκε ΤΙΠΟΤΑ στους πελάτες, στέλνουμε κατευθείαν σε WhatsApp
+  // (ίδιος μηχανισμός με το «λεωφορείο χωρίς διαδρομή»).
+  if (clientsOnlyMode && !clientMatch) {
+    return {
+      price: 0, nightApplies: false, vehicle, zoneMatch: false,
+      minChargeApplied: false, displayOriginal: 0, discountPercent: 0,
+      outsideAttica: false, distanceKm: 0, durationMin: 0, routePolyline: null,
+      shuttleAvailable: false, noRouteAvailable: true, clientMatchedName: null,
+    };
+  }
+
+  if (clientMatch) {
+    zoneMatch = true; // ώστε να παρακαμφθεί ο δυναμικός τύπος παρακάτω
+    const useNight = isNightNow && clientMatch.nightPrice != null;
+    basePrice = useNight ? clientMatch.nightPrice : clientMatch.price;
+    usedFixedNightPrice = useNight; // η τιμή ΕΙΝΑΙ ήδη η νυχτερινή — μη ξαναπολλαπλασιάσεις
+  } else if (zoneRoute) {
     zoneMatch = true;
     const ownField = vehicle === "van" ? "van" : "taxi";
     const foreignField = vehicle === "van" ? "vanForeign" : "taxiForeign";
@@ -2791,7 +2931,7 @@ async function computeEstimate({
     if (!isFinite(discountPercent)) discountPercent = discountPct;
   }
 
-  return { price, nightApplies, vehicle, zoneMatch, minChargeApplied, displayOriginal, discountPercent, outsideAttica, distanceKm, durationMin, routePolyline, shuttleAvailable };
+  return { price, nightApplies, vehicle, zoneMatch, minChargeApplied, displayOriginal, discountPercent, outsideAttica, distanceKm, durationMin, routePolyline, shuttleAvailable, clientMatchedName: clientMatch ? clientMatch.clientName : null };
 }
 
 // ── estimatePrice: καλείται ζωντανά από τη φόρμα καθώς συμπληρώνει ο πελάτης ─
@@ -2813,6 +2953,13 @@ exports.estimatePrice = onRequest(
       const isGreek = lang === "el" ? true : dialCode === "+30";
       const tenantId = s(b.tenantId) || "default";
       const { cfg } = await getPricingData(tenantId);
+      // Ελαφρύ query — ΜΟΝΟ για να ξέρει η φόρμα αν να δείξει την επιλογή
+      // «Θέλω Τιμολόγιο» (μόνο αν ο tenant έχει ενεργό invoiceEnabled+mydata).
+      let tenantInvoiceCfg = {};
+      try {
+        const tDoc = await getFirestore().collection("tenants").doc(tenantId).get();
+        if (tDoc.exists) tenantInvoiceCfg = tDoc.data();
+      } catch (e) { /* αγνόησε — απλά δεν θα φανεί η επιλογή */ }
 
       let scheduledNaive = null, gateReasons = [];
       const date = s(b.date), time = s(b.time);
@@ -2830,6 +2977,7 @@ exports.estimatePrice = onRequest(
         cachedRoutePolyline: b.cachedRoutePolyline || null,
         needMap: b.needMap === true,
         tenantId: s(b.tenantId) || "default",
+        clientsOnlyMode: b.clientsOnlyMode === true,
       });
       if (result.outsideAttica && !gateReasons.includes("outside_attica")) {
         gateReasons.push("outside_attica");
@@ -2854,6 +3002,9 @@ exports.estimatePrice = onRequest(
         shuttlePricePerPerson: result.shuttlePricePerPerson || null,
         shuttleSlotOptions: result.shuttleSlotOptions || null,
         noRouteAvailable: !!result.noRouteAvailable,
+        invoiceEnabled: tenantInvoiceCfg.invoiceEnabled === true,
+        invoiceProvider: tenantInvoiceCfg.invoiceProvider || "none",
+        clientMatchedName: result.clientMatchedName || null,
       });
     } catch (e) {
       console.error("estimatePrice error:", e);
@@ -3407,6 +3558,15 @@ exports.createVivaOrder = onRequest(
       const dialCode = (phone.match(/^\+\d+/) || [""])[0];
       const isGreek = lang === "el" ? true : dialCode === "+30";
 
+      // ── Places απενεργοποιημένο για τον tenant; Το επιβάλλουμε ΕΔΩ από το
+      // πραγματικό tenant doc — ΔΕΝ εμπιστευόμαστε ό,τι έστειλε ο client,
+      // για να μην μπορεί να παρακαμφθεί ο περιορισμός «μόνο πελάτες».
+      let placesEnabledForTenant = true;
+      try {
+        const tDocForPlaces = tenantCfg || (await getFirestore().collection("tenants").doc(tenantId).get()).data();
+        if (tDocForPlaces && tDocForPlaces.placesEnabled === false) placesEnabledForTenant = false;
+      } catch (e) { /* προεπιλογή true */ }
+
       const estimate = await computeEstimate({
         fromLat, fromLng, toLat, toLng, persons, luggage, childSeatCount,
         vehicleType, isGreek, scheduledNaive, apiKey: ROUTES_API_KEY.value(),
@@ -3414,7 +3574,16 @@ exports.createVivaOrder = onRequest(
         // distance/duration/polyline ΜΙΑ φορά ώστε η εφαρμογή (Flutter) να
         // μην τα ξαναϋπολογίζει ζωντανά κάθε φορά που ανοίγει την κάρτα.
         tenantId,
+        clientsOnlyMode: !placesEnabledForTenant,
       });
+      if (estimate.noRouteAvailable) {
+        return res.status(400).json({
+          ok: false, error: "no_client_route",
+          message: lang === "el"
+            ? "Δεν βρέθηκε ορισμένη διαδρομή πελάτη — επικοινωνήστε μαζί μας μέσω WhatsApp."
+            : "No defined client route found — please contact us via WhatsApp.",
+        });
+      }
       if (estimate.outsideAttica && !gateReasons.includes("outside_attica")) {
         gateReasons.push("outside_attica");
       }
@@ -3488,6 +3657,15 @@ exports.createVivaOrder = onRequest(
 
       // ── Αποθήκευση της «εκκρεμούς» κράτησης (ΔΕΝ είναι ακόμα saved_jobs) ──
       const db = getFirestore();
+      // ── Αν ζητήθηκε Τιμολόγιο, το ΑΦΜ ΠΡΕΠΕΙ να είναι έγκυρο — ασφάλεια
+      // server-side, ανεξάρτητα από το αν πέρασε τον έλεγχο στη φόρμα.
+      if (b.wantsInvoice === true && !isValidGreekAfm(s(b.invoiceAfm))) {
+        return res.status(400).json({
+          ok: false, error: "invalid_afm",
+          message: lang === "el" ? "Μη έγκυρο ΑΦΜ για το τιμολόγιο." : "Invalid VAT number for the invoice.",
+        });
+      }
+
       const pendingRef = await db.collection("pending_bookings").add({
         status: "pending",
         tenantId,
@@ -3501,6 +3679,13 @@ exports.createVivaOrder = onRequest(
         fullyPaid: payFull,
         routeKm: estimate.distanceKm || null,
         routePolyline: estimate.routePolyline || null,
+        // ── Αίτημα Τιμολογίου αντί για Απόδειξη — ανά κράτηση, ΟΧΙ γενική
+        // ρύθμιση. Χρειάζεται ΑΦΜ επιχείρησης· χωρίς αυτό, γίνεται πάντα
+        // η κανονική Απόδειξη (11.2) όπως προεπιλογή.
+        wantsInvoice: b.wantsInvoice === true,
+        invoiceAfm: s(b.invoiceAfm) || null,
+        invoiceCompanyName: s(b.invoiceCompanyName) || null,
+        invoiceAddress: s(b.invoiceAddress) || null,
         createdAt: FieldValue.serverTimestamp(),
       });
 
@@ -3712,6 +3897,9 @@ exports.vivaWebhook = onRequest(
         clientPhone:    pd.clientPhone,
         clientEmail:    pd.clientEmail,
         flightOrShip:   pd.flightOrShip,
+        wantsInvoice:   pd.wantsInvoice === true,
+        invoiceAfm:     pd.invoiceAfm || null,
+        invoiceCompanyName: pd.invoiceCompanyName || null,
         persons:        pd.persons,
         luggage:        pd.luggage,
         childSeatCount: pd.childSeatCount,
@@ -3757,13 +3945,52 @@ exports.vivaWebhook = onRequest(
         console.error("viva booking FCM failed:", e);
       }
 
+      // ── Απόδειξη/Τιμολόγιο (myDATA ή Epsilon Smart) — best-effort, ΠΟΤΕ δεν
+      // μπλοκάρει την υπόλοιπη ροή. Εκδίδεται ΜΟΝΟ αν ο tenant το έχει ρητά
+      // ενεργοποιήσει (invoiceEnabled) — ο πάροχος καθορίζει ποια από τις
+      // δύο συναρτήσεις κάνει πραγματικά κάτι (η άλλη επιστρέφει null αμέσως).
+      // Γίνεται ΠΡΙΝ το email ώστε να μπορεί το MARK να μπει μέσα σε αυτό.
+      let receiptResult = null;
+      let tPreloaded = null;
+      try {
+        const tid2 = pd.tenantId || "default";
+        const tDoc2 = await db.collection("tenants").doc(tid2).get();
+        tPreloaded = tDoc2.exists ? tDoc2.data() : {};
+        const invoiceReq = pd.wantsInvoice
+          ? { afm: pd.invoiceAfm, companyName: pd.invoiceCompanyName, address: pd.invoiceAddress }
+          : null;
+        receiptResult = await tryIssueMydataReceipt({
+          tenantId: tid2, t: tPreloaded, grossAmount: pd.depositAmount, bookingNumber,
+          invoiceRequest: invoiceReq,
+        });
+        if (!receiptResult) {
+          receiptResult = await tryIssueEpsilonReceipt({
+            tenantId: tid2, t: tPreloaded, grossAmount: pd.depositAmount, bookingNumber,
+            custName: pd.clientName, custPhone: pd.clientPhone, custEmail: pd.clientEmail,
+            invoiceRequest: invoiceReq,
+          });
+        }
+        if (receiptResult) {
+          await savedRef.update({
+            invoiceMark: receiptResult.mark || null,
+            invoiceProvider: receiptResult.provider,
+            invoiceIssuedAt: FieldValue.serverTimestamp(),
+            // Το ΑΚΡΙΒΕΣ ποσό που τιμολογήθηκε (μπορεί να είναι μόνο η
+            // προκαταβολή, όχι όλο το price) — απαραίτητο για να βγει το
+            // πιστωτικό ΜΕ ΤΟ ΙΔΙΟ ακριβώς ποσό αν ακυρωθεί αργότερα.
+            invoiceGrossAmount: pd.depositAmount,
+          });
+        }
+      } catch (e) {
+        console.error("receipt issuance failed:", e);
+      }
+
       // ── Email ΕΠΙΒΕΒΑΙΩΣΗΣ στον ΠΕΛΑΤΗ (μέσω Resend, best-effort) ──────────
       // ΔΕΝ μπλοκάρει ποτέ την υπόλοιπη ροή — αν αποτύχει, απλά καταγράφεται.
       if (pd.clientEmail) {
         try {
           const tid = pd.tenantId || "default";
-          const tDoc = await db.collection("tenants").doc(tid).get();
-          const t = tDoc.exists ? tDoc.data() : {};
+          const t = tPreloaded || (await db.collection("tenants").doc(tid).get()).data() || {};
 
           // ── Σημασιολογία emailsEnabled: «χρησιμοποίησε το ΔΙΚΟ ΜΟΥ (κοινό,
           // του master) Resend key για αυτόν τον tenant».
@@ -3828,6 +4055,13 @@ exports.vivaWebhook = onRequest(
               (footerContactLine ? "<br>" + footerContactLine : "") +
               "</td></tr></table>";
 
+            const markLineEl = (receiptResult && receiptResult.mark)
+              ? "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Αρ. Παραστατικού (MARK):</td><td>" + receiptResult.mark + "</td></tr>"
+              : "";
+            const markLineEn = (receiptResult && receiptResult.mark)
+              ? "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Receipt No. (MARK):</td><td>" + receiptResult.mark + "</td></tr>"
+              : "";
+
             const bodyEl =
               "<h2 style=\"color:#1a1a2e;\">Η κράτησή σας επιβεβαιώθηκε!</h2>" +
               "<p>Γεια σας " + pd.clientName + ",</p>" +
@@ -3837,6 +4071,7 @@ exports.vivaWebhook = onRequest(
               "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Διαδρομή:</td><td><b>" + pd.from + " → " + pd.to + "</b></td></tr>" +
               "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Ημερομηνία/ώρα:</td><td>" + whenStr + "</td></tr>" +
               "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Πληρώθηκε:</td><td>" + pd.depositAmount + "€" + (pd.fullyPaid ? " (πλήρης πληρωμή)" : " (προκαταβολή)") + "</td></tr>" +
+              markLineEl +
               "</table>" +
               "<p>" + waLine + "</p>";
             const bodyEn =
@@ -3848,6 +4083,7 @@ exports.vivaWebhook = onRequest(
               "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Route:</td><td><b>" + pd.from + " → " + pd.to + "</b></td></tr>" +
               "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Date/time:</td><td>" + whenStr + "</td></tr>" +
               "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Paid:</td><td>€" + pd.depositAmount + (pd.fullyPaid ? " (full payment)" : " (deposit)") + "</td></tr>" +
+              markLineEn +
               "</table>" +
               "<p>" + waLine + "</p>";
 
@@ -3858,27 +4094,32 @@ exports.vivaWebhook = onRequest(
               footerHtml +
               "</div>";
 
+            // ── PDF απόδειξης — μόνο αν εκδόθηκε παραστατικό με πλήρη ανάλυση
+            // ποσών (προς το παρόν μόνο το myDATA branch τα επιστρέφει).
+            let attachments = undefined;
+            if (receiptResult && receiptResult.netValue != null) {
+              try {
+                const pdfBase64 = await buildReceiptPdfBase64({
+                  businessName, afm: t.afm, doy: t.doy, taxAddress: t.taxAddress,
+                  bookingNumber: receiptResult.bookingNumber || bookingNumber,
+                  issueDate: whenStr, mark: receiptResult.mark,
+                  clientName: pd.clientName, from: pd.from, to: pd.to, whenStr,
+                  netValue: receiptResult.netValue, vatAmount: receiptResult.vatAmount,
+                  vatPercent: receiptResult.vatPercent, grossValue: receiptResult.grossValue,
+                });
+                attachments = [{ filename: "apodeiksi-" + bookingNumber + ".pdf", content: pdfBase64 }];
+              } catch (e) {
+                console.error("receipt PDF generation failed:", e);
+              }
+            }
+
             await sendCustomerEmailViaResend({
-              to: pd.clientEmail, subject, html, fromName: businessName, fromEmail, apiKeyOverride,
+              to: pd.clientEmail, subject, html, fromName: businessName, fromEmail, apiKeyOverride, attachments,
             });
           }
         } catch (e) {
           console.error("customer confirmation email failed:", e);
         }
-      }
-
-      // ── Απόδειξη/Τιμολόγιο (myDATA) — best-effort, ΠΟΤΕ δεν μπλοκάρει την
-      // υπόλοιπη ροή. Εκδίδεται ΜΟΝΟ αν ο tenant το έχει ρητά ενεργοποιήσει
-      // (invoiceEnabled) ΚΑΙ διάλεξε πάροχο "mydata".
-      try {
-        const tid2 = pd.tenantId || "default";
-        const tDoc2 = await db.collection("tenants").doc(tid2).get();
-        const t2 = tDoc2.exists ? tDoc2.data() : {};
-        await tryIssueMydataReceipt({
-          tenantId: tid2, t: t2, grossAmount: pd.depositAmount, bookingNumber,
-        });
-      } catch (e) {
-        console.error("receipt issuance failed:", e);
       }
 
       return res.status(200).json({ ok: true });
@@ -3978,10 +4219,10 @@ async function readSecret(secretId) {
 // ⚠️ ΣΗΜΑΝΤΙΚΟ: Πριν ενεργοποιηθεί ΠΟΤΕ σε πραγματική συναλλαγή, χρειάζεται
 // δοκιμή στο SANDBOX της ΑΑΔΕ (mydataapidev.aade.gr) με πραγματικό
 // subscription key δοκιμαστικού λογαριασμού. Η δομή του XML ακολουθεί το
-// επίσημο schema InvoicesDoc v1.0.4 — αλλά κωδικοί χαρακτηρισμού εσόδων
-// (income classification) ΔΕΝ αποστέλλονται εδώ σκόπιμα (προαιρετικοί κατά
-// την αρχική διαβίβαση σε πολλές περιπτώσεις) — να επιβεβαιωθεί με λογιστή
-// αν χρειάζονται για τη συγκεκριμένη δραστηριότητα πριν το ενεργοποιήσεις.
+// επίσημο schema InvoicesDoc v1.0.4. Ο χαρακτηρισμός εσόδων (income
+// classification) περιλαμβάνεται αυτόματα — E3_561_003 (Λιανικές, προς
+// ιδιώτες) για «Απόδειξη Παροχής Υπηρεσιών» (11.2), E3_561_001 (Χονδρικές)
+// για «Τιμολόγιο Παροχής Υπηρεσιών» (2.1) — επιβεβαιωμένοι κωδικοί ΑΑΔΕ.
 // ═══════════════════════════════════════════════════════════════════════
 
 function mydataHosts(demo) {
@@ -3990,31 +4231,84 @@ function mydataHosts(demo) {
     : "https://mydatapi.aade.gr/myDATA";
 }
 
+// ── Επικύρωση ΑΦΜ (ίδιος επίσημος αλγόριθμος με το client) — ασφάλεια
+// server-side, ανεξάρτητα από το αν παρακάμφθηκε ο έλεγχος στη φόρμα.
+function isValidGreekAfm(afm) {
+  if (!/^\d{9}$/.test(afm || "")) return false;
+  let sum = 0;
+  for (let i = 0; i < 8; i++) {
+    sum += parseInt(afm[i], 10) * Math.pow(2, 8 - i);
+  }
+  const check = (sum % 11) % 10;
+  return check === parseInt(afm[8], 10);
+}
+
 function xmlEscape(str) {
   return String(str || "")
     .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;").replace(/'/g, "&apos;");
 }
 
+// Επιστρέφει {category, type} χαρακτηρισμού εσόδων ανάλογα με τον τύπο
+// παραστατικού — επιβεβαιωμένοι κωδικοί ΑΑΔΕ (εγχειρίδιο myDATA):
+//   11.2 (Απόδειξη Παροχής Υπηρεσιών, προς ιδιώτες) → E3_561_003 (Λιανικές)
+//   2.1  (Τιμολόγιο Παροχής Υπηρεσιών, B2B)          → E3_561_001 (Χονδρικές)
+function incomeClassificationFor(invoiceType) {
+  return invoiceType === "2.1"
+    ? { category: "category1_1", type: "E3_561_001" }
+    : { category: "category1_3", type: "E3_561_003" };
+}
+
 // Χτίζει το XML ενός απλού παραστατικού (1 γραμμή, 1 τρόπος πληρωμής).
 function buildMydataInvoiceXml({
   issuerAfm, series, aa, issueDate, invoiceType, vatCategory,
-  netValue, vatAmount, grossValue,
+  netValue, vatAmount, grossValue, correlatedMark, counterpart,
 }) {
+  const cls = incomeClassificationFor(invoiceType);
+  // ── Πιστωτικό (11.4): αναφέρεται στο ΑΡΧΙΚΟ παραστατικό μέσω correlatedInvoices
+  // (το MARK του παραστατικού που ακυρώνει/διορθώνει).
+  const correlatedXml = correlatedMark
+    ? "<correlatedInvoices>" + xmlEscape(correlatedMark) + "</correlatedInvoices>"
+    : "";
+  // ── Λήπτης (counterpart) — ΜΟΝΟ για Τιμολόγιο (2.1), ΠΟΤΕ για Απόδειξη
+  // (11.2/11.4) όπου επιβεβαιωμένα ΔΕΝ επιτρέπεται καν το στοιχείο αυτό.
+  // vatNumber+country+branch υποχρεωτικά, name/address προαιρετικά.
+  let counterpartXml = "";
+  if (counterpart && counterpart.vatNumber) {
+    const addr = counterpart.address;
+    const addressXml = addr
+      ? "<address>" +
+        (addr.street ? "<street>" + xmlEscape(addr.street) + "</street>" : "") +
+        (addr.postalCode ? "<postalCode>" + xmlEscape(addr.postalCode) + "</postalCode>" : "") +
+        (addr.city ? "<city>" + xmlEscape(addr.city) + "</city>" : "") +
+        "</address>"
+      : "";
+    counterpartXml =
+      "<counterpart>" +
+      "<vatNumber>" + xmlEscape(counterpart.vatNumber) + "</vatNumber>" +
+      "<country>GR</country>" +
+      "<branch>0</branch>" +
+      (counterpart.name ? "<name>" + xmlEscape(counterpart.name) + "</name>" : "") +
+      addressXml +
+      "</counterpart>";
+  }
   return '<?xml version="1.0" encoding="UTF-8"?>' +
-    '<InvoicesDoc xmlns="https://www.aade.gr/myDATA/invoice/v1.0">' +
+    '<InvoicesDoc xmlns="https://www.aade.gr/myDATA/invoice/v1.0" ' +
+    'xmlns:icls="https://www.aade.gr/myDATA/invoice/incomeclassification/v1.0">' +
     "<invoice>" +
     "<issuer>" +
     "<vatNumber>" + xmlEscape(issuerAfm) + "</vatNumber>" +
     "<country>GR</country>" +
     "<branch>0</branch>" +
     "</issuer>" +
+    counterpartXml +
     "<invoiceHeader>" +
     "<series>" + xmlEscape(series) + "</series>" +
     "<aa>" + xmlEscape(aa) + "</aa>" +
     "<issueDate>" + xmlEscape(issueDate) + "</issueDate>" +
     "<invoiceType>" + xmlEscape(invoiceType) + "</invoiceType>" +
     "<currency>EUR</currency>" +
+    correlatedXml +
     "</invoiceHeader>" +
     "<paymentMethods>" +
     "<paymentMethodDetails>" +
@@ -4027,6 +4321,11 @@ function buildMydataInvoiceXml({
     "<netValue>" + netValue.toFixed(2) + "</netValue>" +
     "<vatCategory>" + xmlEscape(vatCategory) + "</vatCategory>" +
     "<vatAmount>" + vatAmount.toFixed(2) + "</vatAmount>" +
+    "<incomeClassification>" +
+    "<icls:classificationCategory>" + cls.category + "</icls:classificationCategory>" +
+    "<icls:classificationType>" + cls.type + "</icls:classificationType>" +
+    "<icls:amount>" + netValue.toFixed(2) + "</icls:amount>" +
+    "</incomeClassification>" +
     "</invoiceDetails>" +
     "<invoiceSummary>" +
     "<totalNetValue>" + netValue.toFixed(2) + "</totalNetValue>" +
@@ -4084,7 +4383,7 @@ function splitVat(grossValue, vatCategory) {
 // ΜΟΝΟ αν ο tenant έχει invoiceEnabled===true ΚΑΙ invoiceProvider==="mydata".
 // Καλείται από το vivaWebhook μετά την επιτυχή πληρωμή — ΠΟΤΕ μπλοκάρει την
 // υπόλοιπη ροή (email/saved_jobs) αν αποτύχει, απλά καταγράφει το σφάλμα.
-async function tryIssueMydataReceipt({ tenantId, t, grossAmount, bookingNumber }) {
+async function tryIssueMydataReceipt({ tenantId, t, grossAmount, bookingNumber, invoiceRequest }) {
   try {
     if (!t.invoiceEnabled || t.invoiceProvider !== "mydata") return null;
     if (!t.afm) {
@@ -4098,11 +4397,24 @@ async function tryIssueMydataReceipt({ tenantId, t, grossAmount, bookingNumber }
       return null;
     }
 
-    const vatCategory = t.mydataVatCategory || "1";
-    const invoiceType = t.mydataInvoiceType || "11.2";
+    // ── Ο πελάτης μπορεί να ζητήσει ΤΙΜΟΛΟΓΙΟ (2.1, για επιχείρηση) αντί για
+    // την κανονική ΑΠΥ (11.2) — ανά κράτηση, ΟΧΙ γενική ρύθμιση tenant.
+    // Χρειάζεται ΑΦΜ επιχείρησης-πελάτη· χωρίς αυτό, ΠΑΝΤΑ γίνεται Απόδειξη.
+    const wantsInvoice = !!(invoiceRequest && invoiceRequest.afm);
+    const invoiceType = wantsInvoice ? "2.1" : (t.mydataInvoiceType || "11.2");
+    const counterpart = wantsInvoice
+      ? {
+          vatNumber: invoiceRequest.afm,
+          name: invoiceRequest.companyName || null,
+          address: invoiceRequest.address ? { street: invoiceRequest.address } : null,
+        }
+      : null;
+
+    const vatCategory = t.mydataVatCategory || "2"; // 13% προεπιλογή, επιβεβαιωμένο για ΤΑΞΙ
     const series = t.invoiceSeries || "A";
     const { netValue, vatAmount } = splitVat(Number(grossAmount) || 0, vatCategory);
-    const aa = bookingNumber || Date.now() % 100000; // αύξων αριθμός — ιδανικά θα έπρεπε να είναι δικός του μετρητής ανά σειρά
+    const vatPercent = { "1": 24, "2": 13, "3": 6, "7": 0 }[vatCategory] ?? 13;
+    const aa = await nextInvoiceNumber(tenantId, series);
 
     const xml = buildMydataInvoiceXml({
       issuerAfm: t.afm,
@@ -4114,20 +4426,283 @@ async function tryIssueMydataReceipt({ tenantId, t, grossAmount, bookingNumber }
       netValue,
       vatAmount,
       grossValue: Number(grossAmount) || 0,
+      counterpart,
     });
 
-    const demo = t.vivaDemo !== false; // ίδιο demo/live flag με τη Viva, για ασφάλεια
+    const demo = t.mydataDemo !== false; // ΞΕΧΩΡΙΣΤΟ demo/live flag από τη Viva — βλ. σχόλιο πάνω
     const result = await sendMydataInvoice({ demo, username, subscriptionKey: subKey, xml });
     if (!result.ok) {
       console.error("mydata receipt failed for tenant", tenantId, result.error);
       return null;
     }
-    console.log("mydata receipt issued, MARK:", result.mark, "tenant:", tenantId);
-    return { mark: result.mark, provider: "mydata" };
+    console.log("mydata receipt issued, MARK:", result.mark, "tenant:", tenantId, "type:", invoiceType);
+    return {
+      mark: result.mark, provider: "mydata",
+      netValue, vatAmount, vatPercent, grossValue: Number(grossAmount) || 0,
+      bookingNumber: aa, series, invoiceType,
+    };
   } catch (e) {
     console.error("tryIssueMydataReceipt error:", e);
     return null;
   }
+}
+
+// ── Πιστωτικό Στοιχείο Λιανικής (11.4) — αυτόματη ακύρωση/διόρθωση ενός
+// ήδη εκδομένου παραστατικού myDATA (11.2), όταν ακυρώνεται η κράτηση.
+// Επαναχρησιμοποιεί ΑΚΡΙΒΩΣ τα ίδια ποσά/ΦΠΑ με το αρχικό — «αντιγραφή» του
+// αρχικού ως πιστωτικό, ίδια λογική με ό,τι κάνουν τα λογιστικά συστήματα
+// (SBZ Systems κ.ά.). Ξεχωριστός αύξων αριθμός (δική του σειρά "series-C"
+// ώστε να μη μπερδεύεται η αρίθμηση με τα κανονικά παραστατικά).
+async function tryIssueMydataCreditNote({ tenantId, t, savedJobData }) {
+  try {
+    if (!t.invoiceEnabled || t.invoiceProvider !== "mydata") return null;
+    if (!savedJobData.invoiceMark || savedJobData.invoiceProvider !== "mydata") return null;
+    if (!t.afm) {
+      console.error("mydata credit note: λείπει ΑΦΜ για tenant", tenantId);
+      return null;
+    }
+    const username = t.mydataUsername;
+    const subKey = await readSecret(tenantSecretId(tenantId, "mydata-subscription-key")).catch(() => null);
+    if (!username || !subKey) {
+      console.error("mydata credit note: λείπουν credentials για tenant", tenantId);
+      return null;
+    }
+
+    const vatCategory = t.mydataVatCategory || "2";
+    const baseSeries = t.invoiceSeries || "A";
+    const creditSeries = baseSeries + "-C"; // ξεχωριστή σειρά για πιστωτικά, δική της αρίθμηση
+
+    // Ξαναϋπολογίζουμε net/ΦΠΑ από το ΑΚΡΙΒΕΣ ποσό που είχε τιμολογηθεί
+    // αρχικά (αποθηκευμένο στο invoiceGrossAmount — μπορεί να ήταν μόνο η
+    // προκαταβολή, όχι όλο το job.price).
+    const grossValue = Number(savedJobData.invoiceGrossAmount) || 0;
+    if (grossValue <= 0) {
+      console.error("mydata credit note: άγνωστο ποσό για tenant", tenantId);
+      return null;
+    }
+    const { netValue, vatAmount } = splitVat(grossValue, vatCategory);
+    const aa = await nextInvoiceNumber(tenantId, creditSeries);
+
+    const xml = buildMydataInvoiceXml({
+      issuerAfm: t.afm,
+      series: creditSeries,
+      aa,
+      issueDate: athensNaiveDate(new Date()).toISOString().slice(0, 10),
+      invoiceType: "11.4", // Πιστωτικό Στοιχείο Λιανικής
+      vatCategory,
+      netValue, vatAmount, grossValue,
+      correlatedMark: savedJobData.invoiceMark,
+    });
+
+    const demo = t.mydataDemo !== false;
+    const result = await sendMydataInvoice({ demo, username, subscriptionKey: subKey, xml });
+    if (!result.ok) {
+      console.error("mydata credit note failed for tenant", tenantId, result.error);
+      return { ok: false, error: result.error };
+    }
+    console.log("mydata credit note issued, MARK:", result.mark, "original MARK:", savedJobData.invoiceMark);
+    return { ok: true, mark: result.mark };
+  } catch (e) {
+    console.error("tryIssueMydataCreditNote error:", e);
+    return { ok: false, error: String(e) };
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Epsilon Smart — e-Shop API (πληρωμένος πάροχος) ────────────────────────
+// Επίσημη τεκμηρίωση: kb.epsilonnet.gr/epsilonsmart (ManualEshopAPI.pdf).
+// Ροή: 1) LoginToSubscription (myaccount.epsilonnet.gr) -> JWT + smartUrl
+//      2) POST {smartUrl}api/Eshop/InsertDocuments με Bearer JWT
+// Κάνουμε νέο login σε κάθε έκδοση (χωρίς cache token) — απλούστερο και
+// αρκετά γρήγορο για τον όγκο κρατήσεων μας, χωρίς να χρειάζεται να
+// αποθηκεύουμε/ανανεώνουμε JWT μεταξύ κλήσεων της cloud function.
+// ═══════════════════════════════════════════════════════════════════════
+
+async function epsilonLogin({ subscriptionKey, email, password }) {
+  const resp = await fetch("https://myaccount.epsilonnet.gr/api/Account/LoginToSubscription", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ subscriptionKey, email, password }),
+  });
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => "");
+    throw new Error("epsilon login failed: " + resp.status + " " + text);
+  }
+  const data = await resp.json();
+  return { jwt: data.jwt, smartUrl: data.url2 };
+}
+
+// Χτίζει ένα EshopSale (παραστατικό λιανικής, 1 γραμμή υπηρεσίας).
+function buildEpsilonSale({
+  itemCode, vatPercent, grossValue, netValue, vatAmount,
+  refDocCode, custName, custPhone, custEmail, invoiceRequest,
+}) {
+  // DocDateTime ΠΡΕΠΕΙ να είναι χωρίς timezone (Unspecified) — π.χ.
+  // "2026-07-12T14:30:00.000", ΟΧΙ με Z ή offset.
+  const now = athensNaiveDate(new Date());
+  const docDateTime = now.toISOString().replace("Z", "");
+  // ── Αίτημα Τιμολογίου (ανά κράτηση) — IsRetail=0 (χονδρική/επιχείρηση),
+  // CustTIN=ΑΦΜ πελάτη. Χωρίς αυτό, μένει η κανονική Απόδειξη (IsRetail=1).
+  const wantsInvoice = !!(invoiceRequest && invoiceRequest.afm);
+  return {
+    DocDateTime: docDateTime,
+    IsRetail: wantsInvoice ? 0 : 1,
+    VatStatus: 1, // 1 = μειωμένο καθεστώς ΦΠΑ (13% για ΤΑΞΙ)
+    RefDocCode: String(refDocCode || ""),
+    PaymentMethod: 2, // 2 = Πιστωτική κάρτα (πληρωμή μέσω Viva)
+    CustName: wantsInvoice ? (invoiceRequest.companyName || custName || null) : (custName || null),
+    CustTIN: wantsInvoice ? invoiceRequest.afm : null,
+    CustStreet: wantsInvoice ? (invoiceRequest.address || null) : null,
+    CustPhone1: custPhone || null,
+    CustEmail: custEmail || null,
+    Justification: "Μεταφορά με ταξί",
+    Lines: [
+      {
+        ItemCode: itemCode,
+        VATPercent: vatPercent,
+        Qty: 1,
+        Price: grossValue,
+        NetVal: netValue,
+        VATVal: vatAmount,
+        TotalVal: grossValue,
+      },
+    ],
+  };
+}
+
+async function submitEpsilonSale({ jwt, smartUrl, sale }) {
+  const url = smartUrl.endsWith("/") ? smartUrl + "api/Eshop/InsertDocuments"
+    : smartUrl + "/api/Eshop/InsertDocuments";
+  const resp = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": "Bearer " + jwt,
+    },
+    body: JSON.stringify([sale]),
+  });
+  const text = await resp.text().catch(() => "");
+  if (!resp.ok) {
+    console.error("epsilon InsertDocuments failed:", resp.status, text);
+    return { ok: false, error: "epsilon_http_" + resp.status, raw: text };
+  }
+  return { ok: true, raw: text };
+}
+
+// ── Κεντρική συνάρτηση — ίδιο μοτίβο με tryIssueMydataReceipt: best-effort,
+// ΠΟΤΕ δεν μπλοκάρει την υπόλοιπη ροή αν αποτύχει.
+async function tryIssueEpsilonReceipt({ tenantId, t, grossAmount, bookingNumber, custName, custPhone, custEmail, invoiceRequest }) {
+  try {
+    if (!t.invoiceEnabled || t.invoiceProvider !== "epsilon") return null;
+    if (!t.epsilonItemCode || !t.epsilonEmail) {
+      console.error("epsilon receipt: λείπουν στοιχεία (email/item code) για tenant", tenantId);
+      return null;
+    }
+    const subscriptionKey = await readSecret(tenantSecretId(tenantId, "invoice-api-key")).catch(() => null);
+    const password = await readSecret(tenantSecretId(tenantId, "epsilon-password")).catch(() => null);
+    if (!subscriptionKey || !password) {
+      console.error("epsilon receipt: λείπουν credentials για tenant", tenantId);
+      return null;
+    }
+
+    const vatCategory = t.mydataVatCategory || "2"; // ίδια επιλογή ΦΠΑ με το myDATA tab
+    const vatPercent = { "1": 24, "2": 13, "3": 6, "7": 0 }[vatCategory] ?? 13;
+    const gross = Number(grossAmount) || 0;
+    const rate = vatPercent / 100;
+    const netValue = rate > 0 ? gross / (1 + rate) : gross;
+    const vatAmount = gross - netValue;
+
+    const { jwt, smartUrl } = await epsilonLogin({
+      subscriptionKey, email: t.epsilonEmail, password,
+    });
+    const sale = buildEpsilonSale({
+      itemCode: t.epsilonItemCode,
+      vatPercent,
+      grossValue: Math.round(gross * 100) / 100,
+      netValue: Math.round(netValue * 100) / 100,
+      vatAmount: Math.round(vatAmount * 100) / 100,
+      refDocCode: bookingNumber,
+      custName, custPhone, custEmail, invoiceRequest,
+    });
+    const result = await submitEpsilonSale({ jwt, smartUrl, sale });
+    if (!result.ok) {
+      console.error("epsilon receipt failed for tenant", tenantId, result.error);
+      return null;
+    }
+    console.log("epsilon receipt issued for tenant:", tenantId, "invoice:", !!(invoiceRequest && invoiceRequest.afm));
+    return { provider: "epsilon" };
+  } catch (e) {
+    console.error("tryIssueEpsilonReceipt error:", e);
+    return null;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// PDF Απόδειξης — απλό, καθαρό έγγραφο με στοιχεία επιχείρησης/πελάτη/
+// διαδρομής/ποσών + τον αριθμό MARK (αν υπάρχει από το myDATA). ΔΕΝ είναι
+// «επίσημο» φορολογικό έντυπο με τη νομική έννοια — είναι η ΟΠΤΙΚΗ απόδειξη
+// που κρατάει ο πελάτης, ενώ η ίδια η νομική διαβίβαση έγινε ήδη στο myDATA
+// (ή στον πάροχο). Επισυνάπτεται στο email επιβεβαίωσης.
+// ═══════════════════════════════════════════════════════════════════════
+async function buildReceiptPdfBase64({
+  businessName, afm, doy, taxAddress,
+  bookingNumber, issueDate, mark,
+  clientName, from, to, whenStr,
+  netValue, vatAmount, vatPercent, grossValue,
+}) {
+  const PDFDocument = require("pdfkit");
+  return await new Promise((resolve, reject) => {
+    try {
+      const doc = new PDFDocument({ size: "A5", margin: 36 });
+      const chunks = [];
+      doc.on("data", (c) => chunks.push(c));
+      doc.on("end", () => resolve(Buffer.concat(chunks).toString("base64")));
+      doc.on("error", reject);
+
+      doc.fontSize(16).font("Helvetica-Bold").text(businessName || "Taxi Transfers");
+      doc.fontSize(9).font("Helvetica").fillColor("#555");
+      const bizLine = [afm ? "ΑΦΜ: " + afm : null, doy ? "ΔΟΥ: " + doy : null].filter(Boolean).join("  ·  ");
+      if (bizLine) doc.text(bizLine);
+      if (taxAddress) doc.text(taxAddress);
+      doc.moveDown(1);
+
+      doc.fillColor("#000").fontSize(13).font("Helvetica-Bold")
+        .text("Απόδειξη Παροχής Υπηρεσιών", { underline: false });
+      doc.moveDown(0.5);
+
+      doc.fontSize(10).font("Helvetica");
+      const row = (label, value) => {
+        doc.font("Helvetica").fillColor("#555").text(label, { continued: true });
+        doc.font("Helvetica-Bold").fillColor("#000").text("  " + (value || "-"));
+      };
+      row("Αρ. Κράτησης:", "#" + bookingNumber);
+      row("Ημερομηνία:", issueDate);
+      row("Πελάτης:", clientName);
+      row("Διαδρομή:", from + " → " + to);
+      row("Ώρα εξυπηρέτησης:", whenStr);
+      if (mark) row("Αρ. Παραστατικού (MARK):", mark);
+
+      doc.moveDown(1);
+      doc.moveTo(doc.x, doc.y).lineTo(doc.page.width - doc.page.margins.right, doc.y).strokeColor("#ccc").stroke();
+      doc.moveDown(0.5);
+
+      row("Καθαρή αξία:", netValue.toFixed(2) + " €");
+      row("ΦΠΑ " + vatPercent + "%:", vatAmount.toFixed(2) + " €");
+      doc.moveDown(0.3);
+      doc.fontSize(13).font("Helvetica-Bold").fillColor("#000")
+        .text("Σύνολο: " + grossValue.toFixed(2) + " €");
+
+      doc.moveDown(1.5);
+      doc.fontSize(8).fillColor("#999").font("Helvetica")
+        .text("Η νόμιμη διαβίβαση του παραστατικού έγινε ηλεκτρονικά στο myDATA της ΑΑΔΕ.", {
+          width: doc.page.width - doc.page.margins.left - doc.page.margins.right,
+        });
+
+      doc.end();
+    } catch (e) {
+      reject(e);
+    }
+  });
 }
 
 function tenantSecretId(tenantId, field) {
@@ -4702,7 +5277,13 @@ exports.listClients = onRequest(
         };
       }).filter((c) => c.name && c.fromLat != null && c.fromLng != null);
 
-      return res.status(200).json({ ok: true, clients });
+      let placesEnabled = true;
+      try {
+        const tDoc = await db.collection("tenants").doc(tenantId).get();
+        if (tDoc.exists && tDoc.data().placesEnabled === false) placesEnabled = false;
+      } catch (e) { /* προεπιλογή true αν αποτύχει */ }
+
+      return res.status(200).json({ ok: true, clients, placesEnabled });
     } catch (e) {
       console.error("listClients error:", e);
       return res.status(500).json({ ok: false, error: "server_error" });
@@ -4782,10 +5363,13 @@ exports.updateTenantReceiptInfo = onCall(
       updates.invoiceProvider = ["none", "epsilon", "mydata", "oxygen"].includes(p) ? p : "none";
     }
     if (d.mydataUsername != null) updates.mydataUsername = s(d.mydataUsername) || null;
+    if (d.epsilonEmail != null) updates.epsilonEmail = s(d.epsilonEmail) || null;
+    if (d.epsilonItemCode != null) updates.epsilonItemCode = s(d.epsilonItemCode) || null;
     if (d.invoiceEnabled != null) updates.invoiceEnabled = d.invoiceEnabled === true;
     if (d.invoiceSeries != null) updates.invoiceSeries = s(d.invoiceSeries) || null;
     if (d.mydataInvoiceType != null) updates.mydataInvoiceType = s(d.mydataInvoiceType) || "11.2";
-    if (d.mydataVatCategory != null) updates.mydataVatCategory = s(d.mydataVatCategory) || "1";
+    if (d.mydataVatCategory != null) updates.mydataVatCategory = s(d.mydataVatCategory) || "2";
+    if (d.mydataDemo != null) updates.mydataDemo = d.mydataDemo !== false;
 
     // Κλειδιά — σε Secret Manager, ΠΟΤΕ σε απλό πεδίο Firestore.
     if (d.invoiceApiKey != null) {
@@ -4804,6 +5388,15 @@ exports.updateTenantReceiptInfo = onCall(
         updates.hasMydataSubKey = true;
       } else {
         updates.hasMydataSubKey = false;
+      }
+    }
+    if (d.epsilonPassword != null) {
+      const pw = s(d.epsilonPassword);
+      if (pw) {
+        await upsertSecret(tenantSecretId(tenantId, "epsilon-password"), pw);
+        updates.hasEpsilonPassword = true;
+      } else {
+        updates.hasEpsilonPassword = false;
       }
     }
 
@@ -4987,7 +5580,9 @@ exports.getTenantBusinessInfo = onRequest(
           afm: null, doy: null, taxAddress: null, kad: null,
           invoiceProvider: "none", hasInvoiceApiKey: false,
           mydataUsername: null, hasMydataSubKey: false,
-          invoiceEnabled: false, invoiceSeries: null });
+          invoiceEnabled: false, invoiceSeries: null,
+          mydataInvoiceType: "11.2", mydataVatCategory: "2", mydataDemo: true,
+          epsilonEmail: null, epsilonItemCode: null, hasEpsilonPassword: false });
       }
       const t = doc.data();
       return res.status(200).json({
@@ -5013,12 +5608,16 @@ exports.getTenantBusinessInfo = onRequest(
         hasInvoiceApiKey: t.hasInvoiceApiKey === true,
         mydataUsername:  t.mydataUsername  || null,
         hasMydataSubKey: t.hasMydataSubKey === true,
+        epsilonEmail: t.epsilonEmail || null,
+        epsilonItemCode: t.epsilonItemCode || null,
+        hasEpsilonPassword: t.hasEpsilonPassword === true,
         // ⚠️ ΠΑΝΤΑ false εξ ορισμού — καμία αυτόματη έκδοση χωρίς ρητή,
         // συνειδητή ενεργοποίηση από τον ίδιο τον tenant.
         invoiceEnabled:  t.invoiceEnabled === true,
         invoiceSeries:   t.invoiceSeries   || null,
         mydataInvoiceType: t.mydataInvoiceType || "11.2",
-        mydataVatCategory: t.mydataVatCategory || "1",
+        mydataVatCategory: t.mydataVatCategory || "2",
+        mydataDemo: t.mydataDemo !== false,
       });
     } catch (e) {
       console.error("getTenantBusinessInfo error:", e);

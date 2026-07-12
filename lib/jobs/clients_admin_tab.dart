@@ -625,6 +625,7 @@ class _ClientEditorPageState extends State<ClientEditorPage> {
             to: PlacePick(
                 description: r.toName, lat: r.toLat, lng: r.toLng),
             price: r.price,
+            nightPrice: r.nightPrice,
             sourceId: r.sourceId,
             sourceName: r.sourceName,
           )).toList();
@@ -672,6 +673,7 @@ class _ClientEditorPageState extends State<ClientEditorPage> {
     _phoneCtrl.dispose();
     for (final r in _routes) {
       r.priceCtrl.dispose();
+      r.nightPriceCtrl.dispose();
     }
     super.dispose();
   }
@@ -711,6 +713,9 @@ class _ClientEditorPageState extends State<ClientEditorPage> {
         price:      double.tryParse(
                 r.priceCtrl.text.trim().replaceAll(',', '.')) ??
             0,
+        nightPrice: r.nightPriceCtrl.text.trim().isEmpty
+            ? null
+            : double.tryParse(r.nightPriceCtrl.text.trim().replaceAll(',', '.')),
         sourceId:   r.sourceId,
         sourceName: r.sourceName,
       ));
@@ -980,6 +985,20 @@ class _ClientEditorPageState extends State<ClientEditorPage> {
             ),
           ),
         ]),
+        const SizedBox(height: 10),
+        TextField(
+          controller: r.nightPriceCtrl,
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          decoration: InputDecoration(
+            labelText:  'Τιμή τη ΝΥΧΤΑ (€) — προαιρετικό',
+            helperText: 'Αν κενό, ισχύει η ίδια τιμή και τη νύχτα',
+            prefixIcon: const Icon(Icons.nightlight_round),
+            filled:     true, fillColor: Colors.grey.shade50,
+            isDense:    true,
+            border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12)),
+          ),
+        ),
       ]),
     );
   }
@@ -1002,15 +1021,19 @@ class _ClientEditorPageState extends State<ClientEditorPage> {
 class _EditableRoute {
   PlacePick? to;
   final TextEditingController priceCtrl;
+  final TextEditingController nightPriceCtrl;
   String? sourceId;
   String? sourceName;
   _EditableRoute({
     this.to,
     double price = 0,
+    double? nightPrice,
     this.sourceId,
     this.sourceName,
-  }) : priceCtrl = TextEditingController(
-            text: price > 0 ? price.toStringAsFixed(2) : '');
+  })  : priceCtrl = TextEditingController(
+            text: price > 0 ? price.toStringAsFixed(2) : ''),
+        nightPriceCtrl = TextEditingController(
+            text: (nightPrice != null && nightPrice > 0) ? nightPrice.toStringAsFixed(2) : '');
 }
 
 // ─── Επιλογή admin/tenant-owner για ιδιοκτήτη πελάτη (μόνο master) ─────────

@@ -18,7 +18,8 @@ class ClientRoute {
   final String  toName;     // περιγραφή προορισμού (π.χ. "Αεροδρόμιο")
   final double? toLat;
   final double? toLng;
-  final double  price;      // τιμή διαδρομής
+  final double  price;      // τιμή διαδρομής (ημέρα)
+  final double? nightPrice; // τιμή διαδρομής τη ΝΥΧΤΑ — προαιρετική, αν κενή ισχύει η ίδια με ημέρα
   final String? sourceId;   // πηγή (γιαούρτι) — προαιρετικό
   final String? sourceName;
 
@@ -27,6 +28,7 @@ class ClientRoute {
     this.toLat,
     this.toLng,
     this.price = 0,
+    this.nightPrice,
     this.sourceId,
     this.sourceName,
   });
@@ -38,6 +40,7 @@ class ClientRoute {
         toLat:      (d['toLat'] as num?)?.toDouble(),
         toLng:      (d['toLng'] as num?)?.toDouble(),
         price:      (d['price'] as num?)?.toDouble() ?? 0,
+        nightPrice: (d['nightPrice'] as num?)?.toDouble(),
         sourceId:   d['sourceId']   as String?,
         sourceName: d['sourceName'] as String?,
       );
@@ -47,6 +50,7 @@ class ClientRoute {
         if (toLat != null) 'toLat': toLat,
         if (toLng != null) 'toLng': toLng,
         'price': price,
+        if (nightPrice != null) 'nightPrice': nightPrice,
         if (sourceId   != null) 'sourceId':   sourceId,
         if (sourceName != null) 'sourceName': sourceName,
       };
@@ -56,6 +60,7 @@ class ClientRoute {
     double?  toLat,
     double?  toLng,
     double?  price,
+    double?  nightPrice,
     String?  sourceId,
     String?  sourceName,
   }) =>
@@ -64,6 +69,7 @@ class ClientRoute {
         toLat:      toLat      ?? this.toLat,
         toLng:      toLng      ?? this.toLng,
         price:      price      ?? this.price,
+        nightPrice: nightPrice ?? this.nightPrice,
         sourceId:   sourceId   ?? this.sourceId,
         sourceName: sourceName ?? this.sourceName,
       );

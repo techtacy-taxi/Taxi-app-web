@@ -74,7 +74,11 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
   final _doyCtrl          = TextEditingController();
   final _taxAddressCtrl   = TextEditingController();
   final _kadCtrl          = TextEditingController();
-  final _invoiceApiKeyCtrl = TextEditingController();
+  final _invoiceApiKeyCtrl = TextEditingController(); // Epsilon: Subscription Key
+  final _epsilonEmailCtrl = TextEditingController();
+  final _epsilonPasswordCtrl = TextEditingController();
+  final _epsilonItemCodeCtrl = TextEditingController();
+  bool _hasEpsilonPassword = false;
   final _mydataSubKeyCtrl  = TextEditingController();
   final _mydataUsernameCtrl = TextEditingController();
   String _invoiceProvider = 'none'; // 'none' | 'epsilon' | 'mydata' | 'oxygen'
@@ -82,7 +86,12 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
   // σίγουρος. Προεπιλογές: 11.2 = Απόδειξη Παροχής Υπηρεσιών (B2C, ο πιο
   // συνηθισμένος τύπος για μεμονωμένους πελάτες), ΦΠΑ 24%.
   String _mydataInvoiceType = '11.2';
-  String _mydataVatCategory = '1'; // 1=24%, 2=13%, 3=6%, 7=0% (εξαίρεση)
+  String _mydataVatCategory = '2'; // 1=24%, 2=13%, 3=6%, 7=0% (εξαίρεση) — 13% επιβεβαιωμένο για μεταφορά ΤΑΞΙ (Ν.5116/2024, άρθρο 61, μόνιμο)
+  // ── Demo/Live ΤΗΣ myDATA — ΞΕΧΩΡΙΣΤΟ από το Demo/Live της Viva! Το ένα
+  // αφορά πληρωμές, το άλλο φορολογικά παραστατικά — δεν πρέπει να είναι
+  // δεμένα μεταξύ τους (π.χ. μπορεί να θες Live Viva αλλά ακόμα δοκιμαστικό
+  // myDATA μέχρι να βεβαιωθείς ότι δουλεύει σωστά). Προεπιλογή: sandbox.
+  bool _mydataDemo = true;
   bool _hasInvoiceApiKey = false;
   bool _hasMydataSubKey = false;
   // ── Ρητός διακόπτης — ΠΑΝΤΑ κλειστός εξ ορισμού. Ακόμα κι αν κάποιος
@@ -201,6 +210,9 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
     _taxAddressCtrl.dispose();
     _kadCtrl.dispose();
     _invoiceApiKeyCtrl.dispose();
+    _epsilonEmailCtrl.dispose();
+    _epsilonPasswordCtrl.dispose();
+    _epsilonItemCodeCtrl.dispose();
     _mydataSubKeyCtrl.dispose();
     _mydataUsernameCtrl.dispose();
     _invoiceSeriesCtrl.dispose();
@@ -254,12 +266,16 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
               _kadCtrl.text            = bi['kad'] as String? ?? '';
               _invoiceProvider         = bi['invoiceProvider'] as String? ?? 'none';
               _hasInvoiceApiKey        = bi['hasInvoiceApiKey'] as bool? ?? false;
+              _epsilonEmailCtrl.text   = bi['epsilonEmail'] as String? ?? '';
+              _epsilonItemCodeCtrl.text = bi['epsilonItemCode'] as String? ?? '';
+              _hasEpsilonPassword      = bi['hasEpsilonPassword'] as bool? ?? false;
               _mydataUsernameCtrl.text = bi['mydataUsername'] as String? ?? '';
               _hasMydataSubKey         = bi['hasMydataSubKey'] as bool? ?? false;
               _invoiceEnabled          = bi['invoiceEnabled'] as bool? ?? false;
               _invoiceSeriesCtrl.text  = bi['invoiceSeries'] as String? ?? '';
               _mydataInvoiceType       = bi['mydataInvoiceType'] as String? ?? '11.2';
-              _mydataVatCategory       = bi['mydataVatCategory'] as String? ?? '1';
+              _mydataVatCategory       = bi['mydataVatCategory'] as String? ?? '2';
+              _mydataDemo              = bi['mydataDemo'] as bool? ?? true;
             });
           }
           // ── Αυτόματη προσυμπλήρωση (ΜΟΝΟ αν είναι ακόμα κενά, ώστε να μην
@@ -1114,15 +1130,21 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
         'invoiceSeries': _invoiceSeriesCtrl.text.trim(),
         'mydataInvoiceType': _mydataInvoiceType,
         'mydataVatCategory': _mydataVatCategory,
+        'mydataDemo': _mydataDemo,
         'mydataUsername': _mydataUsernameCtrl.text.trim(),
         'invoiceApiKey': _invoiceApiKeyCtrl.text.trim(),
+        'epsilonEmail': _epsilonEmailCtrl.text.trim(),
+        'epsilonPassword': _epsilonPasswordCtrl.text.trim(),
+        'epsilonItemCode': _epsilonItemCodeCtrl.text.trim(),
         'mydataSubKey': _mydataSubKeyCtrl.text.trim(),
       });
       if (res.data['ok'] == true) {
         setState(() {
           if (_invoiceApiKeyCtrl.text.trim().isNotEmpty) _hasInvoiceApiKey = true;
+          if (_epsilonPasswordCtrl.text.trim().isNotEmpty) _hasEpsilonPassword = true;
           if (_mydataSubKeyCtrl.text.trim().isNotEmpty) _hasMydataSubKey = true;
           _invoiceApiKeyCtrl.clear();
+          _epsilonPasswordCtrl.clear();
           _mydataSubKeyCtrl.clear();
         });
       }
@@ -1140,6 +1162,46 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
     } finally {
       if (mounted) setState(() => _savingReceipt = false);
     }
+  }
+
+  Widget _mydataStep(String number, String text) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 18, height: 18,
+            margin: const EdgeInsets.only(top: 1),
+            decoration: BoxDecoration(color: Colors.green.shade700, shape: BoxShape.circle),
+            alignment: Alignment.center,
+            child: Text(number, style: const TextStyle(fontSize: 10, color: Colors.white, fontWeight: FontWeight.bold)),
+          ),
+          const SizedBox(width: 8),
+          Expanded(child: Text(text, style: TextStyle(fontSize: 11.5, color: Colors.green.shade900))),
+        ],
+      ),
+    );
+  }
+
+  Widget _epsilonStep(String number, String text) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 18, height: 18,
+            margin: const EdgeInsets.only(top: 1),
+            decoration: BoxDecoration(color: Colors.blue.shade700, shape: BoxShape.circle),
+            alignment: Alignment.center,
+            child: Text(number, style: const TextStyle(fontSize: 10, color: Colors.white, fontWeight: FontWeight.bold)),
+          ),
+          const SizedBox(width: 8),
+          Expanded(child: Text(text, style: TextStyle(fontSize: 11.5, color: Colors.blue.shade900))),
+        ],
+      ),
+    );
   }
 
   Widget _buildReceiptTab() {
@@ -1247,19 +1309,76 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
           const SizedBox(height: 12),
 
           if (_invoiceProvider == 'epsilon') ...[
-            Text(_hasInvoiceApiKey
-                ? 'Έχει ήδη αποθηκευτεί API key.'
-                : 'Δεν έχει μπει ακόμα API key.',
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              margin: const EdgeInsets.only(bottom: 12),
+              decoration: BoxDecoration(
+                color: Colors.blue.shade50,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: Colors.blue.shade200),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Βήματα πριν συμπληρώσεις τα παρακάτω:',
+                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12.5, color: Colors.blue.shade900)),
+                  const SizedBox(height: 6),
+                  _epsilonStep('1', 'Κάνε συνδρομή στο Epsilon Smart (epsilonnet.gr), αν δεν έχεις ήδη.'),
+                  _epsilonStep('2', 'Μπες στο myaccount.epsilonnet.gr → βρες τη συνδρομή σου → '
+                      'πάτησε το κουμπί που δείχνει το «Subscription Key» και αντέγραψέ το.'),
+                  _epsilonStep('3', '(Συνιστάται) Από το ίδιο σημείο, «Ενέργειες» → «Δημιουργία χρήστη API» — '
+                      'θα πάρεις ξεχωριστό email/κωδικό ειδικά για τη σύνδεση, χωρίς να εκθέσεις τον προσωπικό σου.'),
+                  _epsilonStep('4', 'Μέσα στο Epsilon Smart, φτιάξε μία «Υπηρεσία» (π.χ. «Μεταφορά Ταξί») — '
+                      'Είδη/Υπηρεσίες → Νέο. Κράτα τον κωδικό της.'),
+                  _epsilonStep('5', 'Συμπλήρωσε τα 4 πεδία παρακάτω με ό,τι πήρες στα βήματα 2-4, και πάτησε Αποθήκευση.'),
+                  _epsilonStep('6', 'Άνοιξε τον διακόπτη «Αυτόματη έκδοση παραστατικού» πιο πάνω μόνο αφού '
+                      'δοκιμάσεις με μία πραγματική κράτηση και δεις ότι βγήκε σωστά το παραστατικό.'),
+                ],
+              ),
+            ),
+            Text(_hasInvoiceApiKey && _hasEpsilonPassword
+                ? 'Έχουν ήδη αποθηκευτεί τα στοιχεία σύνδεσης.'
+                : 'Λείπουν ακόμα στοιχεία σύνδεσης.',
                 style: TextStyle(fontSize: 11.5, color: Colors.grey[600])),
-            const SizedBox(height: 6),
+            const SizedBox(height: 8),
             TextField(
               controller: _invoiceApiKeyCtrl,
               obscureText: true,
               decoration: InputDecoration(
                   isDense: true,
-                  labelText: 'API Key Epsilon Smart',
+                  labelText: 'Subscription Key',
                   hintText: _hasInvoiceApiKey ? '•••••••••• (ήδη αποθηκευμένο)' : null,
+                  helperText: 'Από τη σελίδα προβολής της συνδρομής σου στο myaccount.epsilonnet.gr',
                   border: const OutlineInputBorder()),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _epsilonEmailCtrl,
+              decoration: const InputDecoration(
+                  isDense: true, labelText: 'Email σύνδεσης Epsilon Smart', border: OutlineInputBorder()),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _epsilonPasswordCtrl,
+              obscureText: true,
+              decoration: InputDecoration(
+                  isDense: true,
+                  labelText: 'Κωδικός πρόσβασης',
+                  hintText: _hasEpsilonPassword ? '•••••••••• (ήδη αποθηκευμένο)' : null,
+                  helperText: 'Συνιστάται να φτιάξεις ξεχωριστό «Χρήστη API» (myaccount.epsilonnet.gr → '
+                      'Συνδρομή → Ενέργειες → Δημιουργία χρήστη API) αντί για τον προσωπικό σου κωδικό.',
+                  border: const OutlineInputBorder()),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _epsilonItemCodeCtrl,
+              decoration: const InputDecoration(
+                  isDense: true,
+                  labelText: 'Κωδικός υπηρεσίας στο Epsilon Smart',
+                  helperText: 'Πρέπει να έχεις ήδη δημιουργήσει μία «Υπηρεσία» (π.χ. «Μεταφορά Ταξί») '
+                      'στο Epsilon Smart και να βάλεις εδώ τον κωδικό της.',
+                  border: OutlineInputBorder()),
             ),
           ],
 
@@ -1283,6 +1402,36 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
           ],
 
           if (_invoiceProvider == 'mydata') ...[
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              margin: const EdgeInsets.only(bottom: 12),
+              decoration: BoxDecoration(
+                color: Colors.green.shade50,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: Colors.green.shade200),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Βήματα πριν συμπληρώσεις τα παρακάτω:',
+                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12.5, color: Colors.green.shade900)),
+                  const SizedBox(height: 6),
+                  _mydataStep('1', 'Μπες στο aade.gr/mydata με τους κωδικούς Taxisnet της επιχείρησης.'),
+                  _mydataStep('2', 'Βρες τη «Φόρμα εγγραφής στο myDATA REST API» και συμπλήρωσέ τη — '
+                      'είναι εντελώς δωρεάν.'),
+                  _mydataStep('3', 'Θα πάρεις ένα Username και ένα Subscription Key (κλειδί συνδρομητή) — '
+                      'κράτα τα και τα δύο.'),
+                  _mydataStep('4', 'Συμπλήρωσε τα Username/Subscription Key παρακάτω και πάτησε Αποθήκευση.'),
+                  _mydataStep('5', 'Άφησε το Demo/Sandbox ενεργό (μπλε) όσο δοκιμάζεις — δεν μετράει σαν '
+                      'πραγματικό παραστατικό.'),
+                  _mydataStep('6', 'Κάνε μία δοκιμαστική κράτηση/πληρωμή και έλεγξε στα Firebase logs τη γραμμή '
+                      '«mydata receipt issued, MARK:» — αν εμφανιστεί, δούλεψε σωστά.'),
+                  _mydataStep('7', 'Μόνο τότε γύρνα το διακόπτη πιο κάτω σε Live, ΚΑΙ άνοιξε τον διακόπτη '
+                      '«Αυτόματη έκδοση παραστατικού» πιο πάνω.'),
+                ],
+              ),
+            ),
             Text(_hasMydataSubKey
                 ? 'Έχει ήδη αποθηκευτεί κλειδί συνδρομητή myDATA.'
                 : 'Δεν έχει μπει ακόμα κλειδί συνδρομητή myDATA.',
@@ -1301,13 +1450,37 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
                   isDense: true,
                   labelText: 'Subscription Key myDATA',
                   hintText: _hasMydataSubKey ? '•••••••••• (ήδη αποθηκευμένο)' : null,
-                  helperText: 'Εγγραφή δωρεάν στο myDATA REST API μέσω Taxisnet — '
-                      'aade.gr/mydata → «Φόρμα εγγραφής στο myDATA REST API».',
                   border: const OutlineInputBorder()),
             ),
             const SizedBox(height: 12),
-            Text('⚠️ Ρώτα τον λογιστή σου να επιβεβαιώσει τα παρακάτω δύο:',
-                style: TextStyle(fontSize: 11, color: Colors.orange.shade900, fontWeight: FontWeight.bold)),
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: _mydataDemo ? Colors.blue.shade50 : Colors.red.shade50,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: _mydataDemo ? Colors.blue.shade200 : Colors.red.shade300),
+              ),
+              child: SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text(_mydataDemo ? 'Δοκιμαστικό (Sandbox)' : 'Πραγματικό (Live)',
+                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold,
+                        color: _mydataDemo ? Colors.blue.shade900 : Colors.red.shade900)),
+                subtitle: Text(
+                    _mydataDemo
+                        ? 'Ασφαλές — τα παραστατικά ΔΕΝ μετράνε πραγματικά, μόνο δοκιμή σύνδεσης. '
+                          'Ανεξάρτητο από το Demo/Live της Viva.'
+                        : '⚠️ Εκδίδονται ΠΡΑΓΜΑΤΙΚΑ, νόμιμα παραστατικά. Άλλαξε το μόνο αφού έχεις '
+                          'δοκιμάσει με επιτυχία στο sandbox.',
+                    style: const TextStyle(fontSize: 10.5)),
+                value: !_mydataDemo,
+                onChanged: (v) => setState(() => _mydataDemo = !v),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Text('Ο χαρακτηρισμός εσόδων μπαίνει αυτόματα σωστά (E3_561_003/E3_561_001). '
+                'Το ΦΠΑ 13% είναι προεπιλεγμένο — επιβεβαιωμένο για μεταφορά ΤΑΞΙ (Ν.5116/2024). '
+                'Άλλαξέ το μόνο αν η δραστηριότητά σου διαφέρει:',
+                style: TextStyle(fontSize: 11, color: Colors.grey[600])),
             const SizedBox(height: 8),
             DropdownButtonFormField<String>(
               initialValue: _mydataInvoiceType,
@@ -1330,7 +1503,7 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
                 DropdownMenuItem(value: '3', child: Text('6%')),
                 DropdownMenuItem(value: '7', child: Text('Χωρίς ΦΠΑ / εξαίρεση')),
               ],
-              onChanged: (v) => setState(() => _mydataVatCategory = v ?? '1'),
+              onChanged: (v) => setState(() => _mydataVatCategory = v ?? '2'),
             ),
           ],
 

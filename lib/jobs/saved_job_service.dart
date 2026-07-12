@@ -131,6 +131,9 @@ class SavedJob {
   final bool     shuttleSharedIsPickup; // true = το κοινό σημείο είναι η ΠΑΡΑΛΑΒΗ (πολλαπλές αφήσεις)
   final List<String> mergedChildIds;    // ids των αρχικών savedJobs που απορροφήθηκαν εδώ
   final String?  tenantId;              // multi-tenant — απαραίτητο για rules στο container doc
+  final String?  invoiceMark;           // MARK myDATA, αν εκδόθηκε αυτόματο παραστατικό
+  final String?  invoiceProvider;       // 'mydata' | 'epsilon' — ποιος το εξέδωσε
+  final bool     wantsInvoice;          // αν ο πελάτης ζήτησε Τιμολόγιο αντί για Απόδειξη
 
   const SavedJob({
     required this.id,
@@ -152,6 +155,9 @@ class SavedJob {
     this.shuttleSharedIsPickup = false,
     this.mergedChildIds = const [],
     this.tenantId,
+    this.invoiceMark,
+    this.invoiceProvider,
+    this.wantsInvoice = false,
   });
 
   /// True αν η δουλειά δημιουργήθηκε από τη δημόσια φόρμα της ιστοσελίδας.
@@ -184,6 +190,9 @@ class SavedJob {
       shuttleSharedIsPickup: d['shuttleSharedIsPickup'] == true,
       mergedChildIds: (d['mergedChildIds'] as List<dynamic>?)?.map((e) => e as String).toList() ?? const [],
       tenantId: d['tenantId'] as String?,
+      invoiceMark: d['invoiceMark'] as String?,
+      invoiceProvider: d['invoiceProvider'] as String?,
+      wantsInvoice: d['wantsInvoice'] == true,
     );
   }
 

@@ -1230,6 +1230,30 @@ class _SavedJobCard extends StatelessWidget {
                   ]),
                 ),
               ],
+              // Ένδειξη εκδομένου παραστατικού (MARK) — ξεχωριστή γραμμή, ώστε
+              // να μην κινδυνεύει να προκαλέσει overflow μέσα στη Row τιμής.
+              if (saved.invoiceMark != null) ...[
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  margin: const EdgeInsets.only(bottom: 6),
+                  decoration: BoxDecoration(
+                    color: Colors.indigo.shade50,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(mainAxisSize: MainAxisSize.min, children: [
+                    Icon(Icons.receipt_long_rounded, size: 13, color: Colors.indigo.shade700),
+                    const SizedBox(width: 4),
+                    Flexible(
+                      child: Text(
+                        'MARK: ${saved.invoiceMark}'
+                        '${saved.wantsInvoice == true ? " (Τιμολόγιο)" : ""}',
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(fontSize: 10.5, color: Colors.indigo.shade700, fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                  ]),
+                ),
+              ],
               // Header: checkbox + τιμή + ενέργειες
               Row(children: [
                 // Κουτάκι επιλογής — μόνο αν μπορεί να στείλει (επιλογή = αποστολή)
@@ -1250,6 +1274,7 @@ class _SavedJobCard extends StatelessWidget {
                   )
                 else
                   const SizedBox(width: 8),
+                const SizedBox(width: 8),
                 const SizedBox(width: 6),
                 Text('${job.price.toStringAsFixed(2)}€',
                     style: const TextStyle(
