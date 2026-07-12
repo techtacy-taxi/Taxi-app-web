@@ -1375,6 +1375,15 @@ class _PricingConfigTabState extends State<_PricingConfigTab> {
   // μόνο η προκαταβολή (εκτός αν κι αυτή είναι 0%, οπότε δεν μένει καμία
   // πληρωμή και η κράτηση γίνεται κατευθείαν).
   bool _fullPaymentEnabled = true;
+  // ── Λειτουργία «Μόνο πελάτες» — ΔΙΚΟΣ ΤΟΥ διακόπτης του tenant (ΟΧΙ ο
+  // παλιός Google Places του master). Αν ενεργός, τα «Από»/«Προς» γίνονται
+  // dropdown ΑΠΟΚΛΕΙΣΤΙΚΑ με πελάτες — καμία ελεύθερη πληκτρολόγηση, καμία
+  // «Άλλο» επιλογή. Αν δεν ταιριάξει διαδρομή πελάτη → WhatsApp.
+  bool _clientsOnlyBooking = false;
+  // ── Λειτουργία «Κατάλογος Από/Προς» — ΕΝΩ είναι ανοιχτό το Places, δείχνει
+  // ΠΡΩΤΑ dropdown πελατών με «Άλλο» στο τέλος. Αν διαλέξει «Άλλο», ανοίγει
+  // το κανονικό πεδίο με πλήρες Google Places.
+  bool _clientsCatalogMode = false;
 
   // ── Ώρες αναχώρησης Shuttle — σταθερό πρόγραμμα (π.χ. κάθε 13:00 και
   // 15:00). Αν έχει ζώνη, ισχύει ΜΟΝΟ για αυτή τη ζώνη· αλλιώς για όλες.
@@ -1445,6 +1454,8 @@ class _PricingConfigTabState extends State<_PricingConfigTab> {
               : dynamicDiscount.toString();
 
           _fullPaymentEnabled = data['fullPaymentEnabled'] != false;
+          _clientsOnlyBooking = data['clientsOnlyBooking'] == true;
+          _clientsCatalogMode = data['clientsCatalogMode'] == true;
 
           final rawSlots = (data['shuttleTimeSlots'] as List<dynamic>?) ?? [];
           _shuttleSlots = rawSlots
@@ -1616,6 +1627,52 @@ class _PricingConfigTabState extends State<_PricingConfigTab> {
                     style: TextStyle(fontSize: 11)),
                 value: _fullPaymentEnabled,
                 onChanged: (v) => setState(() => _fullPaymentEnabled = v),
+              ),
+
+              const SizedBox(height: 20),
+              const Divider(),
+              const SizedBox(height: 8),
+              Row(children: [
+                Icon(Icons.list_alt_rounded, size: 18, color: Colors.deepPurple.shade700),
+                const SizedBox(width: 6),
+                const Text('Πεδία «Από»/«Προς» στη δημόσια φόρμα',
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+              ]),
+              const SizedBox(height: 4),
+              Text(
+                'Αυτά τα δύο είναι ΞΕΧΩΡΙΣΤΑ από τον διακόπτη Google Places του master — '
+                'εσύ τα ελέγχεις μόνος σου. Ενεργοποίησε ΤΟ ΠΟΛΥ ένα από τα δύο.',
+                style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+              ),
+              const SizedBox(height: 10),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Μόνο πελάτες (χωρίς πληκτρολόγηση)',
+                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                subtitle: const Text(
+                    'Το «Από»/«Προς» γίνονται dropdown ΑΠΟΚΛΕΙΣΤΙΚΑ με πελάτες — καμία '
+                    'ελεύθερη πληκτρολόγηση. Αν δεν ταιριάξει διαδρομή πελάτη, στέλνεται '
+                    'σε WhatsApp αντί για τιμή.',
+                    style: TextStyle(fontSize: 11)),
+                value: _clientsOnlyBooking,
+                onChanged: (v) => setState(() {
+                  _clientsOnlyBooking = v;
+                  if (v) _clientsCatalogMode = false;
+                }),
+              ),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Κατάλογος Από/Προς (με «Άλλο»)',
+                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                subtitle: const Text(
+                    'Δείχνει πρώτα λίστα πελατών για «Από»/«Προς», με «Άλλο» στο τέλος. '
+                    'Αν διαλέξει «Άλλο», ανοίγει το κανονικό πεδίο με πλήρες Google Places.',
+                    style: TextStyle(fontSize: 11)),
+                value: _clientsCatalogMode,
+                onChanged: (v) => setState(() {
+                  _clientsCatalogMode = v;
+                  if (v) _clientsOnlyBooking = false;
+                }),
               ),
 
               const SizedBox(height: 20),
@@ -1852,6 +1909,8 @@ class _PricingConfigTabState extends State<_PricingConfigTab> {
       'dynamicDiscountPercent': (double.tryParse(_dynamicDiscountCtrl.text.replaceAll(',', '.')) ?? 8)
           .clamp(0, 90),
       'fullPaymentEnabled': _fullPaymentEnabled,
+      'clientsOnlyBooking': _clientsOnlyBooking,
+      'clientsCatalogMode': _clientsCatalogMode,
       'shuttleTimeSlots': _shuttleSlots
           .map((s) => {'time': s.time, if (s.zoneId != null) 'zoneId': s.zoneId})
           .toList(),

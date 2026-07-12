@@ -2977,7 +2977,7 @@ exports.estimatePrice = onRequest(
         cachedRoutePolyline: b.cachedRoutePolyline || null,
         needMap: b.needMap === true,
         tenantId: s(b.tenantId) || "default",
-        clientsOnlyMode: b.clientsOnlyMode === true,
+        clientsOnlyMode: cfg.clientsOnlyBooking === true,
       });
       if (result.outsideAttica && !gateReasons.includes("outside_attica")) {
         gateReasons.push("outside_attica");
@@ -3558,14 +3558,15 @@ exports.createVivaOrder = onRequest(
       const dialCode = (phone.match(/^\+\d+/) || [""])[0];
       const isGreek = lang === "el" ? true : dialCode === "+30";
 
-      // ── Places απενεργοποιημένο για τον tenant; Το επιβάλλουμε ΕΔΩ από το
-      // πραγματικό tenant doc — ΔΕΝ εμπιστευόμαστε ό,τι έστειλε ο client,
-      // για να μην μπορεί να παρακαμφθεί ο περιορισμός «μόνο πελάτες».
-      let placesEnabledForTenant = true;
+      // ── «Μόνο πελάτες» — ΔΙΚΟΣ ΤΟΥ tenant διακόπτης (Δυναμικοί Τύποι),
+      // ΞΕΧΩΡΙΣΤΟΣ από το placesEnabled του master. Το επιβάλλουμε ΕΔΩ από
+      // το πραγματικό pricing config — ΔΕΝ εμπιστευόμαστε ό,τι έστειλε ο
+      // client, για να μην μπορεί να παρακαμφθεί ο περιορισμός.
+      let clientsOnlyBookingForTenant = false;
       try {
-        const tDocForPlaces = tenantCfg || (await getFirestore().collection("tenants").doc(tenantId).get()).data();
-        if (tDocForPlaces && tDocForPlaces.placesEnabled === false) placesEnabledForTenant = false;
-      } catch (e) { /* προεπιλογή true */ }
+        const { cfg: cfgForClientsOnly } = await getPricingData(tenantId);
+        clientsOnlyBookingForTenant = cfgForClientsOnly.clientsOnlyBooking === true;
+      } catch (e) { /* προεπιλογή false */ }
 
       const estimate = await computeEstimate({
         fromLat, fromLng, toLat, toLng, persons, luggage, childSeatCount,
@@ -3574,7 +3575,7 @@ exports.createVivaOrder = onRequest(
         // distance/duration/polyline ΜΙΑ φορά ώστε η εφαρμογή (Flutter) να
         // μην τα ξαναϋπολογίζει ζωντανά κάθε φορά που ανοίγει την κάρτα.
         tenantId,
-        clientsOnlyMode: !placesEnabledForTenant,
+        clientsOnlyMode: clientsOnlyBookingForTenant,
       });
       if (estimate.noRouteAvailable) {
         return res.status(400).json({
@@ -5277,13 +5278,25 @@ exports.listClients = onRequest(
         };
       }).filter((c) => c.name && c.fromLat != null && c.fromLng != null);
 
+      // ── placesEnabled: ΠΑΛΙΟΣ διακόπτης, ελέγχεται από τον MASTER στο
+      // tenants/{id} doc — αν κλειστός, ΔΕΝ αρχικοποιείται καθόλου το widget
+      // Google Places Autocomplete (εξοικονόμηση κόστους), αλλά ΠΑΡΑΜΕΝΕΙ
+      // ελεύθερη πληκτρολόγηση/πελάτες όπως πριν — ΚΑΜΙΑ σχέση με τα δύο
+      // παρακάτω, που είναι ΔΙΚΑ ΤΟΥ tenant, μέσα στους Δυναμικούς Τύπους.
       let placesEnabled = true;
       try {
         const tDoc = await db.collection("tenants").doc(tenantId).get();
         if (tDoc.exists && tDoc.data().placesEnabled === false) placesEnabled = false;
       } catch (e) { /* προεπιλογή true αν αποτύχει */ }
 
-      return res.status(200).json({ ok: true, clients, placesEnabled });
+      let clientsOnlyBooking = false, clientsCatalogMode = false;
+      try {
+        const { cfg } = await getPricingData(tenantId);
+        clientsOnlyBooking = cfg.clientsOnlyBooking === true;
+        clientsCatalogMode = cfg.clientsCatalogMode === true;
+      } catch (e) { /* προεπιλογή false αν αποτύχει */ }
+
+      return res.status(200).json({ ok: true, clients, placesEnabled, clientsOnlyBooking, clientsCatalogMode });
     } catch (e) {
       console.error("listClients error:", e);
       return res.status(500).json({ ok: false, error: "server_error" });
