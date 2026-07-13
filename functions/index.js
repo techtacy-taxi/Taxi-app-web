@@ -2996,7 +2996,8 @@ exports.estimatePrice = onRequest(
         distanceKm: result.distanceKm,
         durationMin: result.durationMin,
         routePolyline: result.routePolyline,
-        depositPercent: Number(cfg.depositPercent) > 0 ? Number(cfg.depositPercent) : 10,
+        depositPercent: (cfg.depositPercent === null || cfg.depositPercent === undefined)
+          ? 10 : Number(cfg.depositPercent),
         fullPaymentEnabled: cfg.fullPaymentEnabled !== false,
         shuttleAvailable: !!result.shuttleAvailable,
         shuttlePricePerPerson: result.shuttlePricePerPerson || null,
@@ -3005,6 +3006,7 @@ exports.estimatePrice = onRequest(
         invoiceEnabled: tenantInvoiceCfg.invoiceEnabled === true,
         invoiceProvider: tenantInvoiceCfg.invoiceProvider || "none",
         clientMatchedName: result.clientMatchedName || null,
+        paymentProvider: resolvePaymentProvider(tenantInvoiceCfg),
       });
     } catch (e) {
       console.error("estimatePrice error:", e);
@@ -3484,6 +3486,152 @@ async function getVivaAccessToken(demo, clientId, clientSecret) {
 
 // ── createVivaOrder: επικυρώνει την κράτηση, υπολογίζει το 10% deposit,
 //    αποθηκεύει pending_bookings, δημιουργεί Viva order, γυρνάει checkoutUrl ──
+async function prepareBookingOrder(req) {
+  const b = req.body || {};
+  const tenantId = s(b.tenantId) || "default";
+  const from = s(b.from), to = s(b.to);
+  const name = s(b.name), phone = s(b.phone);
+  const date = s(b.date), time = s(b.time);
+  if (!from || !to || !name || !phone || !date || !time) {
+    return { ok: false, status: 400, body: { ok: false, error: "missing_fields" } };
+  }
+
+  let tenantCfg = null;
+  if (tenantId !== "default") {
+    const tenantDoc = await getFirestore().collection("tenants").doc(tenantId).get();
+    if (!tenantDoc.exists) {
+      return { ok: false, status: 400, body: { ok: false, error: "unknown_tenant" } };
+    }
+    tenantCfg = tenantDoc.data();
+    if (tenantCfg.active === false) {
+      return { ok: false, status: 403, body: { ok: false, error: "tenant_inactive" } };
+    }
+  }
+
+  const persons = Math.max(1, parseInt(b.persons, 10) || 1);
+  const luggage = Math.max(0, parseInt(b.luggage, 10) || 0);
+  const childSeatCount = Math.max(0, parseInt(b.childSeatCount, 10) || 0);
+  const vehicleType = (s(b.vehicleType) === "van") ? "van" : ((s(b.vehicleType) === "shuttle") ? "shuttle" : ((s(b.vehicleType) === "bus") ? "bus" : "taxi"));
+  const email = s(b.email), flight = s(b.flight), note = s(b.note);
+  const lang = s(b.lang) || "el";
+
+  if (persons > 8 && vehicleType !== "bus") {
+    return { ok: false, status: 400, body: {
+      ok: false, error: "van_capacity",
+      message: lang === "el"
+        ? "Πάνω από 8 άτομα χρειάζονται Λεωφορείο — επικοινωνήστε μαζί μας μέσω WhatsApp."
+        : "More than 8 people need a Bus — please contact us via WhatsApp.",
+    } };
+  }
+
+  const num = (v) => (v == null || v === "" || isNaN(Number(v))) ? null : Number(v);
+  const fromLat = num(b.fromLat), fromLng = num(b.fromLng);
+  const toLat = num(b.toLat), toLng = num(b.toLng);
+
+  const { cfg } = await getPricingData(tenantId);
+  const scheduledNaive = athensNaiveFromDateTimeStrings(date, time);
+  const simNaive = athensNaiveDate(new Date());
+  const gateReasons = computeGate(simNaive, scheduledNaive, persons, luggage, cfg);
+
+  const dialCode = (phone.match(/^\+\d+/) || [""])[0];
+  const isGreek = lang === "el" ? true : dialCode === "+30";
+
+  let clientsOnlyBookingForTenant = false;
+  try {
+    clientsOnlyBookingForTenant = cfg.clientsOnlyBooking === true;
+  } catch (e) { }
+
+  const estimate = await computeEstimate({
+    fromLat, fromLng, toLat, toLng, persons, luggage, childSeatCount,
+    vehicleType, isGreek, scheduledNaive, apiKey: ROUTES_API_KEY.value(),
+    needMap: true,
+    tenantId,
+    clientsOnlyMode: clientsOnlyBookingForTenant,
+  });
+  if (estimate.noRouteAvailable) {
+    return { ok: false, status: 400, body: {
+      ok: false, error: "no_client_route",
+      message: lang === "el"
+        ? "Δεν βρέθηκε ορισμένη διαδρομή πελάτη — επικοινωνήστε μαζί μας μέσω WhatsApp."
+        : "No defined client route found — please contact us via WhatsApp.",
+    } };
+  }
+  if (estimate.outsideAttica && !gateReasons.includes("outside_attica")) {
+    gateReasons.push("outside_attica");
+  }
+
+  if (vehicleType === "shuttle" && scheduledNaive) {
+    const { zones: zonesForSlots } = await getPricingData(tenantId);
+    const fz = fromLat != null && fromLng != null ? matchZone(fromLat, fromLng, zonesForSlots) : null;
+    const tz = toLat != null && toLng != null ? matchZone(toLat, toLng, zonesForSlots) : null;
+    const reqMin = scheduledNaive.getUTCHours() * 60 + scheduledNaive.getUTCMinutes();
+    const slots = (cfg.shuttleTimeSlots || []).filter((sl) =>
+      !sl.zoneId || sl.zoneId === (fz && fz.id) || sl.zoneId === (tz && tz.id));
+    const matchesSlot = slots.some((sl) => {
+      const parts = String(sl.time).split(":");
+      return ((Number(parts[0]) || 0) * 60 + (Number(parts[1]) || 0)) === reqMin;
+    });
+    if (!matchesSlot) {
+      return { ok: false, status: 400, body: {
+        ok: false,
+        error: "invalid_shuttle_time",
+        message: lang === "el"
+          ? "Η ώρα του shuttle πρέπει να ταιριάζει με ένα από τα προγραμματισμένα δρομολόγια."
+          : "The shuttle time must match one of the scheduled departures.",
+      } };
+    }
+  }
+
+  if (gateReasons.length) {
+    return { ok: false, status: 400, body: { ok: false, error: "outside_booking_window", reasons: gateReasons } };
+  }
+
+  const payFull = b.payFull === true;
+  const depositPct = (cfg.depositPercent === null || cfg.depositPercent === undefined)
+    ? 10 : Number(cfg.depositPercent);
+  const depositEquivalent = Math.ceil(estimate.price * (depositPct / 100));
+  const chargeAmount = payFull ? Math.ceil(estimate.price) : depositEquivalent;
+
+  if (chargeAmount <= 0) {
+    return { ok: false, status: 400, body: { ok: false, error: "invalid_amount" } };
+  }
+
+  if (b.wantsInvoice === true && !isValidGreekAfm(s(b.invoiceAfm))) {
+    return { ok: false, status: 400, body: {
+      ok: false, error: "invalid_afm",
+      message: lang === "el" ? "Μη έγκυρο ΑΦΜ για το τιμολόγιο." : "Invalid VAT number for the invoice.",
+    } };
+  }
+
+  const jobPrice = Math.max(0, estimate.price - depositEquivalent);
+  const db = getFirestore();
+  const pendingRef = await db.collection("pending_bookings").add({
+    status: "pending",
+    tenantId,
+    from, to, fromLat, fromLng, toLat, toLng,
+    clientName: name, clientPhone: phone, clientEmail: email,
+    flightOrShip: flight, persons, luggage, childSeatCount,
+    vehicleType, note, lang,
+    date, time,
+    price: jobPrice,
+    depositAmount: chargeAmount,
+    fullyPaid: payFull,
+    routeKm: estimate.distanceKm || null,
+    routePolyline: estimate.routePolyline || null,
+    wantsInvoice: b.wantsInvoice === true,
+    invoiceAfm: s(b.invoiceAfm) || null,
+    invoiceCompanyName: s(b.invoiceCompanyName) || null,
+    invoiceAddress: s(b.invoiceAddress) || null,
+    createdAt: FieldValue.serverTimestamp(),
+  });
+
+  return {
+    ok: true, tenantId, tenantCfg, from, to, name, phone, date, time, lang,
+    persons, luggage, childSeatCount, vehicleType, email, flight, note,
+    payFull, chargeAmount, pendingRef,
+  };
+}
+
 exports.createVivaOrder = onRequest(
   {
     region: "us-central1", cors: BOOKING_ALLOWED_ORIGINS, memory: "256MiB",
@@ -3492,203 +3640,23 @@ exports.createVivaOrder = onRequest(
   async (req, res) => {
     if (req.method !== "POST") return res.status(405).json({ ok: false, error: "method_not_allowed" });
     try {
-      const b = req.body || {};
-      const tenantId = s(b.tenantId) || "default";
-      const from = s(b.from), to = s(b.to);
-      const name = s(b.name), phone = s(b.phone);
-      const date = s(b.date), time = s(b.time);
-      if (!from || !to || !name || !phone || !date || !time) {
-        return res.status(400).json({ ok: false, error: "missing_fields" });
-      }
+      const prep = await prepareBookingOrder(req);
+      if (!prep.ok) return res.status(prep.status).json(prep.body);
+      const { tenantId, tenantCfg, from, to, name, phone, date, time, lang,
+        vehicleType, email, payFull, chargeAmount, pendingRef } = prep;
 
-      // ── Multi-tenant: αν δεν είναι ο δικός σου ("default") tenant, φόρτωσε
-      // τα στοιχεία του (active status από Firestore, Viva credentials από
-      // Secret Manager) — ΠΡΙΝ συνεχίσουμε.
-      let tenantCfg = null;
       let tenantViva = null;
       if (tenantId !== "default") {
-        const tenantDoc = await getFirestore().collection("tenants").doc(tenantId).get();
-        if (!tenantDoc.exists) {
-          return res.status(400).json({ ok: false, error: "unknown_tenant" });
-        }
-        tenantCfg = tenantDoc.data();
-        if (tenantCfg.active === false) {
-          return res.status(403).json({ ok: false, error: "tenant_inactive" });
-        }
         tenantViva = await getTenantVivaCredentials(tenantId);
         if (!tenantViva.clientId || !tenantViva.clientSecret) {
+          await pendingRef.delete().catch(() => {});
           return res.status(500).json({ ok: false, error: "tenant_viva_not_configured" });
         }
       }
 
-      const persons = Math.max(1, parseInt(b.persons, 10) || 1);
-      const luggage = Math.max(0, parseInt(b.luggage, 10) || 0);
-      const childSeatCount = Math.max(0, parseInt(b.childSeatCount, 10) || 0);
-      const vehicleType = (s(b.vehicleType) === "van") ? "van" : ((s(b.vehicleType) === "shuttle") ? "shuttle" : ((s(b.vehicleType) === "bus") ? "bus" : "taxi"));
-      const email = s(b.email), flight = s(b.flight), note = s(b.note);
-      const lang = s(b.lang) || "el";
-
-      // ── Πάνω από 8 άτομα: το Βαν παίρνει ΜΕΧΡΙ 8 — χρειάζεται Λεωφορείο.
-      // Το επιτρέπουμε ΜΟΝΟ αν vehicleType==="bus" (και υπάρχει ορισμένη
-      // τιμή ζώνης για λεωφορείο — ελέγχεται παρακάτω στο computeEstimate).
-      // Αλλιώς ΠΟΤΕ δεν επιτρέπουμε online πληρωμή σε Ταξί/Βαν πάνω από 8 —
-      // ασφάλεια server-side, ανεξάρτητα από το αν παρακάμφθηκε ο έλεγχος
-      // στο client (JavaScript της φόρμας).
-      if (persons > 8 && vehicleType !== "bus") {
-        return res.status(400).json({
-          ok: false,
-          error: "van_capacity",
-          message: lang === "el"
-            ? "Πάνω από 8 άτομα χρειάζονται Λεωφορείο — επικοινωνήστε μαζί μας μέσω WhatsApp."
-            : "More than 8 people need a Bus — please contact us via WhatsApp.",
-        });
-      }
-
-      const num = (v) => (v == null || v === "" || isNaN(Number(v))) ? null : Number(v);
-      const fromLat = num(b.fromLat), fromLng = num(b.fromLng);
-      const toLat = num(b.toLat), toLng = num(b.toLng);
-
-      // ── ΙΔΙΟΣ έλεγχος μπλάκαουτ/προθεσμίας/μεγάλης παραγγελίας με το
-      //    submitPublicBooking — ΞΑΝΑ, server-side, ΠΟΤΕ από τον client.
-      const { cfg } = await getPricingData(tenantId);
-      const scheduledNaive = athensNaiveFromDateTimeStrings(date, time);
-      const simNaive = athensNaiveDate(new Date());
-      const gateReasons = computeGate(simNaive, scheduledNaive, persons, luggage, cfg);
-
-      const dialCode = (phone.match(/^\+\d+/) || [""])[0];
-      const isGreek = lang === "el" ? true : dialCode === "+30";
-
-      // ── «Μόνο πελάτες» — ΔΙΚΟΣ ΤΟΥ tenant διακόπτης (Δυναμικοί Τύποι),
-      // ΞΕΧΩΡΙΣΤΟΣ από το placesEnabled του master. Το επιβάλλουμε ΕΔΩ από
-      // το πραγματικό pricing config — ΔΕΝ εμπιστευόμαστε ό,τι έστειλε ο
-      // client, για να μην μπορεί να παρακαμφθεί ο περιορισμός.
-      let clientsOnlyBookingForTenant = false;
-      try {
-        const { cfg: cfgForClientsOnly } = await getPricingData(tenantId);
-        clientsOnlyBookingForTenant = cfgForClientsOnly.clientsOnlyBooking === true;
-      } catch (e) { /* προεπιλογή false */ }
-
-      const estimate = await computeEstimate({
-        fromLat, fromLng, toLat, toLng, persons, luggage, childSeatCount,
-        vehicleType, isGreek, scheduledNaive, apiKey: ROUTES_API_KEY.value(),
-        needMap: true, // ΠΑΝΤΑ εδώ — πραγματική κράτηση, αποθηκεύουμε
-        // distance/duration/polyline ΜΙΑ φορά ώστε η εφαρμογή (Flutter) να
-        // μην τα ξαναϋπολογίζει ζωντανά κάθε φορά που ανοίγει την κάρτα.
-        tenantId,
-        clientsOnlyMode: clientsOnlyBookingForTenant,
-      });
-      if (estimate.noRouteAvailable) {
-        return res.status(400).json({
-          ok: false, error: "no_client_route",
-          message: lang === "el"
-            ? "Δεν βρέθηκε ορισμένη διαδρομή πελάτη — επικοινωνήστε μαζί μας μέσω WhatsApp."
-            : "No defined client route found — please contact us via WhatsApp.",
-        });
-      }
-      if (estimate.outsideAttica && !gateReasons.includes("outside_attica")) {
-        gateReasons.push("outside_attica");
-      }
-
-      // ── Shuttle: η ζητούμενη ώρα ΠΡΕΠΕΙ να ταιριάζει ακριβώς με κάποιο
-      // δρομολόγιο του σταθερού προγράμματος — ΠΟΤΕ ελεύθερη ώρα, ασφάλεια
-      // server-side ανεξάρτητα από το τι έστειλε ο client.
-      if (vehicleType === "shuttle" && scheduledNaive) {
-        const { zones: zonesForSlots } = await getPricingData(tenantId);
-        const fz = fromLat != null && fromLng != null ? matchZone(fromLat, fromLng, zonesForSlots) : null;
-        const tz = toLat != null && toLng != null ? matchZone(toLat, toLng, zonesForSlots) : null;
-        const reqMin = scheduledNaive.getUTCHours() * 60 + scheduledNaive.getUTCMinutes();
-        const slots = (cfg.shuttleTimeSlots || []).filter((s) =>
-          !s.zoneId || s.zoneId === (fz && fz.id) || s.zoneId === (tz && tz.id));
-        const matchesSlot = slots.some((s) => {
-          const parts = String(s.time).split(":");
-          return ((Number(parts[0]) || 0) * 60 + (Number(parts[1]) || 0)) === reqMin;
-        });
-        if (!matchesSlot) {
-          return res.status(400).json({
-            ok: false,
-            error: "invalid_shuttle_time",
-            message: lang === "el"
-              ? "Η ώρα του shuttle πρέπει να ταιριάζει με ένα από τα προγραμματισμένα δρομολόγια."
-              : "The shuttle time must match one of the scheduled departures.",
-          });
-        }
-      }
-
-      if (gateReasons.length) {
-        return res.status(400).json({ ok: false, error: "outside_booking_window", reasons: gateReasons });
-      }
-
-      // ── ΔΥΟ ΔΙΑΦΟΡΕΤΙΚΑ ΠΟΣΑ — μην τα μπερδέψεις:
-      //   • depositEquivalent = ΠΑΝΤΑ το 10% της αρχικής τιμής (ό,τι κι αν
-      //     επέλεξε ο πελάτης). Είναι το πάγιο περιθώριο του master, και
-      //     αφαιρείται ΠΑΝΤΑ από την τιμή για να προκύψει η «καθαρή» τιμή
-      //     δουλειάς (jobPrice) — έτσι ώστε jobPrice = 49€ και στις δύο
-      //     περιπτώσεις σε ένα ταξίδι 55€ με προκαταβολή 6€, όχι μόνο στην
-      //     απλή προκαταβολή.
-      //   • chargeAmount = πόσο ΠΡΑΓΜΑΤΙΚΑ χρεώνεται στη Viva τώρα
-      //     (depositEquivalent αν 10%, ή ΟΛΟΚΛΗΡΗ η τιμή αν payFull).
-      const payFull = b.payFull === true;
-      const depositPct = Number(cfg.depositPercent) > 0 ? Number(cfg.depositPercent) : 10;
-      const depositEquivalent = Math.ceil(estimate.price * (depositPct / 100));
-      const chargeAmount = payFull ? Math.ceil(estimate.price) : depositEquivalent;
       const depositCents = chargeAmount * 100; // Viva θέλει το amount σε λεπτά
+      const dialCode = (phone.match(/^\+\d+/) || [""])[0];
 
-      // ── ΔΙΑΓΝΩΣΤΙΚΟ (προσωρινό) — καταγράφει ΑΚΡΙΒΩΣ τι έλαβε ο server και
-      // τι υπολόγισε, ώστε αν η χρέωση δεν ταιριάζει με ό,τι έδειχνε η φόρμα
-      // να το βλέπουμε στα Firebase Functions logs αντί να μαντεύουμε.
-      console.log("createVivaOrder DEBUG:", {
-        tenantId, date, time, persons, luggage, childSeatCount, vehicleType,
-        payFull, isGreek, dialCode,
-        "estimate.price": estimate.price,
-        "estimate.nightApplies": estimate.nightApplies,
-        "estimate.zoneMatch": estimate.zoneMatch,
-        "estimate.minChargeApplied": estimate.minChargeApplied,
-        depositEquivalent, chargeAmount,
-      });
-
-      if (chargeAmount <= 0) {
-        return res.status(400).json({ ok: false, error: "invalid_amount" });
-      }
-
-      // ── Αποθηκευμένη τιμή της δουλειάς = αρχική τιμή ΜΕΙΟΝ ΠΑΝΤΑ το
-      // 10%-ισοδύναμο (όχι το πραγματικό ποσό χρέωσης) — έτσι η τιμή που
-      // βλέπει ο οδηγός/master ως «τιμή δουλειάς» είναι πάντα η ίδια,
-      // ανεξάρτητα αν πληρώθηκε 10% ή 100% online.
-      const jobPrice = Math.max(0, estimate.price - depositEquivalent);
-
-      // ── Αποθήκευση της «εκκρεμούς» κράτησης (ΔΕΝ είναι ακόμα saved_jobs) ──
-      const db = getFirestore();
-      // ── Αν ζητήθηκε Τιμολόγιο, το ΑΦΜ ΠΡΕΠΕΙ να είναι έγκυρο — ασφάλεια
-      // server-side, ανεξάρτητα από το αν πέρασε τον έλεγχο στη φόρμα.
-      if (b.wantsInvoice === true && !isValidGreekAfm(s(b.invoiceAfm))) {
-        return res.status(400).json({
-          ok: false, error: "invalid_afm",
-          message: lang === "el" ? "Μη έγκυρο ΑΦΜ για το τιμολόγιο." : "Invalid VAT number for the invoice.",
-        });
-      }
-
-      const pendingRef = await db.collection("pending_bookings").add({
-        status: "pending",
-        tenantId,
-        from, to, fromLat, fromLng, toLat, toLng,
-        clientName: name, clientPhone: phone, clientEmail: email,
-        flightOrShip: flight, persons, luggage, childSeatCount,
-        vehicleType, note, lang,
-        date, time,
-        price: jobPrice,
-        depositAmount: chargeAmount,
-        fullyPaid: payFull,
-        routeKm: estimate.distanceKm || null,
-        routePolyline: estimate.routePolyline || null,
-        // ── Αίτημα Τιμολογίου αντί για Απόδειξη — ανά κράτηση, ΟΧΙ γενική
-        // ρύθμιση. Χρειάζεται ΑΦΜ επιχείρησης· χωρίς αυτό, γίνεται πάντα
-        // η κανονική Απόδειξη (11.2) όπως προεπιλογή.
-        wantsInvoice: b.wantsInvoice === true,
-        invoiceAfm: s(b.invoiceAfm) || null,
-        invoiceCompanyName: s(b.invoiceCompanyName) || null,
-        invoiceAddress: s(b.invoiceAddress) || null,
-        createdAt: FieldValue.serverTimestamp(),
-      });
 
       // ΝΕΟ: το default (δικός σου) λογαριασμός διαβάζεται ΖΩΝΤΑΝΑ από το
       // Secret Manager (readSecret) — ΟΧΙ πια από το deployment-locked
@@ -3765,6 +3733,306 @@ exports.createVivaOrder = onRequest(
     }
   }
 );
+
+exports.createStripeCheckoutSession = onRequest(
+  { region: "us-central1", cors: BOOKING_ALLOWED_ORIGINS, memory: "256MiB", secrets: [ROUTES_API_KEY] },
+  async (req, res) => {
+    if (req.method !== "POST") return res.status(405).json({ ok: false, error: "method_not_allowed" });
+    try {
+      const prep = await prepareBookingOrder(req);
+      if (!prep.ok) return res.status(prep.status).json(prep.body);
+      const { tenantId, tenantCfg, from, to, name, phone, date, time, lang,
+        vehicleType, email, payFull, chargeAmount, pendingRef } = prep;
+
+      const tenantStripe = await getTenantStripeCredentials(tenantId);
+      if (!tenantStripe.secretKey || !tenantStripe.publishableKey) {
+        await pendingRef.delete().catch(() => {});
+        return res.status(500).json({ ok: false, error: "tenant_stripe_not_configured" });
+      }
+
+      const stripe = getStripeClient(tenantStripe.secretKey);
+      const amountCents = chargeAmount * 100;
+
+      const b = req.body || {};
+      const successUrl = s(b.successUrl) || "https://taxiathenstransfers.com/el/booking.html";
+      const cancelUrl = s(b.cancelUrl) || successUrl;
+
+      const label = (lang === "el"
+        ? (payFull ? "Πλήρης πληρωμή · " : "Προκαταβολή · ") + from + " → " + to
+        : (payFull ? "Full payment · " : "Deposit · ") + from + " → " + to);
+
+      let session;
+      try {
+        session = await stripe.checkout.sessions.create({
+          mode: "payment",
+          payment_method_types: ["card"],
+          line_items: [{
+            price_data: {
+              currency: "eur",
+              unit_amount: amountCents,
+              product_data: { name: label },
+            },
+            quantity: 1,
+          }],
+          customer_email: email || undefined,
+          client_reference_id: pendingRef.id,
+          metadata: { pendingBookingId: pendingRef.id, tenantId },
+          success_url: successUrl + (successUrl.includes("?") ? "&" : "?") + "stripe_session_id={CHECKOUT_SESSION_ID}",
+          cancel_url: cancelUrl,
+          expires_at: Math.floor(Date.now() / 1000) + 1800,
+        });
+      } catch (e) {
+        console.error("Stripe create session error:", e.message);
+        await pendingRef.delete().catch(() => {});
+        return res.status(500).json({ ok: false, error: "stripe_session_error" });
+      }
+
+      await pendingRef.update({ stripeSessionId: session.id });
+      return res.status(200).json({ ok: true, checkoutUrl: session.url, depositAmount: chargeAmount });
+    } catch (e) {
+      console.error("createStripeCheckoutSession error:", e);
+      return res.status(500).json({ ok: false, error: "server_error" });
+    }
+  }
+);
+
+async function finalizeSuccessfulPayment(db, pendingRef, pd, providerMeta) {
+  const masterUid = await findMasterUid(pd.tenantId);
+  if (!masterUid) {
+    console.error("finalizeSuccessfulPayment: δεν βρέθηκε master", { tenantId: pd.tenantId });
+    return { ok: false, error: "no_master" };
+  }
+  const me = await db.collection("presence").doc(masterUid).get();
+  const masterName = await resolveOwnerDisplayName(pd.tenantId, me.exists ? me.data() : null);
+
+  const scheduledIso = pd.date + "T" + pd.time + ":00";
+  const scheduledAtMs = Date.parse(scheduledIso);
+  const startDate = isNaN(scheduledAtMs) ? new Date() : new Date(scheduledAtMs);
+
+  const noteLines = [];
+  noteLines.push(pd.fullyPaid
+    ? "📝 Από φόρμα ιστοσελίδας · ⚠️ ΠΡΟΠΛΗΡΩΜΕΝΟ ΔΡΟΜΟΛΟΓΙΟ — δεν εισπράττεις τίποτα από τον πελάτη"
+    : "📝 Από φόρμα ιστοσελίδας · 💳 Πληρώθηκε προκαταβολή online — εισπράττεις μόνο το υπόλοιπο");
+  noteLines.push("Πελάτης: " + pd.clientName + " · " + pd.clientPhone);
+  if (pd.clientEmail) noteLines.push("Email: " + pd.clientEmail);
+  if (pd.flightOrShip) noteLines.push("Πτήση/Πλοίο: " + pd.flightOrShip);
+  noteLines.push("Άτομα: " + pd.persons + " · Βαλίτσες: " + pd.luggage +
+                 (pd.childSeatCount ? " · Παιδικά καθ.: " + pd.childSeatCount : ""));
+  noteLines.push("Όχημα: " + (pd.vehicleType === "van" ? "Βαν" : "Ταξί"));
+  if (pd.note) noteLines.push("Σχόλια: " + pd.note);
+  const fullNote = noteLines.join("\n");
+
+  const { Timestamp } = require("firebase-admin/firestore");
+  const bookingNumber = await nextBookingNumber(pd.tenantId || "default");
+  const savedRef = await db.collection("saved_jobs").add({
+    origin:         "public_form",
+    tenantId:       pd.tenantId || "default",
+    bookingNumber:  bookingNumber,
+    from:           pd.from,
+    to:             pd.to,
+    fromLat:        pd.fromLat,
+    fromLng:        pd.fromLng,
+    toLat:          pd.toLat,
+    toLng:          pd.toLng,
+    clientName:     pd.clientName,
+    clientPhone:    pd.clientPhone,
+    clientEmail:    pd.clientEmail,
+    flightOrShip:   pd.flightOrShip,
+    wantsInvoice:   pd.wantsInvoice === true,
+    invoiceAfm:     pd.invoiceAfm || null,
+    invoiceCompanyName: pd.invoiceCompanyName || null,
+    persons:        pd.persons,
+    luggage:        pd.luggage,
+    childSeatCount: pd.childSeatCount,
+    childSeat:      pd.childSeatCount > 0,
+    routeKm:        pd.routeKm || null,
+    routePolyline:  pd.routePolyline || null,
+    vehicleType:    pd.vehicleType,
+    note:           fullNote,
+    price:          pd.price,
+    scheduledAt:    Timestamp.fromDate(startDate),
+    lang:           pd.lang,
+    ownerUid:       masterUid,
+    ownerName:      masterName,
+    savedAt:        FieldValue.serverTimestamp(),
+    createdAt:      FieldValue.serverTimestamp(),
+    depositPaid:      true,
+    depositAmount:    pd.depositAmount,
+    fullyPaid:        !!pd.fullyPaid,
+    paymentProvider:  providerMeta.paymentProvider,
+    ...providerMeta.fields,
+  });
+
+  await pendingRef.update({ status: "completed", savedJobId: savedRef.id });
+
+  const whenStr = pd.date + " " + pd.time;
+
+  try {
+    const tokens = await getTokensForUid(masterUid);
+    await sendDataOnly(tokens, {
+      type:       "public_booking",
+      savedJobId: savedRef.id,
+      from: pd.from, to: pd.to,
+      clientName: pd.clientName,
+      when:       whenStr,
+      title:      "Νέα κράτηση #" + bookingNumber + " (" + (pd.fullyPaid ? "πληρωμένη πλήρως" : "πληρωμένη προκαταβολή") + ")",
+      body:       pd.from + " → " + pd.to + " · " + pd.clientName + " · " + pd.depositAmount + "€",
+    });
+  } catch (e) {
+    console.error("booking FCM failed:", e);
+  }
+
+  let receiptResult = null;
+  let tPreloaded = null;
+  try {
+    const tid2 = pd.tenantId || "default";
+    const tDoc2 = await db.collection("tenants").doc(tid2).get();
+    tPreloaded = tDoc2.exists ? tDoc2.data() : {};
+    const invoiceReq = pd.wantsInvoice
+      ? { afm: pd.invoiceAfm, companyName: pd.invoiceCompanyName, address: pd.invoiceAddress }
+      : null;
+    receiptResult = await tryIssueMydataReceipt({
+      tenantId: tid2, t: tPreloaded, grossAmount: pd.depositAmount, bookingNumber,
+      invoiceRequest: invoiceReq,
+    });
+    if (!receiptResult) {
+      receiptResult = await tryIssueEpsilonReceipt({
+        tenantId: tid2, t: tPreloaded, grossAmount: pd.depositAmount, bookingNumber,
+        custName: pd.clientName, custPhone: pd.clientPhone, custEmail: pd.clientEmail,
+        invoiceRequest: invoiceReq,
+      });
+    }
+    if (receiptResult) {
+      await savedRef.update({
+        invoiceMark: receiptResult.mark || null,
+        invoiceProvider: receiptResult.provider,
+        invoiceIssuedAt: FieldValue.serverTimestamp(),
+        invoiceGrossAmount: pd.depositAmount,
+      });
+    }
+  } catch (e) {
+    console.error("receipt issuance failed:", e);
+  }
+
+  if (pd.clientEmail) {
+    try {
+      const tid = pd.tenantId || "default";
+      const t = tPreloaded || (await db.collection("tenants").doc(tid).get()).data() || {};
+
+      const useOwnKey = t.hasOwnResendKey && t.emailsEnabled !== true;
+      const noKeyAtAll = !t.hasOwnResendKey && t.emailsEnabled === false;
+
+      if (noKeyAtAll) {
+        console.log("customer email: χωρίς κανένα διαθέσιμο key για tenant", tid, "— παραλείπεται.");
+      } else {
+        const businessName   = t.businessName   || (tid === "default" ? "TaxiAthensTransfers.com" : "Taxi Transfers");
+        const whatsapp       = (t.whatsappNumber || (tid === "default" ? "306936123322" : "")).replace(/[^0-9]/g, "");
+        const logoUrl        = t.logoUrl        || "";
+        const footerPhone    = t.contactPhone   || (tid === "default" ? "+30 693 612 3322" : "");
+        const footerEmail    = t.contactEmail   || (tid === "default" ? "info@taxiathenstransfers.com" : "");
+
+        const fromEmail = tid === "default"
+          ? "booking@taxiathenstransfers.com"
+          : "info@taxiathenstransfers.com";
+
+        let apiKeyOverride = null;
+        if (useOwnKey) {
+          try {
+            apiKeyOverride = await readSecret(tenantSecretId(tid, "resend-api-key"));
+          } catch (e) {
+            console.error("δεν βρέθηκε το δικό key του tenant, fallback στο κοινό:", e.message);
+          }
+        }
+
+        const isEl = (pd.lang || "el") === "el";
+        const waLine = whatsapp
+          ? (isEl
+              ? "Από εδώ και πέρα η επικοινωνία θα γίνεται μέσω WhatsApp: <a href=\"https://wa.me/" + whatsapp + "\">+" + whatsapp + "</a>"
+              : "From now on, communication will happen via WhatsApp: <a href=\"https://wa.me/" + whatsapp + "\">+" + whatsapp + "</a>")
+          : "";
+        const subject = isEl
+          ? "✅ Κράτηση #" + bookingNumber + " επιβεβαιώθηκε — " + pd.from + " → " + pd.to
+          : "✅ Booking #" + bookingNumber + " confirmed — " + pd.from + " → " + pd.to;
+
+        const logoHtml = logoUrl
+          ? "<img src=\"" + logoUrl + "\" alt=\"" + businessName + "\" style=\"max-height:56px;margin-bottom:16px;\"><br>"
+          : "";
+        const footerContactLine = [footerPhone, footerEmail].filter(Boolean).join(" · ");
+        const footerHtml =
+          "<table style=\"margin-top:28px;border-top:1px solid #eee;padding-top:16px;\"><tr>" +
+          (logoUrl ? "<td style=\"padding-right:14px;vertical-align:middle;\"><img src=\"" + logoUrl + "\" alt=\"\" style=\"max-height:44px;\"></td>" : "") +
+          "<td style=\"vertical-align:middle;color:#666;font-size:13px;\">" +
+          "<b style=\"color:#333;\">" + businessName + "</b>" +
+          (footerContactLine ? "<br>" + footerContactLine : "") +
+          "</td></tr></table>";
+
+        const markLineEl = (receiptResult && receiptResult.mark)
+          ? "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Αρ. Παραστατικού (MARK):</td><td>" + receiptResult.mark + "</td></tr>"
+          : "";
+        const markLineEn = (receiptResult && receiptResult.mark)
+          ? "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Receipt No. (MARK):</td><td>" + receiptResult.mark + "</td></tr>"
+          : "";
+
+        const bodyEl =
+          "<h2 style=\"color:#1a1a2e;\">Η κράτησή σας επιβεβαιώθηκε!</h2>" +
+          "<p>Γεια σας " + pd.clientName + ",</p>" +
+          "<p>Η προκαταβολή πληρώθηκε με επιτυχία και η κράτησή σας είναι οριστική.</p>" +
+          "<table style=\"border-collapse:collapse;margin:12px 0;\">" +
+          "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Booking ID:</td><td><b>#" + bookingNumber + "</b></td></tr>" +
+          "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Διαδρομή:</td><td><b>" + pd.from + " → " + pd.to + "</b></td></tr>" +
+          "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Ημερομηνία/ώρα:</td><td>" + whenStr + "</td></tr>" +
+          "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Πληρώθηκε:</td><td>" + pd.depositAmount + "€" + (pd.fullyPaid ? " (πλήρης πληρωμή)" : " (προκαταβολή)") + "</td></tr>" +
+          markLineEl +
+          "</table>" +
+          "<p>" + waLine + "</p>";
+        const bodyEn =
+          "<h2 style=\"color:#1a1a2e;\">Your booking is confirmed!</h2>" +
+          "<p>Hi " + pd.clientName + ",</p>" +
+          "<p>Your deposit was paid successfully and your booking is now confirmed.</p>" +
+          "<table style=\"border-collapse:collapse;margin:12px 0;\">" +
+          "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Booking ID:</td><td><b>#" + bookingNumber + "</b></td></tr>" +
+          "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Route:</td><td><b>" + pd.from + " → " + pd.to + "</b></td></tr>" +
+          "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Date/time:</td><td>" + whenStr + "</td></tr>" +
+          "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Paid:</td><td>€" + pd.depositAmount + (pd.fullyPaid ? " (full payment)" : " (deposit)") + "</td></tr>" +
+          markLineEn +
+          "</table>" +
+          "<p>" + waLine + "</p>";
+
+        const html =
+          "<div style=\"font-family:sans-serif;font-size:15px;color:#222;max-width:520px;margin:0 auto;\">" +
+          logoHtml +
+          (isEl ? bodyEl : bodyEn) +
+          footerHtml +
+          "</div>";
+
+        let attachments = undefined;
+        if (receiptResult && receiptResult.netValue != null) {
+          try {
+            const pdfBase64 = await buildReceiptPdfBase64({
+              businessName, afm: t.afm, doy: t.doy, taxAddress: t.taxAddress,
+              bookingNumber: receiptResult.bookingNumber || bookingNumber,
+              issueDate: whenStr, mark: receiptResult.mark,
+              clientName: pd.clientName, from: pd.from, to: pd.to, whenStr,
+              netValue: receiptResult.netValue, vatAmount: receiptResult.vatAmount,
+              vatPercent: receiptResult.vatPercent, grossValue: receiptResult.grossValue,
+            });
+            attachments = [{ filename: "apodeiksi-" + bookingNumber + ".pdf", content: pdfBase64 }];
+          } catch (e) {
+            console.error("receipt PDF generation failed:", e);
+          }
+        }
+
+        await sendCustomerEmailViaResend({
+          to: pd.clientEmail, subject, html, fromName: businessName, fromEmail, apiKeyOverride, attachments,
+        });
+      }
+    } catch (e) {
+      console.error("customer confirmation email failed:", e);
+    }
+  }
+
+  return { ok: true, savedJobId: savedRef.id, bookingNumber };
+}
 
 // ── vivaWebhook: GET = επαλήθευση URL από Viva. POST = ειδοποίηση πληρωμής ──
 exports.vivaWebhook = onRequest(
@@ -3856,272 +4124,11 @@ exports.vivaWebhook = onRequest(
         return res.status(200).json({ ok: true, ignored: true, reason: "amount_mismatch" });
       }
 
-      const masterUid = await findMasterUid(pd.tenantId);
-      if (!masterUid) {
-        console.error("vivaWebhook: δεν βρέθηκε master", { tenantId: pd.tenantId });
-        return res.status(200).json({ ok: true, error: "no_master" });
-      }
-      const me = await db.collection("presence").doc(masterUid).get();
-      const masterName = await resolveOwnerDisplayName(pd.tenantId, me.exists ? me.data() : null);
-
-      const scheduledIso = pd.date + "T" + pd.time + ":00";
-      const scheduledAtMs = Date.parse(scheduledIso);
-      const startDate = isNaN(scheduledAtMs) ? new Date() : new Date(scheduledAtMs);
-
-      const payLabel = pd.fullyPaid ? "πλήρης πληρωμή" : "προκαταβολή";
-      const noteLines = [];
-      noteLines.push(pd.fullyPaid
-        ? "📝 Από φόρμα ιστοσελίδας · ⚠️ ΠΡΟΠΛΗΡΩΜΕΝΟ ΔΡΟΜΟΛΟΓΙΟ — δεν εισπράττεις τίποτα από τον πελάτη"
-        : "📝 Από φόρμα ιστοσελίδας · 💳 Πληρώθηκε προκαταβολή online — εισπράττεις μόνο το υπόλοιπο");
-      noteLines.push("Πελάτης: " + pd.clientName + " · " + pd.clientPhone);
-      if (pd.clientEmail) noteLines.push("Email: " + pd.clientEmail);
-      if (pd.flightOrShip) noteLines.push("Πτήση/Πλοίο: " + pd.flightOrShip);
-      noteLines.push("Άτομα: " + pd.persons + " · Βαλίτσες: " + pd.luggage +
-                     (pd.childSeatCount ? " · Παιδικά καθ.: " + pd.childSeatCount : ""));
-      noteLines.push("Όχημα: " + (pd.vehicleType === "van" ? "Βαν" : "Ταξί"));
-      if (pd.note) noteLines.push("Σχόλια: " + pd.note);
-      const fullNote = noteLines.join("\n");
-
-      const { Timestamp } = require("firebase-admin/firestore");
-      const bookingNumber = await nextBookingNumber(pd.tenantId || "default");
-      const savedRef = await db.collection("saved_jobs").add({
-        origin:         "public_form",
-        tenantId:       pd.tenantId || "default",
-        bookingNumber:  bookingNumber,
-        from:           pd.from,
-        to:             pd.to,
-        fromLat:        pd.fromLat,
-        fromLng:        pd.fromLng,
-        toLat:          pd.toLat,
-        toLng:          pd.toLng,
-        clientName:     pd.clientName,
-        clientPhone:    pd.clientPhone,
-        clientEmail:    pd.clientEmail,
-        flightOrShip:   pd.flightOrShip,
-        wantsInvoice:   pd.wantsInvoice === true,
-        invoiceAfm:     pd.invoiceAfm || null,
-        invoiceCompanyName: pd.invoiceCompanyName || null,
-        persons:        pd.persons,
-        luggage:        pd.luggage,
-        childSeatCount: pd.childSeatCount,
-        childSeat:      pd.childSeatCount > 0,
-        routeKm:        pd.routeKm || null,
-        routePolyline:  pd.routePolyline || null,
-        vehicleType:    pd.vehicleType,
-        note:           fullNote,
-        price:          pd.price,
-        scheduledAt:    Timestamp.fromDate(startDate),
-        lang:           pd.lang,
-        ownerUid:       masterUid,
-        ownerName:      masterName,
-        savedAt:        FieldValue.serverTimestamp(),
-        createdAt:      FieldValue.serverTimestamp(),
-        // ── Στοιχεία πληρωμής (μέσω Viva) ──
-        depositPaid:      true,
-        depositAmount:    pd.depositAmount,
-        fullyPaid:        !!pd.fullyPaid, // true = πληρώθηκε ΟΛΟΚΛΗΡΗ η τιμή, όχι μόνο 10%
-        vivaOrderCode:    orderCode,
-        vivaTransactionId: transactionId,
+      const result = await finalizeSuccessfulPayment(db, pendingRef, pd, {
+        paymentProvider: "viva",
+        fields: { vivaOrderCode: orderCode, vivaTransactionId: transactionId },
       });
-
-      await pendingRef.update({ status: "completed", savedJobId: savedRef.id });
-
-      const whenStr = pd.date + " " + pd.time;
-
-      try {
-        // ΚΡΙΣΙΜΟ: στέλνουμε ΜΟΝΟ στον master/tenant-owner ΤΟΥ tenant αυτής
-        // της κράτησης — ΟΧΙ σε όλους τους masters (θα χτυπούσε πάντα στον
-        // super-admin ακόμα κι όταν η κράτηση είναι άλλου tenant).
-        const tokens = await getTokensForUid(masterUid);
-        await sendDataOnly(tokens, {
-          type:       "public_booking",
-          savedJobId: savedRef.id,
-          from: pd.from, to: pd.to,
-          clientName: pd.clientName,
-          when:       whenStr,
-          title:      "Νέα κράτηση #" + bookingNumber + " (" + (pd.fullyPaid ? "πληρωμένη πλήρως" : "πληρωμένη προκαταβολή") + ")",
-          body:       pd.from + " → " + pd.to + " · " + pd.clientName + " · " + pd.depositAmount + "€",
-        });
-      } catch (e) {
-        console.error("viva booking FCM failed:", e);
-      }
-
-      // ── Απόδειξη/Τιμολόγιο (myDATA ή Epsilon Smart) — best-effort, ΠΟΤΕ δεν
-      // μπλοκάρει την υπόλοιπη ροή. Εκδίδεται ΜΟΝΟ αν ο tenant το έχει ρητά
-      // ενεργοποιήσει (invoiceEnabled) — ο πάροχος καθορίζει ποια από τις
-      // δύο συναρτήσεις κάνει πραγματικά κάτι (η άλλη επιστρέφει null αμέσως).
-      // Γίνεται ΠΡΙΝ το email ώστε να μπορεί το MARK να μπει μέσα σε αυτό.
-      let receiptResult = null;
-      let tPreloaded = null;
-      try {
-        const tid2 = pd.tenantId || "default";
-        const tDoc2 = await db.collection("tenants").doc(tid2).get();
-        tPreloaded = tDoc2.exists ? tDoc2.data() : {};
-        const invoiceReq = pd.wantsInvoice
-          ? { afm: pd.invoiceAfm, companyName: pd.invoiceCompanyName, address: pd.invoiceAddress }
-          : null;
-        receiptResult = await tryIssueMydataReceipt({
-          tenantId: tid2, t: tPreloaded, grossAmount: pd.depositAmount, bookingNumber,
-          invoiceRequest: invoiceReq,
-        });
-        if (!receiptResult) {
-          receiptResult = await tryIssueEpsilonReceipt({
-            tenantId: tid2, t: tPreloaded, grossAmount: pd.depositAmount, bookingNumber,
-            custName: pd.clientName, custPhone: pd.clientPhone, custEmail: pd.clientEmail,
-            invoiceRequest: invoiceReq,
-          });
-        }
-        if (receiptResult) {
-          await savedRef.update({
-            invoiceMark: receiptResult.mark || null,
-            invoiceProvider: receiptResult.provider,
-            invoiceIssuedAt: FieldValue.serverTimestamp(),
-            // Το ΑΚΡΙΒΕΣ ποσό που τιμολογήθηκε (μπορεί να είναι μόνο η
-            // προκαταβολή, όχι όλο το price) — απαραίτητο για να βγει το
-            // πιστωτικό ΜΕ ΤΟ ΙΔΙΟ ακριβώς ποσό αν ακυρωθεί αργότερα.
-            invoiceGrossAmount: pd.depositAmount,
-          });
-        }
-      } catch (e) {
-        console.error("receipt issuance failed:", e);
-      }
-
-      // ── Email ΕΠΙΒΕΒΑΙΩΣΗΣ στον ΠΕΛΑΤΗ (μέσω Resend, best-effort) ──────────
-      // ΔΕΝ μπλοκάρει ποτέ την υπόλοιπη ροή — αν αποτύχει, απλά καταγράφεται.
-      if (pd.clientEmail) {
-        try {
-          const tid = pd.tenantId || "default";
-          const t = tPreloaded || (await db.collection("tenants").doc(tid).get()).data() || {};
-
-          // ── Σημασιολογία emailsEnabled: «χρησιμοποίησε το ΔΙΚΟ ΜΟΥ (κοινό,
-          // του master) Resend key για αυτόν τον tenant».
-          //   • hasOwnResendKey && emailsEnabled!==true → ΔΙΚΟ ΤΟΥ key (προεπιλογή
-          //     μόλις προσθέσει key — δεν πληρώνει ο master).
-          //   • hasOwnResendKey && emailsEnabled===true → ο master το «παρέκαμψε»
-          //     ρητά· χρησιμοποιείται ΤΟ ΔΙΚΟ ΤΟΥ (master) key (πληρώνει αυτός).
-          //   • !hasOwnResendKey && emailsEnabled===false → ΔΕΝ υπάρχει κανένα
-          //     key διαθέσιμο· δεν στέλνεται τίποτα.
-          //   • !hasOwnResendKey && emailsEnabled!==false → κοινό key (προεπιλογή).
-          const useOwnKey = t.hasOwnResendKey && t.emailsEnabled !== true;
-          const noKeyAtAll = !t.hasOwnResendKey && t.emailsEnabled === false;
-
-          if (noKeyAtAll) {
-            console.log("customer email: χωρίς κανένα διαθέσιμο key για tenant", tid, "— παραλείπεται.");
-          } else {
-            const businessName   = t.businessName   || (tid === "default" ? "TaxiAthensTransfers.com" : "Taxi Transfers");
-            const whatsapp       = (t.whatsappNumber || (tid === "default" ? "306936123322" : "")).replace(/[^0-9]/g, "");
-            // ⚠️ Λογότυπο: δεν μπαίνει τίποτα εδώ ακόμα — χρειάζεται ένα link
-            // εικόνας (π.χ. ανεβασμένο στο imgur.com ή στο ίδιο το site σου).
-            // Μόλις μου δώσεις το link, μπαίνει είτε εδώ (σταθερό στον κώδικα)
-            // είτε στο πεδίο «Link λογότυπου» στο tab Επιχείρηση.
-            const logoUrl        = t.logoUrl        || "";
-            const footerPhone    = t.contactPhone   || (tid === "default" ? "+30 693 612 3322" : "");
-            const footerEmail    = t.contactEmail   || (tid === "default" ? "info@taxiathenstransfers.com" : "");
-
-            // Ξεχωριστή διεύθυνση αποστολής: το δικό σου site (default) από
-            // booking@, όλες οι υπόλοιπες φόρμες (booking2, κάθε tenant) από
-            // info@ — ίδιο επαληθευμένο domain taxiathenstransfers.com.
-            const fromEmail = tid === "default"
-              ? "booking@taxiathenstransfers.com"
-              : "info@taxiathenstransfers.com";
-
-            let apiKeyOverride = null;
-            if (useOwnKey) {
-              try {
-                apiKeyOverride = await readSecret(tenantSecretId(tid, "resend-api-key"));
-              } catch (e) {
-                console.error("δεν βρέθηκε το δικό key του tenant, fallback στο κοινό:", e.message);
-              }
-            }
-
-            const isEl = (pd.lang || "el") === "el";
-            const waLine = whatsapp
-              ? (isEl
-                  ? "Από εδώ και πέρα η επικοινωνία θα γίνεται μέσω WhatsApp: <a href=\"https://wa.me/" + whatsapp + "\">+" + whatsapp + "</a>"
-                  : "From now on, communication will happen via WhatsApp: <a href=\"https://wa.me/" + whatsapp + "\">+" + whatsapp + "</a>")
-              : "";
-            const subject = isEl
-              ? "✅ Κράτηση #" + bookingNumber + " επιβεβαιώθηκε — " + pd.from + " → " + pd.to
-              : "✅ Booking #" + bookingNumber + " confirmed — " + pd.from + " → " + pd.to;
-
-            const logoHtml = logoUrl
-              ? "<img src=\"" + logoUrl + "\" alt=\"" + businessName + "\" style=\"max-height:56px;margin-bottom:16px;\"><br>"
-              : "";
-            const footerContactLine = [footerPhone, footerEmail].filter(Boolean).join(" · ");
-            const footerHtml =
-              "<table style=\"margin-top:28px;border-top:1px solid #eee;padding-top:16px;\"><tr>" +
-              (logoUrl ? "<td style=\"padding-right:14px;vertical-align:middle;\"><img src=\"" + logoUrl + "\" alt=\"\" style=\"max-height:44px;\"></td>" : "") +
-              "<td style=\"vertical-align:middle;color:#666;font-size:13px;\">" +
-              "<b style=\"color:#333;\">" + businessName + "</b>" +
-              (footerContactLine ? "<br>" + footerContactLine : "") +
-              "</td></tr></table>";
-
-            const markLineEl = (receiptResult && receiptResult.mark)
-              ? "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Αρ. Παραστατικού (MARK):</td><td>" + receiptResult.mark + "</td></tr>"
-              : "";
-            const markLineEn = (receiptResult && receiptResult.mark)
-              ? "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Receipt No. (MARK):</td><td>" + receiptResult.mark + "</td></tr>"
-              : "";
-
-            const bodyEl =
-              "<h2 style=\"color:#1a1a2e;\">Η κράτησή σας επιβεβαιώθηκε!</h2>" +
-              "<p>Γεια σας " + pd.clientName + ",</p>" +
-              "<p>Η προκαταβολή πληρώθηκε με επιτυχία και η κράτησή σας είναι οριστική.</p>" +
-              "<table style=\"border-collapse:collapse;margin:12px 0;\">" +
-              "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Booking ID:</td><td><b>#" + bookingNumber + "</b></td></tr>" +
-              "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Διαδρομή:</td><td><b>" + pd.from + " → " + pd.to + "</b></td></tr>" +
-              "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Ημερομηνία/ώρα:</td><td>" + whenStr + "</td></tr>" +
-              "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Πληρώθηκε:</td><td>" + pd.depositAmount + "€" + (pd.fullyPaid ? " (πλήρης πληρωμή)" : " (προκαταβολή)") + "</td></tr>" +
-              markLineEl +
-              "</table>" +
-              "<p>" + waLine + "</p>";
-            const bodyEn =
-              "<h2 style=\"color:#1a1a2e;\">Your booking is confirmed!</h2>" +
-              "<p>Hi " + pd.clientName + ",</p>" +
-              "<p>Your deposit was paid successfully and your booking is now confirmed.</p>" +
-              "<table style=\"border-collapse:collapse;margin:12px 0;\">" +
-              "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Booking ID:</td><td><b>#" + bookingNumber + "</b></td></tr>" +
-              "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Route:</td><td><b>" + pd.from + " → " + pd.to + "</b></td></tr>" +
-              "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Date/time:</td><td>" + whenStr + "</td></tr>" +
-              "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Paid:</td><td>€" + pd.depositAmount + (pd.fullyPaid ? " (full payment)" : " (deposit)") + "</td></tr>" +
-              markLineEn +
-              "</table>" +
-              "<p>" + waLine + "</p>";
-
-            const html =
-              "<div style=\"font-family:sans-serif;font-size:15px;color:#222;max-width:520px;margin:0 auto;\">" +
-              logoHtml +
-              (isEl ? bodyEl : bodyEn) +
-              footerHtml +
-              "</div>";
-
-            // ── PDF απόδειξης — μόνο αν εκδόθηκε παραστατικό με πλήρη ανάλυση
-            // ποσών (προς το παρόν μόνο το myDATA branch τα επιστρέφει).
-            let attachments = undefined;
-            if (receiptResult && receiptResult.netValue != null) {
-              try {
-                const pdfBase64 = await buildReceiptPdfBase64({
-                  businessName, afm: t.afm, doy: t.doy, taxAddress: t.taxAddress,
-                  bookingNumber: receiptResult.bookingNumber || bookingNumber,
-                  issueDate: whenStr, mark: receiptResult.mark,
-                  clientName: pd.clientName, from: pd.from, to: pd.to, whenStr,
-                  netValue: receiptResult.netValue, vatAmount: receiptResult.vatAmount,
-                  vatPercent: receiptResult.vatPercent, grossValue: receiptResult.grossValue,
-                });
-                attachments = [{ filename: "apodeiksi-" + bookingNumber + ".pdf", content: pdfBase64 }];
-              } catch (e) {
-                console.error("receipt PDF generation failed:", e);
-              }
-            }
-
-            await sendCustomerEmailViaResend({
-              to: pd.clientEmail, subject, html, fromName: businessName, fromEmail, apiKeyOverride, attachments,
-            });
-          }
-        } catch (e) {
-          console.error("customer confirmation email failed:", e);
-        }
-      }
+      if (!result.ok) return res.status(200).json({ ok: true, error: result.error });
 
       return res.status(200).json({ ok: true });
     } catch (e) {
@@ -4129,6 +4136,72 @@ exports.vivaWebhook = onRequest(
       // Επιστρέφουμε 200 ακόμα και σε σφάλμα ΔΙΚΟ ΜΑΣ, ώστε η Viva να μην κάνει
       // αμέτρητα retries για κάτι που δεν θα διορθωθεί μόνο του. Το σφάλμα
       // πάντως καταγράφεται στα logs (console.error) για να το δεις.
+      return res.status(200).json({ ok: false, error: "server_error" });
+    }
+  }
+);
+
+
+exports.stripeWebhook = onRequest(
+  { region: "us-central1", memory: "256MiB" },
+  async (req, res) => {
+    if (req.method !== "POST") return res.status(405).end();
+
+    const webhookTenantId = s(req.query && req.query.tenantId) || "default";
+    const tenantStripe = await getTenantStripeCredentials(webhookTenantId);
+    if (!tenantStripe.secretKey) {
+      console.error("stripeWebhook: no Stripe secret key configured for tenant", webhookTenantId);
+      return res.status(400).send("stripe_not_configured");
+    }
+
+    const stripe = getStripeClient(tenantStripe.secretKey);
+    let event;
+    try {
+      if (tenantStripe.webhookSecret) {
+        event = stripe.webhooks.constructEvent(req.rawBody, req.headers["stripe-signature"], tenantStripe.webhookSecret);
+      } else {
+        event = JSON.parse(req.rawBody.toString("utf8"));
+        console.error("stripeWebhook: ΧΩΡΙΣ επαλήθευση υπογραφής (λείπει webhook secret) για tenant", webhookTenantId);
+      }
+    } catch (e) {
+      console.error("stripeWebhook: signature verification failed:", e.message);
+      return res.status(400).send("invalid_signature");
+    }
+
+    if (event.type !== "checkout.session.completed") {
+      return res.status(200).json({ ok: true, ignored: true });
+    }
+
+    try {
+      const session = event.data.object;
+      const pendingBookingId = session.client_reference_id || (session.metadata && session.metadata.pendingBookingId);
+      if (!pendingBookingId) return res.status(200).json({ ok: true, ignored: true });
+
+      const db = getFirestore();
+      const pendingRef = db.collection("pending_bookings").doc(pendingBookingId);
+      const pendingDoc = await pendingRef.get();
+      if (!pendingDoc.exists) return res.status(200).json({ ok: true, ignored: true });
+      const pd = pendingDoc.data();
+      if (pd.status !== "pending") return res.status(200).json({ ok: true, ignored: true });
+
+      const amountPaidEur = Number(session.amount_total || 0) / 100;
+      if (Math.abs(amountPaidEur - pd.depositAmount) > 0.01) {
+        console.error("stripeWebhook: amount mismatch", { expected: pd.depositAmount, amountPaidEur, pendingBookingId });
+        return res.status(200).json({ ok: true, ignored: true, reason: "amount_mismatch" });
+      }
+
+      const result = await finalizeSuccessfulPayment(db, pendingRef, pd, {
+        paymentProvider: "stripe",
+        fields: {
+          stripeSessionId: session.id,
+          stripePaymentIntentId: session.payment_intent || null,
+        },
+      });
+      if (!result.ok) return res.status(200).json({ ok: true, error: result.error });
+
+      return res.status(200).json({ ok: true });
+    } catch (e) {
+      console.error("stripeWebhook processing error:", e);
       return res.status(200).json({ ok: false, error: "server_error" });
     }
   }
@@ -4718,6 +4791,29 @@ async function getTenantVivaCredentials(tenantId) {
     readSecret(tenantSecretId(tenantId, "viva-api-key")),
   ]);
   return { clientId, clientSecret, merchantId, apiKey };
+}
+
+async function getTenantStripeCredentials(tenantId) {
+  const [secretKey, publishableKey, webhookSecret] = await Promise.all([
+    readSecret(tenantSecretId(tenantId, "stripe-secret-key")),
+    readSecret(tenantSecretId(tenantId, "stripe-publishable-key")),
+    readSecret(tenantSecretId(tenantId, "stripe-webhook-secret")),
+  ]);
+  return { secretKey, publishableKey, webhookSecret };
+}
+
+function resolvePaymentProvider(tenantCfg) {
+  const p = tenantCfg && s(tenantCfg.paymentProvider);
+  return p === "stripe" ? "stripe" : "viva";
+}
+
+let _stripeClientCache = new Map();
+function getStripeClient(secretKey) {
+  if (_stripeClientCache.has(secretKey)) return _stripeClientCache.get(secretKey);
+  const Stripe = require("stripe");
+  const client = new Stripe(secretKey, { apiVersion: "2024-06-20" });
+  _stripeClientCache.set(secretKey, client);
+  return client;
 }
 
 exports.createTenant = onCall(
@@ -5511,6 +5607,129 @@ exports.updateTenantVivaCredentials = onCall(
     }
 
     return { ok: true };
+  }
+);
+
+
+exports.updateTenantStripeCredentials = onCall(
+  { region: "us-central1" },
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Χρειάζεται σύνδεση.");
+    const d = request.data || {};
+    const tenantId = s(d.tenantId) || "default";
+
+    const isSuperAdmin = request.auth.token.email === "techtacy@gmail.com";
+    if (tenantId !== "default" && !isSuperAdmin) {
+      const db0 = getFirestore();
+      const presDoc = await db0.collection("presence").doc(request.auth.uid).get();
+      const pres = presDoc.data() || {};
+      if (!(pres.tenantOwner === true && pres.tenantId === tenantId)) {
+        throw new HttpsError("permission-denied",
+          "Μόνο ο super-admin ή ο tenant-owner αυτού του tenant μπορεί να το αλλάξει.");
+      }
+    } else if (tenantId === "default" && !isSuperAdmin) {
+      throw new HttpsError("permission-denied", "Μόνο ο master μπορεί να το αλλάξει.");
+    }
+
+    const db = getFirestore();
+    if (tenantId !== "default") {
+      const tenantDoc = await db.collection("tenants").doc(tenantId).get();
+      if (!tenantDoc.exists) throw new HttpsError("not-found", "Άγνωστο tenant.");
+    }
+
+    const stripeFields = {
+      "stripe-secret-key":      s(d.stripeSecretKey),
+      "stripe-publishable-key": s(d.stripePublishableKey),
+      "stripe-webhook-secret":  s(d.stripeWebhookSecret),
+    };
+    let anySet = false;
+    for (const [field, value] of Object.entries(stripeFields)) {
+      if (value) {
+        anySet = true;
+        try {
+          await upsertSecret(tenantSecretId(tenantId, field), value);
+        } catch (e) {
+          throw new HttpsError("internal", "Αποτυχία αποθήκευσης: " + e.message);
+        }
+      }
+    }
+
+    if (anySet) {
+      await db.collection("tenants").doc(tenantId).set(
+        { hasStripeCredentials: true }, { merge: true }
+      );
+    }
+
+    return { ok: true };
+  }
+);
+
+exports.getTenantStripeCredentialsForOwner = onCall(
+  { region: "us-central1" },
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Χρειάζεται σύνδεση.");
+    const tenantId = s((request.data || {}).tenantId) || "default";
+    const isSuperAdmin = request.auth.token.email === "techtacy@gmail.com";
+    const db = getFirestore();
+    if (tenantId !== "default" && !isSuperAdmin) {
+      const presDoc = await db.collection("presence").doc(request.auth.uid).get();
+      const pres = presDoc.data() || {};
+      if (!(pres.tenantOwner === true && pres.tenantId === tenantId)) {
+        throw new HttpsError("permission-denied", "Δεν έχεις πρόσβαση σε αυτόν τον tenant.");
+      }
+    } else if (tenantId === "default" && !isSuperAdmin) {
+      throw new HttpsError("permission-denied", "Μόνο ο master.");
+    }
+
+    let paymentProvider = "viva";
+    if (tenantId !== "default") {
+      const tenantDoc = await db.collection("tenants").doc(tenantId).get();
+      if (!tenantDoc.exists) throw new HttpsError("not-found", "Άγνωστο tenant.");
+      paymentProvider = resolvePaymentProvider(tenantDoc.data());
+    } else {
+      const defaultDoc = await db.collection("tenants").doc("default").get();
+      paymentProvider = resolvePaymentProvider(defaultDoc.exists ? defaultDoc.data() : {});
+    }
+
+    const mask = (v) => (v ? v.slice(0, 7) + "••••••••" : "");
+    const creds = await getTenantStripeCredentials(tenantId);
+    return {
+      ok: true,
+      stripeSecretKeyMasked:      mask(creds.secretKey),
+      stripePublishableKeyMasked: mask(creds.publishableKey),
+      stripeWebhookSecretMasked:  mask(creds.webhookSecret),
+      hasStripeCredentials: !!(creds.secretKey && creds.publishableKey),
+      paymentProvider,
+    };
+  }
+);
+
+exports.updateTenantPaymentProvider = onCall(
+  { region: "us-central1" },
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Χρειάζεται σύνδεση.");
+    const d = request.data || {};
+    const tenantId = s(d.tenantId) || "default";
+    const provider = s(d.paymentProvider) === "stripe" ? "stripe" : "viva";
+
+    const isSuperAdmin = request.auth.token.email === "techtacy@gmail.com";
+    if (tenantId !== "default" && !isSuperAdmin) {
+      const db0 = getFirestore();
+      const presDoc = await db0.collection("presence").doc(request.auth.uid).get();
+      const pres = presDoc.data() || {};
+      if (!(pres.tenantOwner === true && pres.tenantId === tenantId)) {
+        throw new HttpsError("permission-denied",
+          "Μόνο ο super-admin ή ο tenant-owner αυτού του tenant μπορεί να το αλλάξει.");
+      }
+    } else if (tenantId === "default" && !isSuperAdmin) {
+      throw new HttpsError("permission-denied", "Μόνο ο master.");
+    }
+
+    const db = getFirestore();
+    await db.collection("tenants").doc(tenantId).set(
+      { paymentProvider: provider }, { merge: true }
+    );
+    return { ok: true, paymentProvider: provider };
   }
 );
 

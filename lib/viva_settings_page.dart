@@ -55,6 +55,17 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
   final _sourceCodeCtrl   = TextEditingController();
   final _sourceCodeEnCtrl = TextEditingController();
 
+  // ── Stripe — δεύτερος διαθέσιμος πάροχος πληρωμών. Ο tenant/master
+  // μπορεί να αποθηκεύσει credentials και για τους δύο παρόχους, και να
+  // διαλέξει ελεύθερα ποιος είναι ενεργός τώρα (_paymentProvider).
+  final _stripeSecretKeyCtrl      = TextEditingController();
+  final _stripePublishableKeyCtrl = TextEditingController();
+  final _stripeWebhookSecretCtrl  = TextEditingController();
+  String _paymentProvider = 'viva'; // 'viva' | 'stripe' — ποιος είναι ενεργός ΤΩΡΑ
+  String? _maskedStripeSecretKey, _maskedStripePublishableKey, _maskedStripeWebhookSecret;
+  bool _hasStripeCredentials = false;
+  bool _savingProvider = false;
+
   // ── Στοιχεία επιχείρησης (μόνο για tenants, όχι για το δικό σου default)
   final _businessNameCtrl   = TextEditingController();
   final _contactPhoneCtrl   = TextEditingController();
@@ -222,6 +233,24 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
   Future<void> _load() async {
     setState(() { _loading = true; _error = null; });
     try {
+      // ── Stripe: φορτώνεται ΠΑΝΤΑ (default ΚΑΙ tenants), ανεξάρτητα από
+      // τη Viva λογική — ίδιο endpoint επιστρέφει και το ενεργό paymentProvider.
+      try {
+        final stripeCallable =
+            FirebaseFunctions.instance.httpsCallable('getTenantStripeCredentialsForOwner');
+        final stripeRes = await stripeCallable.call({'tenantId': _tenantId});
+        final stripeData = Map<String, dynamic>.from(stripeRes.data);
+        setState(() {
+          _maskedStripeSecretKey      = stripeData['stripeSecretKeyMasked'] as String?;
+          _maskedStripePublishableKey = stripeData['stripePublishableKeyMasked'] as String?;
+          _maskedStripeWebhookSecret  = stripeData['stripeWebhookSecretMasked'] as String?;
+          _hasStripeCredentials       = stripeData['hasStripeCredentials'] == true;
+          _paymentProvider            = stripeData['paymentProvider'] as String? ?? 'viva';
+        });
+      } catch (e) {
+        // Μη κρίσιμο — η σελίδα δουλεύει κανονικά με Viva ακόμα κι αν αυτό αποτύχει.
+      }
+
       if (_isDefault) {
         // Οι δικές σου ρυθμίσεις — απλά δείχνουμε το πεδίο Demo (αν είναι
         // γνωστό) και αφήνουμε τα υπόλοιπα κενά (τα βάζεις μόνο αν αλλάζεις).
@@ -347,6 +376,29 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
     }
   }
 
+  Future<void> _switchProvider(String provider) async {
+    if (provider == _paymentProvider) return;
+    setState(() { _savingProvider = true; _error = null; });
+    try {
+      final callable =
+          FirebaseFunctions.instance.httpsCallable('updateTenantPaymentProvider');
+      await callable.call({'tenantId': _tenantId, 'paymentProvider': provider});
+      setState(() => _paymentProvider = provider);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(provider == 'stripe'
+              ? 'Ενεργός πάροχος: Stripe'
+              : 'Ενεργός πάροχος: Viva'),
+          backgroundColor: kPistachioAccent,
+        ));
+      }
+    } catch (e) {
+      setState(() => _error = 'Σφάλμα αλλαγής παρόχου: $e');
+    } finally {
+      if (mounted) setState(() => _savingProvider = false);
+    }
+  }
+
   Future<bool> _confirmDemoLiveChange(bool newDemo) async {
     final confirmed1 = await showDialog<bool>(
       context: context,
@@ -399,6 +451,30 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
   Future<void> _save() async {
     setState(() { _saving = true; _error = null; });
     try {
+      // ── Stripe credentials: αποθηκεύονται ΠΑΝΤΑ (ίδιο callable για default
+      // ΚΑΙ tenants — το ίδιο endpoint χειρίζεται και τα δύο). ΔΕΝ εξαρτάται
+      // από το ποιος πάροχος είναι ενεργός τώρα, ώστε να μπορεί κάποιος να
+      // προετοιμάσει τα Stripe κλειδιά του πριν αλλάξει τον διακόπτη.
+      if (_stripeSecretKeyCtrl.text.trim().isNotEmpty ||
+          _stripePublishableKeyCtrl.text.trim().isNotEmpty ||
+          _stripeWebhookSecretCtrl.text.trim().isNotEmpty) {
+        try {
+          final stripeCallable =
+              FirebaseFunctions.instance.httpsCallable('updateTenantStripeCredentials');
+          await stripeCallable.call({
+            'tenantId': _tenantId,
+            if (_stripeSecretKeyCtrl.text.trim().isNotEmpty)
+              'stripeSecretKey': _stripeSecretKeyCtrl.text.trim(),
+            if (_stripePublishableKeyCtrl.text.trim().isNotEmpty)
+              'stripePublishableKey': _stripePublishableKeyCtrl.text.trim(),
+            if (_stripeWebhookSecretCtrl.text.trim().isNotEmpty)
+              'stripeWebhookSecret': _stripeWebhookSecretCtrl.text.trim(),
+          });
+        } catch (e) {
+          setState(() => _error = 'Σφάλμα αποθήκευσης Stripe: $e');
+        }
+      }
+
       if (_isDefault) {
         final callable =
             FirebaseFunctions.instance.httpsCallable('updateDefaultVivaCredentials');
@@ -558,7 +634,7 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
             unselectedLabelColor: Colors.white70,
             isScrollable: true,
             tabs: [
-              const Tab(icon: Icon(Icons.payment_rounded, size: 20), text: 'Viva'),
+              const Tab(icon: Icon(Icons.account_balance_rounded, size: 20), text: 'Bank'),
               const Tab(icon: Icon(Icons.cloud_rounded, size: 20), text: 'Google Cloud'),
               const Tab(icon: Icon(Icons.storefront_rounded, size: 20), text: 'Επιχείρηση'),
               if (!_isDefault)
@@ -670,6 +746,144 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // ── Επιλογή ενεργού παρόχου πληρωμών ──────────────────────────────
+          const Text('Πάροχος πληρωμών',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+          const SizedBox(height: 4),
+          const Text(
+            'Μπορείς να αποθηκεύσεις credentials και για τους δύο παρόχους '
+            'και να διαλέξεις ελεύθερα ποιος είναι ενεργός στη φόρμα.',
+            style: TextStyle(fontSize: 12, color: Colors.grey),
+          ),
+          const SizedBox(height: 10),
+          SegmentedButton<String>(
+            segments: const [
+              ButtonSegment(value: 'viva', label: Text('Viva'), icon: Icon(Icons.payment_rounded)),
+              ButtonSegment(value: 'stripe', label: Text('Stripe'), icon: Icon(Icons.credit_card_rounded)),
+            ],
+            selected: {_paymentProvider},
+            onSelectionChanged: _savingProvider
+                ? null
+                : (sel) => _switchProvider(sel.first),
+            style: SegmentedButton.styleFrom(
+              selectedBackgroundColor: kPistachioAccent,
+              selectedForegroundColor: Colors.white,
+            ),
+          ),
+          if (_savingProvider) ...[
+            const SizedBox(height: 8),
+            const LinearProgressIndicator(minHeight: 2),
+          ],
+          const SizedBox(height: 20),
+          const Divider(),
+          const SizedBox(height: 12),
+
+          if (_paymentProvider == 'stripe') ...[
+            _buildStripeFields(),
+          ] else ...[
+            _buildVivaFields(),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStripeFields() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(12),
+          margin: const EdgeInsets.only(bottom: 16),
+          decoration: BoxDecoration(
+            color: Colors.blue.shade50,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: Colors.blue.shade200),
+          ),
+          child: const Text(
+            'Βρες τα κλειδιά σου στο Stripe Dashboard → Developers → API keys. '
+            'Το Webhook Signing Secret δημιουργείται όταν προσθέσεις το endpoint '
+            'στο Developers → Webhooks (βλ. οδηγίες παρακάτω).',
+            style: TextStyle(fontSize: 12.5),
+          ),
+        ),
+        if (_hasStripeCredentials) ...[
+          const Text('Ήδη αποθηκευμένα (κρυμμένα)',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+          const SizedBox(height: 6),
+          _maskedRow('Secret Key', _maskedStripeSecretKey),
+          _maskedRow('Publishable Key', _maskedStripePublishableKey),
+          _maskedRow('Webhook Secret', _maskedStripeWebhookSecret),
+          const SizedBox(height: 16),
+          const Divider(),
+          const SizedBox(height: 8),
+        ],
+        Text(
+          _hasStripeCredentials
+              ? 'Συμπλήρωσε ΜΟΝΟ ό,τι θες να αλλάξεις:'
+              : 'Συμπλήρωσε τα στοιχεία σου:',
+          style: const TextStyle(fontSize: 12.5, color: Colors.grey),
+        ),
+        const SizedBox(height: 8),
+        TextField(
+          controller: _stripeSecretKeyCtrl,
+          obscureText: true,
+          decoration: const InputDecoration(
+              labelText: 'Stripe Secret Key (sk_...)',
+              border: OutlineInputBorder()),
+        ),
+        const SizedBox(height: 10),
+        TextField(
+          controller: _stripePublishableKeyCtrl,
+          decoration: const InputDecoration(
+              labelText: 'Stripe Publishable Key (pk_...)',
+              border: OutlineInputBorder()),
+        ),
+        const SizedBox(height: 10),
+        TextField(
+          controller: _stripeWebhookSecretCtrl,
+          obscureText: true,
+          decoration: const InputDecoration(
+              labelText: 'Stripe Webhook Signing Secret (whsec_...)',
+              helperText: 'Δημιουργείται όταν προσθέσεις το webhook endpoint στο Stripe dashboard.',
+              border: OutlineInputBorder()),
+        ),
+        const SizedBox(height: 16),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: kPistachio,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: kPistachioAccent),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Οδηγίες ρύθμισης Stripe',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+              const SizedBox(height: 6),
+              Text(
+                '1. Σύνδεση στο dashboard.stripe.com → Developers → API keys\n'
+                '2. Αντέγραψε το Secret Key και το Publishable Key εδώ\n'
+                '3. Πήγαινε στο Developers → Webhooks → Add endpoint\n'
+                '4. URL: https://us-central1-my-taxi-app-bbc7c.cloudfunctions.net/stripeWebhook?tenantId=$_tenantId\n'
+                '5. Event: checkout.session.completed\n'
+                '6. Αντέγραψε το Signing Secret (whsec_...) εδώ και πάτησε Αποθήκευση',
+                style: const TextStyle(fontSize: 12.5, color: kPistachioText),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildVivaFields() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
           if (_isDefault)
             Container(
               width: double.infinity,
@@ -814,8 +1028,7 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
           const SizedBox(height: 16),
           _buildSetupInstructions(),
         ],
-      ),
-    );
+      );
   }
 
   // ─── Tab 2: Google Cloud ──────────────────────────────────────────────────
