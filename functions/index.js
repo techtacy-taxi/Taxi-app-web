@@ -3902,6 +3902,13 @@ async function finalizeSuccessfulPayment(db, pendingRef, pd, providerMeta) {
         invoiceRequest: invoiceReq,
       });
     }
+    if (!receiptResult) {
+      receiptResult = await tryIssueOxygenReceipt({
+        tenantId: tid2, t: tPreloaded, grossAmount: pd.depositAmount, bookingNumber,
+        custName: pd.clientName, custPhone: pd.clientPhone, custEmail: pd.clientEmail,
+        invoiceRequest: invoiceReq,
+      });
+    }
     if (receiptResult) {
       await savedRef.update({
         invoiceMark: receiptResult.mark || null,
@@ -4710,6 +4717,115 @@ async function tryIssueEpsilonReceipt({ tenantId, t, grossAmount, bookingNumber,
     return null;
   }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Oxygen Pelatologio — τρίτος διαθέσιμος πάροχος αποδείξεων/τιμολογίων,
+//  ΙΔΙΟ pattern με myDATA/Epsilon (self-service credentials, tenant config,
+//  fallback chain). API: https://docs.oxygen.gr/ (Bearer token, OpenAPI 3.1).
+//  Ο tenant χρειάζεται να έχει ήδη δημιουργήσει στο δικό του Oxygen account:
+//  branch, numbering sequence, payment method — τα IDs τους μπαίνουν στις
+//  ρυθμίσεις (tab Oxygen) μαζί με το API key.
+// ═══════════════════════════════════════════════════════════════════════════
+async function tryIssueOxygenReceipt({ tenantId, t, grossAmount, bookingNumber, custName, custPhone, custEmail, invoiceRequest }) {
+  try {
+    if (!t.invoiceEnabled || t.invoiceProvider !== "oxygen") return null;
+    if (!t.oxygenBranchId || !t.oxygenNumberingSequenceId) {
+      console.error("oxygen receipt: λείπουν branch_id/numbering_sequence_id για tenant", tenantId);
+      return null;
+    }
+    const apiKey = await readSecret(tenantSecretId(tenantId, "oxygen-api-key")).catch(() => null);
+    if (!apiKey) {
+      console.error("oxygen receipt: λείπει API key για tenant", tenantId);
+      return null;
+    }
+
+    const vatCategory = t.mydataVatCategory || "2"; // ίδια επιλογή ΦΠΑ με τα άλλα tabs (myDATA)
+    const vatPercent = { "1": 24, "2": 13, "3": 6, "7": 0 }[vatCategory] ?? 13;
+    const gross = Number(grossAmount) || 0;
+    const rate = vatPercent / 100;
+    const netValue = rate > 0 ? gross / (1 + rate) : gross;
+    const vatAmount = gross - netValue;
+
+    const wantsInvoice = !!(invoiceRequest && invoiceRequest.afm);
+    // document_type: "s" = Τιμολόγιο Παροχής Υπηρεσιών (χρειάζεται ΑΦΜ πελάτη),
+    // "rs" = Απόδειξη Λιανικής Παροχής Υπηρεσιών (προεπιλογή, χωρίς ΑΦΜ).
+    const documentType = wantsInvoice ? "s" : "rs";
+
+    const isSandbox = t.oxygenSandbox === true;
+    const baseUrl = isSandbox
+      ? "https://sandbox-api.oxygen.gr/v1"
+      : "https://api.oxygen.gr/v1";
+
+    const body = {
+      numbering_sequence_id: t.oxygenNumberingSequenceId,
+      issue_date: new Date().toISOString().slice(0, 10),
+      document_type: documentType,
+      language: "el",
+      payment_method_id: t.oxygenPaymentMethodId || undefined,
+      description: "Μεταφορά " + (bookingNumber ? "#" + bookingNumber : ""),
+      branch_id: t.oxygenBranchId,
+      is_paid: true,
+      comments: wantsInvoice && invoiceRequest.companyName ? invoiceRequest.companyName : undefined,
+      items: [{
+        description: "Υπηρεσίες μεταφοράς" + (bookingNumber ? " — Κράτηση #" + bookingNumber : ""),
+        quantity: 1,
+        unit_net_value: Math.round(netValue * 100) / 100,
+        net_amount: Math.round(netValue * 100) / 100,
+        vat_amount: Math.round(vatAmount * 100) / 100,
+      }],
+    };
+
+    // Στοιχεία πελάτη — μόνο αν ζητήθηκε τιμολόγιο (χρειάζεται ΑΦΜ)· η απλή
+    // απόδειξη λιανικής δεν χρειάζεται contact_id/στοιχεία πελάτη.
+    if (wantsInvoice) {
+      body.contact_vat = invoiceRequest.afm;
+      if (invoiceRequest.companyName) body.contact_display_name = invoiceRequest.companyName;
+      if (invoiceRequest.address) body.contact_address = invoiceRequest.address;
+    } else if (custName) {
+      body.contact_display_name = custName;
+    }
+    if (custEmail) body.contact_email = custEmail;
+    if (custPhone) body.contact_telephone = custPhone;
+
+    let resp, data;
+    try {
+      resp = await fetch(baseUrl + "/invoices", {
+        method: "POST",
+        headers: {
+          "Authorization": "Bearer " + apiKey,
+          "Accept": "application/json",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
+      });
+      data = await resp.json().catch(() => ({}));
+    } catch (e) {
+      console.error("oxygen receipt: network error for tenant", tenantId, e.message);
+      return null;
+    }
+
+    if (!resp.ok) {
+      console.error("oxygen receipt failed for tenant", tenantId, resp.status, data.message || data.errors || data);
+      return null;
+    }
+
+    console.log("oxygen receipt issued for tenant:", tenantId, "iview_code:", data.iview_code, "invoice:", wantsInvoice);
+    return {
+      mark: data.iview_code || null,
+      provider: "oxygen",
+      netValue: Number(data.net_amount ?? netValue),
+      vatAmount: Number(data.vat_amount ?? vatAmount),
+      vatPercent,
+      grossValue: Number(data.total_amount ?? gross),
+      bookingNumber,
+      iviewUrl: data.iview_url || null,
+    };
+  } catch (e) {
+    console.error("tryIssueOxygenReceipt error:", e);
+    return null;
+  }
+}
+
 
 // ═══════════════════════════════════════════════════════════════════════
 // PDF Απόδειξης — απλό, καθαρό έγγραφο με στοιχεία επιχείρησης/πελάτη/
@@ -5661,6 +5777,92 @@ exports.updateTenantStripeCredentials = onCall(
     }
 
     return { ok: true };
+  }
+);
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Oxygen Pelatologio — self-service credentials, ΙΔΙΟ pattern με Viva/Stripe.
+//  Το API key αποθηκεύεται στο Secret Manager (ευαίσθητο). Τα branch/
+//  numbering-sequence/payment-method IDs είναι απλά αναγνωριστικά (όχι
+//  μυστικά) — μπαίνουν κατευθείαν στο tenants/{id} doc.
+// ═══════════════════════════════════════════════════════════════════════════
+exports.updateTenantOxygenSettings = onCall(
+  { region: "us-central1" },
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Χρειάζεται σύνδεση.");
+    const d = request.data || {};
+    const tenantId = s(d.tenantId) || "default";
+
+    const isSuperAdmin = request.auth.token.email === "techtacy@gmail.com";
+    if (tenantId !== "default" && !isSuperAdmin) {
+      const db0 = getFirestore();
+      const presDoc = await db0.collection("presence").doc(request.auth.uid).get();
+      const pres = presDoc.data() || {};
+      if (!(pres.tenantOwner === true && pres.tenantId === tenantId)) {
+        throw new HttpsError("permission-denied",
+          "Μόνο ο super-admin ή ο tenant-owner αυτού του tenant μπορεί να το αλλάξει.");
+      }
+    } else if (tenantId === "default" && !isSuperAdmin) {
+      throw new HttpsError("permission-denied", "Μόνο ο master μπορεί να το αλλάξει.");
+    }
+
+    const db = getFirestore();
+    if (tenantId !== "default") {
+      const tenantDoc = await db.collection("tenants").doc(tenantId).get();
+      if (!tenantDoc.exists) throw new HttpsError("not-found", "Άγνωστο tenant.");
+    }
+
+    if (s(d.oxygenApiKey)) {
+      try {
+        await upsertSecret(tenantSecretId(tenantId, "oxygen-api-key"), s(d.oxygenApiKey));
+      } catch (e) {
+        throw new HttpsError("internal", "Αποτυχία αποθήκευσης API key: " + e.message);
+      }
+    }
+
+    const patch = { hasOxygenCredentials: true };
+    if (d.oxygenBranchId !== undefined) patch.oxygenBranchId = s(d.oxygenBranchId) || null;
+    if (d.oxygenNumberingSequenceId !== undefined) patch.oxygenNumberingSequenceId = s(d.oxygenNumberingSequenceId) || null;
+    if (d.oxygenPaymentMethodId !== undefined) patch.oxygenPaymentMethodId = s(d.oxygenPaymentMethodId) || null;
+    if (d.oxygenSandbox !== undefined) patch.oxygenSandbox = d.oxygenSandbox === true;
+
+    await db.collection("tenants").doc(tenantId).set(patch, { merge: true });
+    return { ok: true };
+  }
+);
+
+exports.getTenantOxygenSettingsForOwner = onCall(
+  { region: "us-central1" },
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Χρειάζεται σύνδεση.");
+    const tenantId = s((request.data || {}).tenantId) || "default";
+    const isSuperAdmin = request.auth.token.email === "techtacy@gmail.com";
+    const db = getFirestore();
+    if (tenantId !== "default" && !isSuperAdmin) {
+      const presDoc = await db.collection("presence").doc(request.auth.uid).get();
+      const pres = presDoc.data() || {};
+      if (!(pres.tenantOwner === true && pres.tenantId === tenantId)) {
+        throw new HttpsError("permission-denied", "Δεν έχεις πρόσβαση σε αυτόν τον tenant.");
+      }
+    } else if (tenantId === "default" && !isSuperAdmin) {
+      throw new HttpsError("permission-denied", "Μόνο ο master.");
+    }
+
+    const tenantDoc = await db.collection("tenants").doc(tenantId).get();
+    const tData = tenantDoc.exists ? tenantDoc.data() : {};
+
+    const apiKey = await readSecret(tenantSecretId(tenantId, "oxygen-api-key")).catch(() => null);
+    const mask = (v) => (v ? v.slice(0, 6) + "••••••••" : "");
+
+    return {
+      ok: true,
+      oxygenApiKeyMasked: mask(apiKey),
+      hasOxygenCredentials: !!apiKey,
+      oxygenBranchId: tData.oxygenBranchId || "",
+      oxygenNumberingSequenceId: tData.oxygenNumberingSequenceId || "",
+      oxygenPaymentMethodId: tData.oxygenPaymentMethodId || "",
+      oxygenSandbox: tData.oxygenSandbox === true,
+    };
   }
 );
 
