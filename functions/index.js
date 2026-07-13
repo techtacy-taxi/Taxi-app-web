@@ -404,9 +404,13 @@ exports.onSavedJobDeleted = onDocumentDeleted("saved_jobs/{savedJobId}", async (
     const tDoc = await getFirestore().collection("tenants").doc(tenantId).get();
     const t = tDoc.exists ? tDoc.data() : {};
 
-    // ── Αυτόματο πιστωτικό — ΜΟΝΟ αν ήταν myDATA (Epsilon δεν έχει ακόμα
-    // επιβεβαιωμένο μηχανισμό ακύρωσης εδώ, μένει χειροκίνητο προς το παρόν).
-    const credit = await tryIssueMydataCreditNote({ tenantId, t, savedJobData: data });
+    // ── Αυτόματο πιστωτικό — myDATA (11.4) ή Oxygen (pistlianiki/pistotiko).
+    // Epsilon Smart: το e-Shop API δεν έχει μέθοδο πιστωτικού (γίνεται μόνο
+    // από το UI με «Μετασχηματισμό») — μένει χειροκίνητο με ειδοποίηση.
+    let credit = await tryIssueMydataCreditNote({ tenantId, t, savedJobData: data });
+    if (!credit) {
+      credit = await tryIssueOxygenCreditNote({ tenantId, t, savedJobData: data });
+    }
 
     const masterUid = await findMasterUid(tenantId);
     if (!masterUid) return;
@@ -427,7 +431,7 @@ exports.onSavedJobDeleted = onDocumentDeleted("saved_jobs/{savedJobId}", async (
         savedJobId: String(event.params.savedJobId),
         title: "⚠️ Ακυρώθηκε κράτηση με ήδη εκδομένο παραστατικό",
         body: "Booking #" + (data.bookingNumber || "-") + " · MARK: " + data.invoiceMark +
-          (credit ? " — αποτυχία αυτόματου πιστωτικού, χρειάζεται χειροκίνητα στο myDATA." : " — πάροχος " + (data.invoiceProvider || "-") + ", χρειάζεται χειροκίνητα."),
+          (credit ? " — αποτυχία αυτόματου πιστωτικού, χρειάζεται χειροκίνητα στον πάροχο (" + (data.invoiceProvider || "-") + ")." : " — πάροχος " + (data.invoiceProvider || "-") + ", χρειάζεται χειροκίνητα."),
       });
     }
     console.log("onSavedJobDeleted: ολοκληρώθηκε, MARK:", data.invoiceMark, "credit:", credit);
@@ -3915,6 +3919,9 @@ async function finalizeSuccessfulPayment(db, pendingRef, pd, providerMeta) {
         invoiceProvider: receiptResult.provider,
         invoiceIssuedAt: FieldValue.serverTimestamp(),
         invoiceGrossAmount: pd.depositAmount,
+        // Ήταν Τιμολόγιο ή Απόδειξη; Χρειάζεται στο αυτόματο πιστωτικό
+        // (Oxygen: pistotiko/5.1 vs pistlianiki/11.4).
+        invoiceIsInvoice: receiptResult.isInvoice === true,
       });
     }
   } catch (e) {
@@ -3979,6 +3986,13 @@ async function finalizeSuccessfulPayment(db, pendingRef, pd, providerMeta) {
         const markLineEn = (receiptResult && receiptResult.mark)
           ? "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Receipt No. (MARK):</td><td>" + receiptResult.mark + "</td></tr>"
           : "";
+        // ── Oxygen: επίσημο online αντίγραφο του παραστατικού (iView) ──
+        const iviewLineEl = (receiptResult && receiptResult.iviewUrl)
+          ? "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Παραστατικό:</td><td><a href=\"" + receiptResult.iviewUrl + "\">Προβολή online</a></td></tr>"
+          : "";
+        const iviewLineEn = (receiptResult && receiptResult.iviewUrl)
+          ? "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Receipt:</td><td><a href=\"" + receiptResult.iviewUrl + "\">View online</a></td></tr>"
+          : "";
 
         const bodyEl =
           "<h2 style=\"color:#1a1a2e;\">Η κράτησή σας επιβεβαιώθηκε!</h2>" +
@@ -3990,6 +4004,7 @@ async function finalizeSuccessfulPayment(db, pendingRef, pd, providerMeta) {
           "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Ημερομηνία/ώρα:</td><td>" + whenStr + "</td></tr>" +
           "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Πληρώθηκε:</td><td>" + pd.depositAmount + "€" + (pd.fullyPaid ? " (πλήρης πληρωμή)" : " (προκαταβολή)") + "</td></tr>" +
           markLineEl +
+          iviewLineEl +
           "</table>" +
           "<p>" + waLine + "</p>";
         const bodyEn =
@@ -4002,6 +4017,7 @@ async function finalizeSuccessfulPayment(db, pendingRef, pd, providerMeta) {
           "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Date/time:</td><td>" + whenStr + "</td></tr>" +
           "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Paid:</td><td>€" + pd.depositAmount + (pd.fullyPaid ? " (full payment)" : " (deposit)") + "</td></tr>" +
           markLineEn +
+          iviewLineEn +
           "</table>" +
           "<p>" + waLine + "</p>";
 
@@ -4015,15 +4031,24 @@ async function finalizeSuccessfulPayment(db, pendingRef, pd, providerMeta) {
         let attachments = undefined;
         if (receiptResult && receiptResult.netValue != null) {
           try {
+            // Ημερομηνία ΕΚΔΟΣΗΣ = σήμερα (ώρα Αθήνας) — ΟΧΙ η ώρα διαδρομής.
+            const issueDateStr = athensNaiveDate(new Date()).toISOString().slice(0, 10)
+              .split("-").reverse().join("/");
             const pdfBase64 = await buildReceiptPdfBase64({
               businessName, afm: t.afm, doy: t.doy, taxAddress: t.taxAddress,
               bookingNumber: receiptResult.bookingNumber || bookingNumber,
-              issueDate: whenStr, mark: receiptResult.mark,
+              issueDate: issueDateStr, mark: receiptResult.mark,
               clientName: pd.clientName, from: pd.from, to: pd.to, whenStr,
+              serviceWhenStr: whenStr,
               netValue: receiptResult.netValue, vatAmount: receiptResult.vatAmount,
               vatPercent: receiptResult.vatPercent, grossValue: receiptResult.grossValue,
+              isInvoice: receiptResult.isInvoice === true,
+              provider: receiptResult.provider,
+              custAfm: pd.invoiceAfm || null,
+              custCompanyName: pd.invoiceCompanyName || null,
             });
-            attachments = [{ filename: "apodeiksi-" + bookingNumber + ".pdf", content: pdfBase64 }];
+            const fileBase = receiptResult.isInvoice === true ? "timologio-" : "apodeiksi-";
+            attachments = [{ filename: fileBase + bookingNumber + ".pdf", content: pdfBase64 }];
           } catch (e) {
             console.error("receipt PDF generation failed:", e);
           }
@@ -4131,6 +4156,41 @@ exports.vivaWebhook = onRequest(
         return res.status(200).json({ ok: true, ignored: true, reason: "amount_mismatch" });
       }
 
+      // ── ΕΠΑΛΗΘΕΥΣΗ στο Viva API (ασφάλεια): δεν εμπιστευόμαστε ΜΟΝΟ το
+      // POST body — ζητάμε το transaction από τη Viva (legacy retrieve API,
+      // Basic auth MerchantId:ApiKey) και ελέγχουμε StatusId="F" + ποσό.
+      // Best-effort: αν το API είναι ΑΠΡΟΣΙΤΟ (network/5xx), ΔΕΝ χάνουμε την
+      // κράτηση — συνεχίζουμε με warning. Αν όμως η Viva απαντήσει ΡΗΤΑ ότι
+      // το transaction δεν υπάρχει ή διαφέρει, απορρίπτουμε (πλαστό webhook).
+      if (transactionId && vMerchantId && vApiKey) {
+        try {
+          const basic = Buffer.from(vMerchantId + ":" + vApiKey).toString("base64");
+          const vResp = await fetch(hosts.web + "/api/transactions/" + encodeURIComponent(transactionId), {
+            method: "GET",
+            headers: { "Authorization": "Basic " + basic },
+          });
+          if (vResp.ok) {
+            const vData = await vResp.json().catch(() => null);
+            const tx = vData && Array.isArray(vData.Transactions) ? vData.Transactions[0] : null;
+            if (!tx) {
+              console.error("vivaWebhook: transaction ΔΕΝ βρέθηκε στη Viva — απόρριψη", { transactionId, merchantTrns });
+              return res.status(200).json({ ok: true, ignored: true, reason: "tx_not_found" });
+            }
+            const vAmount = Number(tx.Amount || 0);
+            const vStatus = String(tx.StatusId || "");
+            if (vStatus !== "F" || Math.abs(vAmount - pd.depositAmount) > 0.01) {
+              console.error("vivaWebhook: verification mismatch — απόρριψη",
+                { transactionId, vStatus, vAmount, expected: pd.depositAmount });
+              return res.status(200).json({ ok: true, ignored: true, reason: "tx_verify_mismatch" });
+            }
+          } else {
+            console.warn("vivaWebhook: αδυναμία επαλήθευσης (HTTP " + vResp.status + ") — συνεχίζουμε best-effort");
+          }
+        } catch (e) {
+          console.warn("vivaWebhook: αδυναμία επαλήθευσης (network) — συνεχίζουμε best-effort:", e.message);
+        }
+      }
+
       const result = await finalizeSuccessfulPayment(db, pendingRef, pd, {
         paymentProvider: "viva",
         fields: { vivaOrderCode: orderCode, vivaTransactionId: transactionId },
@@ -4166,9 +4226,16 @@ exports.stripeWebhook = onRequest(
     try {
       if (tenantStripe.webhookSecret) {
         event = stripe.webhooks.constructEvent(req.rawBody, req.headers["stripe-signature"], tenantStripe.webhookSecret);
+      } else if (tenantStripe.secretKey.startsWith("sk_live")) {
+        // ── ΑΣΦΑΛΕΙΑ: σε LIVE mode ΔΕΝ δεχόμαστε webhooks χωρίς υπογραφή —
+        // αλλιώς οποιοσδήποτε θα μπορούσε να «επιβεβαιώσει» ψεύτικη πληρωμή.
+        // Ο tenant ΠΡΕΠΕΙ να έχει βάλει το stripe-webhook-secret του.
+        console.error("stripeWebhook: LIVE key χωρίς webhook secret για tenant", webhookTenantId, "— απόρριψη.");
+        return res.status(400).send("webhook_secret_required_in_live_mode");
       } else {
+        // Test mode (sk_test): επιτρέπουμε χωρίς υπογραφή για ευκολία δοκιμών.
         event = JSON.parse(req.rawBody.toString("utf8"));
-        console.error("stripeWebhook: ΧΩΡΙΣ επαλήθευση υπογραφής (λείπει webhook secret) για tenant", webhookTenantId);
+        console.error("stripeWebhook: ΧΩΡΙΣ επαλήθευση υπογραφής (test mode, λείπει webhook secret) για tenant", webhookTenantId);
       }
     } catch (e) {
       console.error("stripeWebhook: signature verification failed:", e.message);
@@ -4455,8 +4522,13 @@ async function sendMydataInvoice({ demo, username, subscriptionKey, xml }) {
 function splitVat(grossValue, vatCategory) {
   const rates = { "1": 0.24, "2": 0.13, "3": 0.06, "7": 0 };
   const rate = rates[vatCategory] != null ? rates[vatCategory] : 0.24;
-  const netValue = rate > 0 ? grossValue / (1 + rate) : grossValue;
-  const vatAmount = grossValue - netValue;
+  // ⚠️ Στρογγυλοποίηση με συνέπεια: στρογγυλεύουμε ΠΡΩΤΑ την καθαρή αξία σε
+  // 2 δεκαδικά και ο ΦΠΑ προκύπτει ως ΔΙΑΦΟΡΑ από το μεικτό — έτσι ισχύει
+  // ΠΑΝΤΑ net + vat === gross στο λεπτό (το myDATA απορρίπτει παραστατικά
+  // όπου το invoiceSummary δεν «κουμπώνει» ακριβώς).
+  const gross = Math.round((Number(grossValue) || 0) * 100) / 100;
+  const netValue = rate > 0 ? Math.round((gross / (1 + rate)) * 100) / 100 : gross;
+  const vatAmount = Math.round((gross - netValue) * 100) / 100;
   return { netValue, vatAmount };
 }
 
@@ -4521,6 +4593,7 @@ async function tryIssueMydataReceipt({ tenantId, t, grossAmount, bookingNumber, 
       mark: result.mark, provider: "mydata",
       netValue, vatAmount, vatPercent, grossValue: Number(grossAmount) || 0,
       bookingNumber: aa, series, invoiceType,
+      isInvoice: wantsInvoice, // ώστε το PDF να τιτλοφορείται «Τιμολόγιο»
     };
   } catch (e) {
     console.error("tryIssueMydataReceipt error:", e);
@@ -4711,7 +4784,18 @@ async function tryIssueEpsilonReceipt({ tenantId, t, grossAmount, bookingNumber,
       return null;
     }
     console.log("epsilon receipt issued for tenant:", tenantId, "invoice:", !!(invoiceRequest && invoiceRequest.afm));
-    return { provider: "epsilon" };
+    // ── Επιστρέφουμε και τα ποσά ώστε ο πελάτης να παίρνει PDF στο email
+    // (πριν, χωρίς netValue, το PDF παραλειπόταν εντελώς για Epsilon).
+    return {
+      provider: "epsilon",
+      mark: null,
+      netValue: Math.round(netValue * 100) / 100,
+      vatAmount: Math.round(vatAmount * 100) / 100,
+      vatPercent,
+      grossValue: Math.round(gross * 100) / 100,
+      bookingNumber,
+      isInvoice: !!(invoiceRequest && invoiceRequest.afm),
+    };
   } catch (e) {
     console.error("tryIssueEpsilonReceipt error:", e);
     return null;
@@ -4749,7 +4833,11 @@ async function tryIssueOxygenReceipt({ tenantId, t, grossAmount, bookingNumber, 
     const wantsInvoice = !!(invoiceRequest && invoiceRequest.afm);
     // document_type: "s" = Τιμολόγιο Παροχής Υπηρεσιών (χρειάζεται ΑΦΜ πελάτη),
     // "rs" = Απόδειξη Λιανικής Παροχής Υπηρεσιών (προεπιλογή, χωρίς ΑΦΜ).
-    const documentType = wantsInvoice ? "s" : "rs";
+    // ⚠️ Το enum του Oxygen θέλει ΟΛΟΚΛΗΡΟ το string (από το InvoiceItem schema),
+    // όχι σκέτο "s"/"rs":
+    const documentType = wantsInvoice
+      ? "s (Invoice for Services)"
+      : "rs (Receipt (issued to private customers) for services)";
 
     const isSandbox = t.oxygenSandbox === true;
     const baseUrl = isSandbox
@@ -4760,7 +4848,7 @@ async function tryIssueOxygenReceipt({ tenantId, t, grossAmount, bookingNumber, 
       numbering_sequence_id: t.oxygenNumberingSequenceId,
       issue_date: new Date().toISOString().slice(0, 10),
       document_type: documentType,
-      language: "el",
+      language: "GR", // enum Oxygen: "GR" | "EN" (ΟΧΙ "el")
       payment_method_id: t.oxygenPaymentMethodId || undefined,
       description: "Μεταφορά " + (bookingNumber ? "#" + bookingNumber : ""),
       branch_id: t.oxygenBranchId,
@@ -4811,7 +4899,10 @@ async function tryIssueOxygenReceipt({ tenantId, t, grossAmount, bookingNumber, 
 
     console.log("oxygen receipt issued for tenant:", tenantId, "iview_code:", data.iview_code, "invoice:", wantsInvoice);
     return {
-      mark: data.iview_code || null,
+      // ── Το ΠΡΑΓΜΑΤΙΚΟ MARK της ΑΑΔΕ έρχεται στο mydata.mark (μπορεί να είναι
+      // null αν η διαβίβαση εκκρεμεί) — fallback στο iview_code. Το MARK
+      // χρειάζεται για το correlated_invoice του πιστωτικού τιμολογίου (5.1).
+      mark: (data.mydata && data.mydata.mark) || data.iview_code || null,
       provider: "oxygen",
       netValue: Number(data.net_amount ?? netValue),
       vatAmount: Number(data.vat_amount ?? vatAmount),
@@ -4819,10 +4910,120 @@ async function tryIssueOxygenReceipt({ tenantId, t, grossAmount, bookingNumber, 
       grossValue: Number(data.total_amount ?? gross),
       bookingNumber,
       iviewUrl: data.iview_url || null,
+      isInvoice: wantsInvoice,
     };
   } catch (e) {
     console.error("tryIssueOxygenReceipt error:", e);
     return null;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Oxygen — Αυτόματο Πιστωτικό σε ακύρωση κράτησης (POST /credit-notes).
+//  Ίδιο μοτίβο με το tryIssueMydataCreditNote: best-effort, ίδια ποσά με το
+//  αρχικό παραστατικό, ΠΟΤΕ δεν μπλοκάρει τη ροή.
+//
+//  Από την τεκμηρίωση του Oxygen API:
+//   • document_type "pistlianiki" = Πιστωτικό Λιανικής (κατά απόδειξης,
+//     myDATA 11.4) — Η ΣΥΝΗΘΙΣΜΕΝΗ περίπτωση, ΔΕΝ απαιτεί correlated_invoice.
+//   • document_type "pistotiko"   = Πιστωτικό Τιμολόγιο (myDATA 5.1) —
+//     ΥΠΟΧΡΕΩΤΙΚΟ το correlated_invoice = MARK του αρχικού τιμολογίου.
+//  ⚠️ Απαιτεί ΞΕΧΩΡΙΣΤΗ σειρά αρίθμησης πιστωτικών στον λογαριασμό Oxygen
+//  του tenant (oxygenCreditNumberingSequenceId) — χωρίς αυτήν επιστρέφει
+//  null και μένει η χειροκίνητη ειδοποίηση.
+// ═══════════════════════════════════════════════════════════════════════════
+async function tryIssueOxygenCreditNote({ tenantId, t, savedJobData }) {
+  try {
+    if (!t.invoiceEnabled || t.invoiceProvider !== "oxygen") return null;
+    if (savedJobData.invoiceProvider !== "oxygen") return null;
+    if (!t.oxygenBranchId || !t.oxygenCreditNumberingSequenceId) {
+      console.error("oxygen credit note: λείπει branch_id ή ΣΕΙΡΑ ΠΙΣΤΩΤΙΚΩΝ (oxygenCreditNumberingSequenceId) για tenant", tenantId);
+      return null;
+    }
+    const apiKey = await readSecret(tenantSecretId(tenantId, "invoice-api-key")).catch(() => null);
+    if (!apiKey) {
+      console.error("oxygen credit note: λείπει API key για tenant", tenantId);
+      return null;
+    }
+
+    const grossValue = Number(savedJobData.invoiceGrossAmount) || 0;
+    if (grossValue <= 0) {
+      console.error("oxygen credit note: άγνωστο ποσό για tenant", tenantId);
+      return null;
+    }
+
+    const wantsInvoice = savedJobData.invoiceIsInvoice === true;
+    // Πιστωτικό ΚΑΤΑ ΤΙΜΟΛΟΓΙΟΥ (5.1) χωρίς MARK αρχικού δεν γίνεται —
+    // πέφτουμε στη χειροκίνητη ειδοποίηση.
+    if (wantsInvoice && !savedJobData.invoiceMark) {
+      console.error("oxygen credit note: πιστωτικό τιμολογίου χωρίς MARK αρχικού — χειροκίνητα, tenant", tenantId);
+      return null;
+    }
+
+    const vatCategory = t.mydataVatCategory || "2"; // ίδια επιλογή ΦΠΑ με την έκδοση
+    const vatPercent = { "1": 24, "2": 13, "3": 6, "7": 0 }[vatCategory] ?? 13;
+    const { netValue, vatAmount } = splitVat(grossValue, vatCategory);
+
+    const isSandbox = t.oxygenSandbox === true;
+    const baseUrl = isSandbox
+      ? "https://sandbox-api.oxygen.gr/v1"
+      : "https://api.oxygen.gr/v1";
+
+    const bookingNumber = savedJobData.bookingNumber || "";
+    const body = {
+      numbering_sequence_id: t.oxygenCreditNumberingSequenceId,
+      issue_date: athensNaiveDate(new Date()).toISOString().slice(0, 10),
+      // ⚠️ Enums από το schema του Oxygen:
+      //  • document_type = ΟΛΟΚΛΗΡΟ το string (όχι σκέτο "pistlianiki")
+      //  • language = "GR" | "EN" (ΟΧΙ "el")
+      document_type: wantsInvoice
+        ? "pistotiko - Credit note for invoices"
+        : "pistlianiki - Credit note for receipts",
+      mydata_document_type: wantsInvoice ? "5.1" : "11.4",
+      language: "GR",
+      payment_method_id: t.oxygenPaymentMethodId || undefined,
+      description: "Πιστωτικό — ακύρωση κράτησης" + (bookingNumber ? " #" + bookingNumber : ""),
+      branch_id: t.oxygenBranchId,
+      correlated_invoice: wantsInvoice ? String(savedJobData.invoiceMark) : undefined,
+      comments: savedJobData.invoiceMark
+        ? "Αφορά αρχικό παραστατικό: " + savedJobData.invoiceMark
+        : undefined,
+      items: [{
+        description: "Πιστωτικό — Υπηρεσίες μεταφοράς" + (bookingNumber ? " — Κράτηση #" + bookingNumber : ""),
+        quantity: 1,
+        unit_net_value: Math.round(netValue * 100) / 100,
+        net_amount: Math.round(netValue * 100) / 100,
+        vat_amount: Math.round(vatAmount * 100) / 100,
+      }],
+    };
+
+    let resp, data;
+    try {
+      resp = await fetch(baseUrl + "/credit-notes", {
+        method: "POST",
+        headers: {
+          "Authorization": "Bearer " + apiKey,
+          "Accept": "application/json",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
+      });
+      data = await resp.json().catch(() => ({}));
+    } catch (e) {
+      console.error("oxygen credit note: network error for tenant", tenantId, e.message);
+      return { ok: false, error: "network_error" };
+    }
+
+    if (!resp.ok) {
+      console.error("oxygen credit note failed for tenant", tenantId, resp.status, data.message || data.errors || data);
+      return { ok: false, error: "oxygen_http_" + resp.status };
+    }
+
+    console.log("oxygen credit note issued for tenant:", tenantId, "iview_code:", data.iview_code, "original:", savedJobData.invoiceMark);
+    return { ok: true, mark: (data.mydata && data.mydata.mark) || data.iview_code || String(data.number || ""), iviewUrl: data.iview_url || null };
+  } catch (e) {
+    console.error("tryIssueOxygenCreditNote error:", e);
+    return { ok: false, error: String(e) };
   }
 }
 
@@ -4839,8 +5040,24 @@ async function buildReceiptPdfBase64({
   bookingNumber, issueDate, mark,
   clientName, from, to, whenStr,
   netValue, vatAmount, vatPercent, grossValue,
+  // ── Νέα προαιρετικά πεδία ──
+  isInvoice,        // true = Τιμολόγιο (2.1) — αλλάζει τίτλο + εμφανίζει στοιχεία λήπτη
+  provider,         // "mydata" | "epsilon" | "oxygen" — footer ανά πάροχο
+  custAfm,          // ΑΦΜ πελάτη (μόνο σε τιμολόγιο)
+  custCompanyName,  // Επωνυμία πελάτη-επιχείρησης (μόνο σε τιμολόγιο)
+  serviceWhenStr,   // Ημ/νία-ώρα ΕΞΥΠΗΡΕΤΗΣΗΣ (η issueDate είναι πια η έκδοση)
 }) {
   const PDFDocument = require("pdfkit");
+  const path = require("path");
+  const fs = require("fs");
+  // ⚠️ ΥΠΟΧΡΕΩΤΙΚΑ DejaVuSans — η ενσωματωμένη Helvetica του pdfkit ΔΕΝ
+  // κωδικοποιεί ελληνικά (WinAnsi) και πετούσε exception → το PDF δεν
+  // δημιουργούνταν ΠΟΤΕ και το email έφευγε χωρίς συνημμένο.
+  const fontRegular = path.join(__dirname, "fonts", "DejaVuSans.ttf");
+  const fontBold    = path.join(__dirname, "fonts", "DejaVuSans-Bold.ttf");
+  if (!fs.existsSync(fontRegular) || !fs.existsSync(fontBold)) {
+    throw new Error("Λείπουν τα fonts: functions/fonts/DejaVuSans(.ttf/-Bold.ttf)");
+  }
   return await new Promise((resolve, reject) => {
     try {
       const doc = new PDFDocument({ size: "A5", margin: 36 });
@@ -4849,27 +5066,34 @@ async function buildReceiptPdfBase64({
       doc.on("end", () => resolve(Buffer.concat(chunks).toString("base64")));
       doc.on("error", reject);
 
-      doc.fontSize(16).font("Helvetica-Bold").text(businessName || "Taxi Transfers");
-      doc.fontSize(9).font("Helvetica").fillColor("#555");
+      doc.fontSize(16).font(fontBold).text(businessName || "Taxi Transfers");
+      doc.fontSize(9).font(fontRegular).fillColor("#555");
       const bizLine = [afm ? "ΑΦΜ: " + afm : null, doy ? "ΔΟΥ: " + doy : null].filter(Boolean).join("  ·  ");
       if (bizLine) doc.text(bizLine);
       if (taxAddress) doc.text(taxAddress);
       doc.moveDown(1);
 
-      doc.fillColor("#000").fontSize(13).font("Helvetica-Bold")
-        .text("Απόδειξη Παροχής Υπηρεσιών", { underline: false });
+      doc.fillColor("#000").fontSize(13).font(fontBold)
+        .text(isInvoice ? "Τιμολόγιο Παροχής Υπηρεσιών" : "Απόδειξη Παροχής Υπηρεσιών");
       doc.moveDown(0.5);
 
-      doc.fontSize(10).font("Helvetica");
+      doc.fontSize(10).font(fontRegular);
       const row = (label, value) => {
-        doc.font("Helvetica").fillColor("#555").text(label, { continued: true });
-        doc.font("Helvetica-Bold").fillColor("#000").text("  " + (value || "-"));
+        doc.font(fontRegular).fillColor("#555").text(label, { continued: true });
+        doc.font(fontBold).fillColor("#000").text("  " + (value || "-"));
       };
-      row("Αρ. Κράτησης:", "#" + bookingNumber);
-      row("Ημερομηνία:", issueDate);
-      row("Πελάτης:", clientName);
+      row("Αρ. Παραστατικού:", "#" + bookingNumber);
+      row("Ημερομηνία έκδοσης:", issueDate);
+      // ── Στοιχεία λήπτη: σε τιμολόγιο εμφανίζονται ΑΦΜ + επωνυμία ──
+      if (isInvoice) {
+        if (custCompanyName) row("Επωνυμία πελάτη:", custCompanyName);
+        if (custAfm) row("ΑΦΜ πελάτη:", custAfm);
+        if (clientName && clientName !== custCompanyName) row("Επιβάτης:", clientName);
+      } else {
+        row("Πελάτης:", clientName);
+      }
       row("Διαδρομή:", from + " → " + to);
-      row("Ώρα εξυπηρέτησης:", whenStr);
+      row("Ώρα εξυπηρέτησης:", serviceWhenStr || whenStr);
       if (mark) row("Αρ. Παραστατικού (MARK):", mark);
 
       doc.moveDown(1);
@@ -4879,12 +5103,20 @@ async function buildReceiptPdfBase64({
       row("Καθαρή αξία:", netValue.toFixed(2) + " €");
       row("ΦΠΑ " + vatPercent + "%:", vatAmount.toFixed(2) + " €");
       doc.moveDown(0.3);
-      doc.fontSize(13).font("Helvetica-Bold").fillColor("#000")
+      doc.fontSize(13).font(fontBold).fillColor("#000")
         .text("Σύνολο: " + grossValue.toFixed(2) + " €");
 
       doc.moveDown(1.5);
-      doc.fontSize(8).fillColor("#999").font("Helvetica")
-        .text("Η νόμιμη διαβίβαση του παραστατικού έγινε ηλεκτρονικά στο myDATA της ΑΑΔΕ.", {
+      // ── Footer ανά πάροχο — μόνο το myDATA δίνει MARK απευθείας στην ΑΑΔΕ·
+      // Epsilon/Oxygen είναι πιστοποιημένοι πάροχοι που διαβιβάζουν οι ίδιοι.
+      const footerText =
+        provider === "epsilon"
+          ? "Το παραστατικό εκδόθηκε και διαβιβάστηκε ηλεκτρονικά στην ΑΑΔΕ μέσω του πιστοποιημένου παρόχου Epsilon Smart."
+          : provider === "oxygen"
+            ? "Το παραστατικό εκδόθηκε και διαβιβάστηκε ηλεκτρονικά στην ΑΑΔΕ μέσω του πιστοποιημένου παρόχου Oxygen."
+            : "Η νόμιμη διαβίβαση του παραστατικού έγινε ηλεκτρονικά στο myDATA της ΑΑΔΕ.";
+      doc.fontSize(8).fillColor("#999").font(fontRegular)
+        .text(footerText, {
           width: doc.page.width - doc.page.margins.left - doc.page.margins.right,
         });
 
@@ -5597,6 +5829,10 @@ exports.updateTenantReceiptInfo = onCall(
     if (d.mydataDemo != null) updates.mydataDemo = d.mydataDemo !== false;
     if (d.oxygenBranchId != null) updates.oxygenBranchId = s(d.oxygenBranchId) || null;
     if (d.oxygenNumberingSequenceId != null) updates.oxygenNumberingSequenceId = s(d.oxygenNumberingSequenceId) || null;
+    // ── Ξεχωριστή σειρά αρίθμησης ΓΙΑ ΠΙΣΤΩΤΙΚΑ (τη φτιάχνει ο tenant στο
+    // Oxygen του, όπως και την κανονική) — χωρίς αυτήν ΔΕΝ γίνεται αυτόματο
+    // πιστωτικό, μένει η χειροκίνητη ειδοποίηση.
+    if (d.oxygenCreditNumberingSequenceId != null) updates.oxygenCreditNumberingSequenceId = s(d.oxygenCreditNumberingSequenceId) || null;
     if (d.oxygenPaymentMethodId != null) updates.oxygenPaymentMethodId = s(d.oxygenPaymentMethodId) || null;
     if (d.oxygenSandbox != null) updates.oxygenSandbox = d.oxygenSandbox === true;
 

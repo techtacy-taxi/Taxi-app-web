@@ -97,6 +97,9 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
   // method IDs δεν είναι μυστικά — απλά πεδία tenant config.
   final _oxygenBranchIdCtrl = TextEditingController();
   final _oxygenNumberingSequenceIdCtrl = TextEditingController();
+  // Ξεχωριστή σειρά αρίθμησης ΓΙΑ ΠΙΣΤΩΤΙΚΑ — χωρίς αυτήν το αυτόματο
+  // πιστωτικό σε ακύρωση παραλείπεται (μένει χειροκίνητη ειδοποίηση).
+  final _oxygenCreditNumberingSequenceIdCtrl = TextEditingController();
   final _oxygenPaymentMethodIdCtrl = TextEditingController();
   bool _oxygenSandbox = true;
   String _invoiceProvider = 'none'; // 'none' | 'epsilon' | 'mydata' | 'oxygen'
@@ -235,6 +238,7 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
     _mydataUsernameCtrl.dispose();
     _oxygenBranchIdCtrl.dispose();
     _oxygenNumberingSequenceIdCtrl.dispose();
+    _oxygenCreditNumberingSequenceIdCtrl.dispose();
     _oxygenPaymentMethodIdCtrl.dispose();
     _invoiceSeriesCtrl.dispose();
     super.dispose();
@@ -317,6 +321,7 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
               _mydataDemo              = bi['mydataDemo'] as bool? ?? true;
               _oxygenBranchIdCtrl.text = bi['oxygenBranchId'] as String? ?? '';
               _oxygenNumberingSequenceIdCtrl.text = bi['oxygenNumberingSequenceId'] as String? ?? '';
+              _oxygenCreditNumberingSequenceIdCtrl.text = bi['oxygenCreditNumberingSequenceId'] as String? ?? '';
               _oxygenPaymentMethodIdCtrl.text = bi['oxygenPaymentMethodId'] as String? ?? '';
               _oxygenSandbox           = bi['oxygenSandbox'] as bool? ?? true;
             });
@@ -1366,6 +1371,7 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
         'mydataSubKey': _mydataSubKeyCtrl.text.trim(),
         'oxygenBranchId': _oxygenBranchIdCtrl.text.trim(),
         'oxygenNumberingSequenceId': _oxygenNumberingSequenceIdCtrl.text.trim(),
+        'oxygenCreditNumberingSequenceId': _oxygenCreditNumberingSequenceIdCtrl.text.trim(),
         'oxygenPaymentMethodId': _oxygenPaymentMethodIdCtrl.text.trim(),
         'oxygenSandbox': _oxygenSandbox,
       });
@@ -1635,7 +1641,9 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
                   _epsilonStep('3', 'Στο ίδιο docs.oxygen.gr, άνοιξε «GET /branches» → «Try it out» → «Execute» — '
                       'αντέγραψε το «id» του υποκαταστήματός σου από την απάντηση.'),
                   _epsilonStep('4', 'Άνοιξε «GET /numbering-sequences» → «Try it out» → «Execute» — '
-                      'αντέγραψε το «id» της σειράς αρίθμησης που θες να χρησιμοποιείς.'),
+                      'αντέγραψε το «id» της σειράς αρίθμησης που θες να χρησιμοποιείς. '
+                      'Φτιάξε στο Oxygen και ΔΕΥΤΕΡΗ σειρά, μόνο για πιστωτικά, και κράτα και το δικό της «id» — '
+                      'χρειάζεται για το αυτόματο πιστωτικό όταν ακυρώνεται κράτηση.'),
                   _epsilonStep('5', '(Προαιρετικό) Άνοιξε «GET /payment-methods» ομοίως, αν θες να ορίσεις '
                       'συγκεκριμένο τρόπο πληρωμής στα παραστατικά.'),
                   _epsilonStep('6', 'Συμπλήρωσε τα πεδία παρακάτω με ό,τι πήρες, και πάτησε Αποθήκευση.'),
@@ -1676,6 +1684,17 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
                   isDense: true,
                   labelText: 'Numbering Sequence ID',
                   helperText: 'Από docs.oxygen.gr → GET /numbering-sequences → πεδίο «id».',
+                  border: OutlineInputBorder()),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _oxygenCreditNumberingSequenceIdCtrl,
+              decoration: const InputDecoration(
+                  isDense: true,
+                  labelText: 'Numbering Sequence ID Πιστωτικών',
+                  helperText: 'Φτιάξε στο Oxygen ΞΕΧΩΡΙΣΤΗ σειρά για πιστωτικά και βάλε εδώ το «id» της '
+                      '(GET /numbering-sequences). Χωρίς αυτήν ΔΕΝ εκδίδεται αυτόματο πιστωτικό σε ακύρωση.',
+                  helperMaxLines: 3,
                   border: OutlineInputBorder()),
             ),
             const SizedBox(height: 10),
