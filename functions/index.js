@@ -4733,7 +4733,7 @@ async function tryIssueOxygenReceipt({ tenantId, t, grossAmount, bookingNumber, 
       console.error("oxygen receipt: λείπουν branch_id/numbering_sequence_id για tenant", tenantId);
       return null;
     }
-    const apiKey = await readSecret(tenantSecretId(tenantId, "oxygen-api-key")).catch(() => null);
+    const apiKey = await readSecret(tenantSecretId(tenantId, "invoice-api-key")).catch(() => null);
     if (!apiKey) {
       console.error("oxygen receipt: λείπει API key για tenant", tenantId);
       return null;
@@ -5595,6 +5595,10 @@ exports.updateTenantReceiptInfo = onCall(
     if (d.mydataInvoiceType != null) updates.mydataInvoiceType = s(d.mydataInvoiceType) || "11.2";
     if (d.mydataVatCategory != null) updates.mydataVatCategory = s(d.mydataVatCategory) || "2";
     if (d.mydataDemo != null) updates.mydataDemo = d.mydataDemo !== false;
+    if (d.oxygenBranchId != null) updates.oxygenBranchId = s(d.oxygenBranchId) || null;
+    if (d.oxygenNumberingSequenceId != null) updates.oxygenNumberingSequenceId = s(d.oxygenNumberingSequenceId) || null;
+    if (d.oxygenPaymentMethodId != null) updates.oxygenPaymentMethodId = s(d.oxygenPaymentMethodId) || null;
+    if (d.oxygenSandbox != null) updates.oxygenSandbox = d.oxygenSandbox === true;
 
     // Κλειδιά — σε Secret Manager, ΠΟΤΕ σε απλό πεδίο Firestore.
     if (d.invoiceApiKey != null) {
@@ -5786,86 +5790,6 @@ exports.updateTenantStripeCredentials = onCall(
 //  numbering-sequence/payment-method IDs είναι απλά αναγνωριστικά (όχι
 //  μυστικά) — μπαίνουν κατευθείαν στο tenants/{id} doc.
 // ═══════════════════════════════════════════════════════════════════════════
-exports.updateTenantOxygenSettings = onCall(
-  { region: "us-central1" },
-  async (request) => {
-    if (!request.auth) throw new HttpsError("unauthenticated", "Χρειάζεται σύνδεση.");
-    const d = request.data || {};
-    const tenantId = s(d.tenantId) || "default";
-
-    const isSuperAdmin = request.auth.token.email === "techtacy@gmail.com";
-    if (tenantId !== "default" && !isSuperAdmin) {
-      const db0 = getFirestore();
-      const presDoc = await db0.collection("presence").doc(request.auth.uid).get();
-      const pres = presDoc.data() || {};
-      if (!(pres.tenantOwner === true && pres.tenantId === tenantId)) {
-        throw new HttpsError("permission-denied",
-          "Μόνο ο super-admin ή ο tenant-owner αυτού του tenant μπορεί να το αλλάξει.");
-      }
-    } else if (tenantId === "default" && !isSuperAdmin) {
-      throw new HttpsError("permission-denied", "Μόνο ο master μπορεί να το αλλάξει.");
-    }
-
-    const db = getFirestore();
-    if (tenantId !== "default") {
-      const tenantDoc = await db.collection("tenants").doc(tenantId).get();
-      if (!tenantDoc.exists) throw new HttpsError("not-found", "Άγνωστο tenant.");
-    }
-
-    if (s(d.oxygenApiKey)) {
-      try {
-        await upsertSecret(tenantSecretId(tenantId, "oxygen-api-key"), s(d.oxygenApiKey));
-      } catch (e) {
-        throw new HttpsError("internal", "Αποτυχία αποθήκευσης API key: " + e.message);
-      }
-    }
-
-    const patch = { hasOxygenCredentials: true };
-    if (d.oxygenBranchId !== undefined) patch.oxygenBranchId = s(d.oxygenBranchId) || null;
-    if (d.oxygenNumberingSequenceId !== undefined) patch.oxygenNumberingSequenceId = s(d.oxygenNumberingSequenceId) || null;
-    if (d.oxygenPaymentMethodId !== undefined) patch.oxygenPaymentMethodId = s(d.oxygenPaymentMethodId) || null;
-    if (d.oxygenSandbox !== undefined) patch.oxygenSandbox = d.oxygenSandbox === true;
-
-    await db.collection("tenants").doc(tenantId).set(patch, { merge: true });
-    return { ok: true };
-  }
-);
-
-exports.getTenantOxygenSettingsForOwner = onCall(
-  { region: "us-central1" },
-  async (request) => {
-    if (!request.auth) throw new HttpsError("unauthenticated", "Χρειάζεται σύνδεση.");
-    const tenantId = s((request.data || {}).tenantId) || "default";
-    const isSuperAdmin = request.auth.token.email === "techtacy@gmail.com";
-    const db = getFirestore();
-    if (tenantId !== "default" && !isSuperAdmin) {
-      const presDoc = await db.collection("presence").doc(request.auth.uid).get();
-      const pres = presDoc.data() || {};
-      if (!(pres.tenantOwner === true && pres.tenantId === tenantId)) {
-        throw new HttpsError("permission-denied", "Δεν έχεις πρόσβαση σε αυτόν τον tenant.");
-      }
-    } else if (tenantId === "default" && !isSuperAdmin) {
-      throw new HttpsError("permission-denied", "Μόνο ο master.");
-    }
-
-    const tenantDoc = await db.collection("tenants").doc(tenantId).get();
-    const tData = tenantDoc.exists ? tenantDoc.data() : {};
-
-    const apiKey = await readSecret(tenantSecretId(tenantId, "oxygen-api-key")).catch(() => null);
-    const mask = (v) => (v ? v.slice(0, 6) + "••••••••" : "");
-
-    return {
-      ok: true,
-      oxygenApiKeyMasked: mask(apiKey),
-      hasOxygenCredentials: !!apiKey,
-      oxygenBranchId: tData.oxygenBranchId || "",
-      oxygenNumberingSequenceId: tData.oxygenNumberingSequenceId || "",
-      oxygenPaymentMethodId: tData.oxygenPaymentMethodId || "",
-      oxygenSandbox: tData.oxygenSandbox === true,
-    };
-  }
-);
-
 exports.getTenantStripeCredentialsForOwner = onCall(
   { region: "us-central1" },
   async (request) => {

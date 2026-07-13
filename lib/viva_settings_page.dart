@@ -92,6 +92,13 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
   bool _hasEpsilonPassword = false;
   final _mydataSubKeyCtrl  = TextEditingController();
   final _mydataUsernameCtrl = TextEditingController();
+  // ── Oxygen Pelatologio — μοιράζεται το _invoiceApiKeyCtrl (invoice-api-key
+  // secret) με το Epsilon, ίδιο μοτίβο. Branch/numbering-sequence/payment-
+  // method IDs δεν είναι μυστικά — απλά πεδία tenant config.
+  final _oxygenBranchIdCtrl = TextEditingController();
+  final _oxygenNumberingSequenceIdCtrl = TextEditingController();
+  final _oxygenPaymentMethodIdCtrl = TextEditingController();
+  bool _oxygenSandbox = true;
   String _invoiceProvider = 'none'; // 'none' | 'epsilon' | 'mydata' | 'oxygen'
   // ── Φορολογικές παράμετροι myDATA — ΡΩΤΑ ΤΟΝ ΛΟΓΙΣΤΗ ΣΟΥ αν δεν είσαι
   // σίγουρος. Προεπιλογές: 11.2 = Απόδειξη Παροχής Υπηρεσιών (B2C, ο πιο
@@ -226,6 +233,9 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
     _epsilonItemCodeCtrl.dispose();
     _mydataSubKeyCtrl.dispose();
     _mydataUsernameCtrl.dispose();
+    _oxygenBranchIdCtrl.dispose();
+    _oxygenNumberingSequenceIdCtrl.dispose();
+    _oxygenPaymentMethodIdCtrl.dispose();
     _invoiceSeriesCtrl.dispose();
     super.dispose();
   }
@@ -305,6 +315,10 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
               _mydataInvoiceType       = bi['mydataInvoiceType'] as String? ?? '11.2';
               _mydataVatCategory       = bi['mydataVatCategory'] as String? ?? '2';
               _mydataDemo              = bi['mydataDemo'] as bool? ?? true;
+              _oxygenBranchIdCtrl.text = bi['oxygenBranchId'] as String? ?? '';
+              _oxygenNumberingSequenceIdCtrl.text = bi['oxygenNumberingSequenceId'] as String? ?? '';
+              _oxygenPaymentMethodIdCtrl.text = bi['oxygenPaymentMethodId'] as String? ?? '';
+              _oxygenSandbox           = bi['oxygenSandbox'] as bool? ?? true;
             });
           }
           // ── Αυτόματη προσυμπλήρωση (ΜΟΝΟ αν είναι ακόμα κενά, ώστε να μην
@@ -1350,6 +1364,10 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
         'epsilonPassword': _epsilonPasswordCtrl.text.trim(),
         'epsilonItemCode': _epsilonItemCodeCtrl.text.trim(),
         'mydataSubKey': _mydataSubKeyCtrl.text.trim(),
+        'oxygenBranchId': _oxygenBranchIdCtrl.text.trim(),
+        'oxygenNumberingSequenceId': _oxygenNumberingSequenceIdCtrl.text.trim(),
+        'oxygenPaymentMethodId': _oxygenPaymentMethodIdCtrl.text.trim(),
+        'oxygenSandbox': _oxygenSandbox,
       });
       if (res.data['ok'] == true) {
         setState(() {
@@ -1596,6 +1614,36 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
           ],
 
           if (_invoiceProvider == 'oxygen') ...[
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              margin: const EdgeInsets.only(bottom: 12),
+              decoration: BoxDecoration(
+                color: Colors.blue.shade50,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: Colors.blue.shade200),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Βήματα πριν συμπληρώσεις τα παρακάτω:',
+                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12.5, color: Colors.blue.shade900)),
+                  const SizedBox(height: 6),
+                  _epsilonStep('1', 'Κάνε λογαριασμό στο pelatologio.gr (Oxygen Pelatologio), αν δεν έχεις ήδη.'),
+                  _epsilonStep('2', 'Μπες στο docs.oxygen.gr → πάτησε «Authorize» πάνω δεξιά → βάλε το '
+                      'API key σου (Bearer token) — το βρίσκεις στις ρυθμίσεις του λογαριασμού σου στο pelatologio.gr.'),
+                  _epsilonStep('3', 'Στο ίδιο docs.oxygen.gr, άνοιξε «GET /branches» → «Try it out» → «Execute» — '
+                      'αντέγραψε το «id» του υποκαταστήματός σου από την απάντηση.'),
+                  _epsilonStep('4', 'Άνοιξε «GET /numbering-sequences» → «Try it out» → «Execute» — '
+                      'αντέγραψε το «id» της σειράς αρίθμησης που θες να χρησιμοποιείς.'),
+                  _epsilonStep('5', '(Προαιρετικό) Άνοιξε «GET /payment-methods» ομοίως, αν θες να ορίσεις '
+                      'συγκεκριμένο τρόπο πληρωμής στα παραστατικά.'),
+                  _epsilonStep('6', 'Συμπλήρωσε τα πεδία παρακάτω με ό,τι πήρες, και πάτησε Αποθήκευση.'),
+                  _epsilonStep('7', 'Άφησε ενεργό το «Δοκιμαστικό περιβάλλον (sandbox)» μέχρι να δοκιμάσεις '
+                      'με μία πραγματική κράτηση και να δεις ότι βγήκε σωστά το παραστατικό.'),
+                ],
+              ),
+            ),
             Text(_hasInvoiceApiKey
                 ? 'Έχει ήδη αποθηκευτεί API key.'
                 : 'Δεν έχει μπει ακόμα API key.',
@@ -1611,6 +1659,44 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
                   helperText: 'Βρίσκεται στο pelatologio.gr, μετά από εγγραφή: '
                       'Ρυθμίσεις → API → Δημιουργία κλειδιού (Oxygen MDP).',
                   border: const OutlineInputBorder()),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _oxygenBranchIdCtrl,
+              decoration: const InputDecoration(
+                  isDense: true,
+                  labelText: 'Branch ID',
+                  helperText: 'Από docs.oxygen.gr → GET /branches → πεδίο «id».',
+                  border: OutlineInputBorder()),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _oxygenNumberingSequenceIdCtrl,
+              decoration: const InputDecoration(
+                  isDense: true,
+                  labelText: 'Numbering Sequence ID',
+                  helperText: 'Από docs.oxygen.gr → GET /numbering-sequences → πεδίο «id».',
+                  border: OutlineInputBorder()),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _oxygenPaymentMethodIdCtrl,
+              decoration: const InputDecoration(
+                  isDense: true,
+                  labelText: 'Payment Method ID (προαιρετικό)',
+                  helperText: 'Από docs.oxygen.gr → GET /payment-methods → πεδίο «id». '
+                      'Άφησέ το κενό αν δεν χρειάζεσαι συγκεκριμένο τρόπο πληρωμής.',
+                  border: OutlineInputBorder()),
+            ),
+            const SizedBox(height: 12),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              dense: true,
+              title: const Text('Δοκιμαστικό περιβάλλον (sandbox)', style: TextStyle(fontSize: 13)),
+              subtitle: const Text('Άφησέ το ενεργό μέχρι να επιβεβαιώσεις ότι δουλεύει σωστά.',
+                  style: TextStyle(fontSize: 11.5)),
+              value: _oxygenSandbox,
+              onChanged: (v) => setState(() => _oxygenSandbox = v),
             ),
           ],
 
