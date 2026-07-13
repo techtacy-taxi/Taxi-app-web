@@ -567,6 +567,65 @@ class _GroupsAdminPageState extends State<GroupsAdminPage> {
     }
   }
 
+  /// ── Μόνο για master: διόρθωση tenantId ενός admin/οδηγού.
+  /// Κρίσιμο όταν πελάτες/διαδρομές που δημιουργεί ένας admin δεν
+  /// εμφανίζονται στη δημόσια φόρμα — συνήθως γιατί το tenantId του
+  /// admin δεν είναι "default" (ή λείπει και κάπου αλλού υπολογίζεται
+  /// διαφορετικά). Αυτό ΔΕΝ μετακινεί ήδη υπάρχοντες πελάτες· αλλάζει
+  /// μόνο το presence του admin, ώστε ΝΕΟΙ πελάτες που θα φτιάξει από
+  /// εδώ και πέρα να αποθηκευτούν με το σωστό tenantId.
+  void _showEditTenantIdDialog(String uid, String name, String currentTenantId) {
+    final ctrl = TextEditingController(text: currentTenantId);
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('tenantId — ${name.isEmpty ? 'Άγνωστος' : name}'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Οι πελάτες/διαδρομές που δημιουργεί αυτός ο admin αποθηκεύονται '
+              'με ΑΥΤΟ το tenantId. Άφησέ το κενό ή γράψε "default" αν θέλεις '
+              'να ανήκει στον ίδιο (δικό σου) λογαριασμό με εσένα.',
+              style: TextStyle(fontSize: 12.5, color: Colors.grey),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: ctrl,
+              decoration: const InputDecoration(
+                labelText: 'tenantId',
+                hintText: 'default',
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          AppButtonTonal(label: 'Ακύρωση', onPressed: () => Navigator.pop(ctx)),
+          AppButton(
+            label: 'Αποθήκευση',
+            onPressed: () async {
+              final newValue = ctrl.text.trim().isEmpty ? 'default' : ctrl.text.trim();
+              Navigator.pop(ctx);
+              await FirebaseFirestore.instance
+                  .collection('presence')
+                  .doc(uid)
+                  .set({'tenantId': newValue}, SetOptions(merge: true));
+              _loadData();
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                  content: Text('tenantId ενημερώθηκε σε "$newValue"'),
+                  backgroundColor: Colors.green,
+                ));
+              }
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final filteredDrivers = _drivers.where((d) {
@@ -686,6 +745,53 @@ class _GroupsAdminPageState extends State<GroupsAdminPage> {
                             ]),
                             const SizedBox(height: 2),
                             Text(email, style: TextStyle(fontSize: 10, color: Colors.blueGrey[400])),
+                            // ── Μόνο για master: δείχνει το tenantId του
+                            // χρήστη — κρίσιμο γιατί οι πελάτες/διαδρομές
+                            // που δημιουργεί κάθε admin αποθηκεύονται με ΤΟ
+                            // ΔΙΚΟ ΤΟΥ tenantId. Αν διαφέρει από "default"
+                            // (ή είναι κενό), οι πελάτες του ΔΕΝ εμφανίζονται
+                            // ποτέ στη δημόσια φόρμα (που πάντα ζητά "default"),
+                            // ακόμα κι αν το «μάτι» hideOthers είναι ανοιχτό.
+                            if (_isMaster) ...[
+                              const SizedBox(height: 4),
+                              InkWell(
+                                onTap: () => _showEditTenantIdDialog(dUid, name, (d['tenantId'] as String?) ?? ''),
+                                borderRadius: BorderRadius.circular(6),
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: ((d['tenantId'] as String?) ?? '').isEmpty || (d['tenantId'] as String?) == 'default'
+                                        ? Colors.green.shade50
+                                        : Colors.orange.shade50,
+                                    borderRadius: BorderRadius.circular(6),
+                                    border: Border.all(
+                                      color: ((d['tenantId'] as String?) ?? '').isEmpty || (d['tenantId'] as String?) == 'default'
+                                          ? Colors.green.shade200
+                                          : Colors.orange.shade300,
+                                    ),
+                                  ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(Icons.storefront_rounded, size: 11,
+                                          color: ((d['tenantId'] as String?) ?? '').isEmpty || (d['tenantId'] as String?) == 'default'
+                                              ? Colors.green.shade700 : Colors.orange.shade800),
+                                      const SizedBox(width: 3),
+                                      Text(
+                                        'tenantId: ${((d['tenantId'] as String?)?.isNotEmpty ?? false) ? d['tenantId'] : '(κενό → default)'}',
+                                        style: TextStyle(
+                                          fontSize: 10, fontWeight: FontWeight.w600,
+                                          color: ((d['tenantId'] as String?) ?? '').isEmpty || (d['tenantId'] as String?) == 'default'
+                                              ? Colors.green.shade800 : Colors.orange.shade900,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 3),
+                                      Icon(Icons.edit, size: 10, color: Colors.grey.shade500),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ],
                             if (dGroups.isNotEmpty) ...[
                               const SizedBox(height: 6),
                               Wrap(
