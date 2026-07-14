@@ -249,6 +249,27 @@ class _ClientCardState extends State<_ClientCard>
     }
   }
 
+  Future<void> _toggleOnlineVisibility(BuildContext context) async {
+    final newVal = !client.showInOnlineForm;
+    try {
+      await FirebaseFirestore.instance
+          .collection('clients')
+          .doc(client.id)
+          .set({'showInOnlineForm': newVal}, SetOptions(merge: true));
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        duration: const Duration(seconds: 2),
+        content: Text(newVal
+            ? '🌐 «${client.name}» θα φαίνεται στην online φόρμα'
+            : '🚫 «${client.name}» κρύφτηκε από την online φόρμα'),
+      ));
+    } catch (e) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Σφάλμα: $e')));
+    }
+  }
+
   Client get client    => widget.client;
   String get adminUid  => widget.adminUid;
   String get adminName => widget.adminName;
@@ -374,6 +395,25 @@ class _ClientCardState extends State<_ClientCard>
                     ]),
                   ],
                 ),
+              ),
+              // 🌐 Ορατότητα στις ONLINE φόρμες (booking/booking2/index) —
+              // γρήγορο διακοπτάκι: πράσινη υδρόγειος = φαίνεται στα Από/Προς
+              // της φόρμας, γκρι κομμένη = ΔΕΝ φαίνεται. Στη φόρμα δουλειάς
+              // της εφαρμογής ο πελάτης φαίνεται ΠΑΝΤΑ, ανεξαρτήτως.
+              IconButton(
+                visualDensity: VisualDensity.compact,
+                tooltip: client.showInOnlineForm
+                    ? 'Φαίνεται στην online φόρμα — πάτα για απόκρυψη'
+                    : 'ΚΡΥΜΜΕΝΟΣ από την online φόρμα — πάτα για εμφάνιση',
+                icon: Icon(
+                    client.showInOnlineForm
+                        ? Icons.public_rounded
+                        : Icons.public_off_rounded,
+                    size: 19,
+                    color: client.showInOnlineForm
+                        ? Colors.green.shade600
+                        : Colors.grey.shade400),
+                onPressed: () => _toggleOnlineVisibility(context),
               ),
               // Επεξεργασία / Διαγραφή — διακριτικά
               IconButton(

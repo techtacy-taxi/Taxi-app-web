@@ -2190,7 +2190,12 @@ async function runMonthlyCharges() {
 exports.monthlyCharges = onSchedule(
   { schedule: "30 5 1 * *", timeZone: "Europe/Athens",
     memory: "256MiB", timeoutSeconds: 300 },
-  async () => { await runMonthlyCharges(); }
+  async () => {
+    await runMonthlyCharges();
+    // Πλήρες σκούπισμα pending_bookings >48h — piggyback στο ΙΔΙΟ scheduled
+    // job (κανένας νέος scheduler). Batches των 300, μέχρι 20 γύρους.
+    await cleanupStalePendingBookings(getFirestore(), { limit: 300, maxLoops: 20 });
+  }
 );
 
 // Χειροκίνητο (μόνο master) — για δοκιμή ή αν χρειαστεί επανεκτέλεση.
@@ -3490,6 +3495,39 @@ async function getVivaAccessToken(demo, clientId, clientSecret) {
 
 // ── createVivaOrder: επικυρώνει την κράτηση, υπολογίζει το 10% deposit,
 //    αποθηκεύει pending_bookings, δημιουργεί Viva order, γυρνάει checkoutUrl ──
+// ── Καθαρισμός μπαγιάτικων pending_bookings (>48 ώρες) ──────────────────────
+// Τα ολοκληρωμένα υπάρχουν ήδη στα saved_jobs, τα απλήρωτα δεν χρειάζονται
+// ποτέ — άρα ΟΛΑ τα docs ηλικίας >48h διαγράφονται, ανεξαρτήτως status.
+// Query ΜΟΝΟ σε createdAt (single-field index, υπάρχει αυτόματα — δεν
+// χρειάζεται composite). Καλείται:
+//  • ευκαιριακά σε κάθε νέο checkout (limit 25 — κόστος ανάλογο της κίνησης,
+//    κανένα επιπλέον scheduled function), και
+//  • ως πλήρες σκούπισμα μία φορά τον μήνα μέσα στο υπάρχον monthlyCharges.
+async function cleanupStalePendingBookings(db, { limit = 25, maxLoops = 1 } = {}) {
+  try {
+    const { Timestamp } = require("firebase-admin/firestore");
+    const cutoff = Timestamp.fromMillis(Date.now() - 48 * 60 * 60 * 1000);
+    let total = 0;
+    for (let i = 0; i < maxLoops; i++) {
+      const snap = await db.collection("pending_bookings")
+        .where("createdAt", "<", cutoff)
+        .limit(limit)
+        .get();
+      if (snap.empty) break;
+      const batch = db.batch();
+      snap.docs.forEach((d) => batch.delete(d.ref));
+      await batch.commit();
+      total += snap.size;
+      if (snap.size < limit) break;
+    }
+    if (total > 0) console.log("cleanupStalePendingBookings: διαγράφηκαν", total, "docs (>48h)");
+    return total;
+  } catch (e) {
+    console.error("cleanupStalePendingBookings error:", e.message);
+    return 0;
+  }
+}
+
 async function prepareBookingOrder(req) {
   const b = req.body || {};
   const tenantId = s(b.tenantId) || "default";
@@ -3609,6 +3647,9 @@ async function prepareBookingOrder(req) {
 
   const jobPrice = Math.max(0, estimate.price - depositEquivalent);
   const db = getFirestore();
+  // Ευκαιριακό καθάρισμα μπαγιάτικων pending (>48h) — best effort, ποτέ δεν
+  // μπλοκάρει τη ροή του checkout.
+  await cleanupStalePendingBookings(db);
   const pendingRef = await db.collection("pending_bookings").add({
     status: "pending",
     tenantId,
@@ -5696,11 +5737,32 @@ exports.listClients = onRequest(
         console.error("listClients: hideOthers check failed:", e.message || e);
       }
 
-      let q = db.collection("clients").where("tenantId", "==", tenantId);
-      if (restrictToUid) q = q.where("createdBy", "==", restrictToUid);
-      const snap = await q.get();
+      // ── Default tenant: φέρνουμε ΟΛΟΥΣ και φιλτράρουμε στον κώδικα, ώστε
+      // να πιάνονται και ΠΑΛΙΟΙ πελάτες ΧΩΡΙΣ πεδίο tenantId (φτιαγμένοι πριν
+      // το multi-tenant) — το where("tenantId","==","default") τους ΕΧΑΝΕ και
+      // δεν εμφανίζονταν ποτέ στη φόρμα, ενώ στην εφαρμογή φαίνονταν κανονικά.
+      // Ίδια λογική με το findClientRouteMatch (τιμολόγηση διαδρομών πελατών).
+      let snapDocs;
+      if (tenantId === "default") {
+        const snapAll = await db.collection("clients").get();
+        snapDocs = snapAll.docs.filter((doc) => {
+          const t = doc.data().tenantId;
+          return t == null || t === "" || t === "default";
+        });
+      } else {
+        const snapT = await db.collection("clients").where("tenantId", "==", tenantId).get();
+        snapDocs = snapT.docs;
+      }
+      if (restrictToUid) {
+        snapDocs = snapDocs.filter((doc) => doc.data().createdBy === restrictToUid);
+      }
+      // ── 🌐 Διακοπτάκι ανά πελάτη (showInOnlineForm): αν false, ο πελάτης
+      // ΔΕΝ εμφανίζεται στις προτάσεις Από/Προς των online φορμών (booking/
+      // booking2/index). Στη φόρμα δουλειάς της ΕΦΑΡΜΟΓΗΣ φαίνεται πάντα —
+      // εκείνη δεν περνάει από εδώ. Default (πεδίο απόν): φαίνεται.
+      snapDocs = snapDocs.filter((doc) => doc.data().showInOnlineForm !== false);
 
-      const clients = snap.docs.map((doc) => {
+      const clients = snapDocs.map((doc) => {
         const d = doc.data();
         const routes = Array.isArray(d.routes)
           ? d.routes

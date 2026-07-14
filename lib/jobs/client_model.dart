@@ -85,6 +85,7 @@ class Client {
   final double? fromLng;
   final String? phone;       // προαιρετικό τηλέφωνο πελάτη
   final bool    hasShuttleBus; // ✅ διαθέτει υπηρεσία Shuttle Bus
+  final bool    showInOnlineForm; // 🌐 εμφανίζεται στις προτάσεις Από/Προς των ONLINE φορμών (booking/booking2/index) — στη φόρμα δουλειάς της εφαρμογής φαίνεται ΠΑΝΤΑ
   final List<ClientRoute> routes;
   final String  createdBy;
   final String  createdByName;
@@ -98,6 +99,7 @@ class Client {
     this.fromLng,
     this.phone,
     this.hasShuttleBus = false,
+    this.showInOnlineForm = true,
     this.routes = const [],
     required this.createdBy,
     this.createdByName = '',
@@ -123,6 +125,7 @@ class Client {
       fromLng:       (d['fromLng'] as num?)?.toDouble(),
       phone:         d['phone']    as String?,
       hasShuttleBus: d['hasShuttleBus'] == true,
+      showInOnlineForm: d['showInOnlineForm'] != false, // default: φαίνεται
       routes:        routes,
       createdBy:     d['createdBy']     as String? ?? '',
       createdByName: d['createdByName'] as String? ?? '',
@@ -137,6 +140,7 @@ class Client {
         if (fromLng != null) 'fromLng': fromLng,
         if (phone != null && phone!.isNotEmpty) 'phone': phone,
         'hasShuttleBus': hasShuttleBus,
+        'showInOnlineForm': showInOnlineForm,
         'routes':        routes.map((r) => r.toMap()).toList(),
         'createdBy':     createdBy,
         'createdByName': createdByName,
@@ -152,6 +156,7 @@ class Client {
     double?  fromLng,
     String?  phone,
     bool?    hasShuttleBus,
+    bool?    showInOnlineForm,
     List<ClientRoute>? routes,
   }) =>
       Client(
@@ -162,6 +167,7 @@ class Client {
         fromLng:       fromLng  ?? this.fromLng,
         phone:         phone    ?? this.phone,
         hasShuttleBus: hasShuttleBus ?? this.hasShuttleBus,
+        showInOnlineForm: showInOnlineForm ?? this.showInOnlineForm,
         routes:        routes   ?? this.routes,
         createdBy:     createdBy,
         createdByName: createdByName,

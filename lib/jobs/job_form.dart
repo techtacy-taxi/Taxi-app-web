@@ -786,6 +786,15 @@ class _JobFormPageState extends State<JobFormPage> {
     _recomputeRoute();
   }
 
+  /// Όταν επιλεγεί ΠΕΛΑΤΗΣ στο πεδίο «Προς»: ο προορισμός γίνεται η
+  /// διεύθυνση-βάση του πελάτη (π.χ. δρομολόγιο αεροδρόμιο → κατάλυμα).
+  /// ΔΕΝ αλλάζει όνομα/τηλέφωνο πελάτη της δουλειάς — μόνο ο προορισμός.
+  void _onClientPickedAsDestination(Client c) {
+    _onToPicked(PlacePick(
+        description: c.fromName.isNotEmpty ? c.fromName : c.name,
+        lat: c.fromLat, lng: c.fromLng));
+  }
+
   /// Υπολογίζει χιλιόμετρα + polyline όταν υπάρχουν 2 σημεία με συντεταγμένες.
   /// Πρώτα δοκιμάζει Directions (διαδρομή οδήγησης) — αν αποτύχει, ευθεία.
   Future<void> _recomputeRoute() async {
@@ -1202,6 +1211,10 @@ class _JobFormPageState extends State<JobFormPage> {
             icon:     Icons.place_rounded,
             value:    _toPick,
             onPicked: _onToPicked,
+            // Πελάτες ΚΑΙ στο «Προς» — ίδια λίστα με το «Από» (σέβεται το
+            // «μάτι» masterHideOtherClients μέσω του _loadClients).
+            clients:  _clients,
+            onClientPicked: _onClientPickedAsDestination,
           ),
           // Απόσταση διαδρομής
           if (_routeLoading || _routeKm != null) ...[
