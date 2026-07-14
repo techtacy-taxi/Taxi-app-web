@@ -154,11 +154,22 @@ async function getTokensForStage(job, stage) {
 
 // ─── Helper: φτιάχνει data payload για δουλειά ──────────────────────────────
 // ΠΡΟΣΟΧΗ: "from", "notification", "message_type" κλπ. είναι reserved από FCM.
+// Τίτλος με σήμανση ομαδικής (Shuttle/Λεωφορείο) — «🚐 Shuttle · 3 κρατήσεις»
+function groupAwareTitle(job, fallback) {
+  if (job && job.isShuttleContainer === true) {
+    const n = Array.isArray(job.shuttleStops) ? job.shuttleStops.length : 0;
+    const veh = job.vehicleType === "bus" ? "Λεωφορείο" : "Shuttle";
+    return `🚐 ${veh} · ${n} κρατήσεις`;
+  }
+  return fallback;
+}
+
 function jobDataPayload(jobId, job, type, title) {
   return {
     type:        String(type),
     jobId:       String(jobId),
-    title:       String(title),
+    title:       String(groupAwareTitle(job, title)),
+    stopsCount:  String(Array.isArray(job.shuttleStops) ? job.shuttleStops.length : 0),
     fromAddr:    String(job.from || ""),
     toAddr:      String(job.to   || ""),
     price:       String(job.price != null ? job.price : ""),
@@ -2558,6 +2569,18 @@ function nearestShuttleSlots(requestedMin, slots, fromZoneId, toZoneId) {
   }
   if (!after) after = sorted[0];   // «μετά» τυλίγεται στο πρώτο δρομολόγιο της επόμενης μέρας
   if (!before) before = sorted[sorted.length - 1];
+  // ── Αν πριν == μετά αλλά ΥΠΑΡΧΕΙ και δεύτερη διαφορετική ώρα στο
+  // πρόγραμμα, δώσε την επόμενη διαφορετική ως «μετά» — έτσι ο πελάτης
+  // βλέπει πάντα 2 πραγματικές επιλογές όταν υπάρχουν, αντί να «κλειδώνει»
+  // σε μία. Αν το πρόγραμμα έχει όντως ΜΙΑ ώρα, μένει μία (η φόρμα δείχνει
+  // ένα κουμπί).
+  if (before.time === after.time) {
+    const distinct = sorted.filter((s) => s.time !== before.time);
+    if (distinct.length) {
+      const next = distinct.find((s) => s.mins > before.mins) || distinct[0];
+      after = next;
+    }
+  }
   return { before: before.time, after: after.time };
 }
 
@@ -3126,6 +3149,10 @@ exports.submitPublicBooking = onRequest(
       const estimate = await computeEstimate({
         fromLat, fromLng, toLat, toLng, persons, luggage, childSeatCount,
         vehicleType, isGreek, scheduledNaive, apiKey: ROUTES_API_KEY.value(),
+        // ⚠️ BUGFIX: χωρίς tenantId, η ΤΕΛΙΚΗ τιμή της κράτησης υπολογιζόταν
+        // με τις τιμές/ζώνες του DEFAULT tenant αντί του tenant της φόρμας.
+        tenantId,
+        clientsOnlyMode: cfg.clientsOnlyBooking === true,
       });
       if (estimate.outsideAttica && !gateReasons.includes("outside_attica")) {
         gateReasons.push("outside_attica");
@@ -3146,9 +3173,11 @@ exports.submitPublicBooking = onRequest(
       // Το date/time έρχονται ως τοπική ώρα Ελλάδας. Φτιάχνουμε ISO με offset.
       // (Απλό & ασφαλές: θεωρούμε Europe/Athens. Για ακρίβεια DST, ο master
       //  βλέπει ούτως ή άλλως το ραντεβού στην εφαρμογή πριν στείλει.)
-      const scheduledIso = date + "T" + time + ":00";
-      const scheduledAtMs = Date.parse(scheduledIso); // local-naive → ms (UTC approx)
-      const startDate = isNaN(scheduledAtMs) ? new Date() : new Date(scheduledAtMs);
+      // ⚠️ BUGFIX: το Date.parse σε ISO χωρίς offset ερμηνεύεται ως UTC στους
+      // servers (UTC timezone) → το 11:00 Ελλάδας σωζόταν ως 11:00 UTC και η
+      // εφαρμογή το έδειχνε 14:00. Σωστή μετατροπή: ώρα Αθήνας → πραγματικό UTC.
+      const schedNaive = athensNaiveFromDateTimeStrings(date, time);
+      const startDate = schedNaive ? athensNaiveToRealDate(schedNaive) : new Date();
 
       // Σύνθεση σημειώσεων για τη δουλειά
       const noteLines = [];
@@ -3868,9 +3897,10 @@ async function finalizeSuccessfulPayment(db, pendingRef, pd, providerMeta) {
   const me = await db.collection("presence").doc(masterUid).get();
   const masterName = await resolveOwnerDisplayName(pd.tenantId, me.exists ? me.data() : null);
 
-  const scheduledIso = pd.date + "T" + pd.time + ":00";
-  const scheduledAtMs = Date.parse(scheduledIso);
-  const startDate = isNaN(scheduledAtMs) ? new Date() : new Date(scheduledAtMs);
+  // ⚠️ BUGFIX (ίδιο με submitPublicBooking): ώρα Αθήνας → πραγματικό UTC,
+  // αλλιώς το ραντεβού σωζόταν +3 ώρες μπροστά (11:00 → 14:00).
+  const schedNaive = athensNaiveFromDateTimeStrings(pd.date, pd.time);
+  const startDate = schedNaive ? athensNaiveToRealDate(schedNaive) : new Date();
 
   const noteLines = [];
   noteLines.push(pd.fullyPaid
@@ -5761,16 +5791,28 @@ exports.listClients = onRequest(
       // δεν εμφανίζονταν ποτέ στη φόρμα, ενώ στην εφαρμογή φαίνονταν κανονικά.
       // Ίδια λογική με το findClientRouteMatch (τιμολόγηση διαδρομών πελατών).
       let snapDocs;
+      let _totalDocs = 0;
+      let _tenantIdSamples = {};
       if (tenantId === "default") {
         const snapAll = await db.collection("clients").get();
-        snapDocs = snapAll.docs.filter((doc) => {
+        _totalDocs = snapAll.size;
+        snapAll.docs.forEach((doc) => {
           const t = doc.data().tenantId;
-          return t == null || t === "" || t === "default";
+          const key = t == null ? "(κανένα)" : (t === "" ? "(κενό)" : String(t));
+          _tenantIdSamples[key] = (_tenantIdSamples[key] || 0) + 1;
         });
+        // Ο master (default φόρμα) βλέπει τους πελάτες ΟΛΩΝ των admins του,
+        // ανεξαρτήτως eform/tenantId του πελάτη (π.χ. "seretis_form") — ΙΔΙΑ
+        // λογική με το μάτι στην εφαρμογή ΚΑΙ με την τιμολόγηση
+        // (findClientRouteMatch: για default φέρνει όλους). Το κλειστό μάτι
+        // εξακολουθεί να περιορίζει σε createdBy == master πιο κάτω.
+        snapDocs = snapAll.docs;
       } else {
         const snapT = await db.collection("clients").where("tenantId", "==", tenantId).get();
+        _totalDocs = snapT.size;
         snapDocs = snapT.docs;
       }
+      const _afterTenant = snapDocs.length;
       if (restrictToUid) {
         snapDocs = snapDocs.filter((doc) => doc.data().createdBy === restrictToUid);
       }
@@ -5778,7 +5820,9 @@ exports.listClients = onRequest(
       // ΔΕΝ εμφανίζεται στις προτάσεις Από/Προς των online φορμών (booking/
       // booking2/index). Στη φόρμα δουλειάς της ΕΦΑΡΜΟΓΗΣ φαίνεται πάντα —
       // εκείνη δεν περνάει από εδώ. Default (πεδίο απόν): φαίνεται.
+      const _afterOwner = snapDocs.length;
       snapDocs = snapDocs.filter((doc) => doc.data().showInOnlineForm !== false);
+      const _afterVisibility = snapDocs.length;
 
       const clients = snapDocs.map((doc) => {
         const d = doc.data();
@@ -5801,6 +5845,30 @@ exports.listClients = onRequest(
           routes,
         };
       }).filter((c) => c.name && c.fromLat != null && c.fromLng != null);
+
+      // ── ΠΡΟΣΩΡΙΝΟ ΔΙΑΓΝΩΣΤΙΚΟ: ?debug=1 δείχνει πόσοι πελάτες επιβιώνουν
+      // σε κάθε φίλτρο, ώστε να εντοπίζεται ΑΜΕΣΩΣ πού «χάνονται». Δεν
+      // επιστρέφει προσωπικά δεδομένα — μόνο πλήθη και ονόματα όσων κόπηκαν
+      // από το φίλτρο συντεταγμένων.
+      if (s(req.query.debug) === "1") {
+        const noCoords = snapDocs
+          .map((doc) => doc.data())
+          .filter((d) => !(d.name && d.fromLat != null && d.fromLng != null))
+          .map((d) => ({ name: d.name || "(χωρίς όνομα)", fromLat: d.fromLat ?? null, fromLng: d.fromLng ?? null }));
+        return res.json({
+          ok: true,
+          debug: {
+            συνολικάDocs: _totalDocs,
+            τιμέςTenantId: _tenantIdSamples,
+            μετάΦίλτροTenant: _afterTenant,
+            restrictToUid: restrictToUid || "(κανένα — μάτι ανοιχτό)",
+            μετάΦίλτροΙδιοκτήτη: _afterOwner,
+            μετάΦίλτροΟρατότητας: _afterVisibility,
+            τελικοίΜεΣυντεταγμένες: clients.length,
+            κομμένοιΧωρίςΣυντεταγμένες: noCoords,
+          },
+        });
+      }
 
       // ── placesEnabled: ΠΑΛΙΟΣ διακόπτης, ελέγχεται από τον MASTER στο
       // tenants/{id} doc — αν κλειστός, ΔΕΝ αρχικοποιείται καθόλου το widget

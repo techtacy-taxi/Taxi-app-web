@@ -136,6 +136,168 @@ class _JobFormPageState extends State<JobFormPage> {
   bool    _withReturn = false;
   bool    _withStops  = false;
   String  _vehicleType = 'any';
+
+  // ═══ Ομαδική μεταφορά (Shuttle / Λεωφορείο) — πολλαπλές κρατήσεις ═══
+  // Η ΚΥΡΙΑ κράτηση είναι τα κανονικά πεδία της φόρμας (πελάτης/τηλ/από...).
+  // Οι ΕΠΙΠΛΕΟΝ μπαίνουν εδώ. Κοινό σημείο: ο Προορισμός (default) ή η
+  // Αφετηρία — καθορίζει ποια διεύθυνση είναι «δική» της κάθε κράτησης.
+  bool get _isGroupVehicle =>
+      _vehicleType == 'shuttle' || _vehicleType == 'bus';
+  bool _groupSharedIsDestination = true; // κοινό = «Προς» (μαζεύουμε από καταλύματα)
+  final List<_ExtraBooking> _extraBookings = [];
+  String? _mainStopZoneName; // ζώνη/θέση της ΚΥΡΙΑΣ κράτησης όταν το «Από»
+  int?    _mainStopOrder;    // επιλέχθηκε από πελάτη-κατάλυμα
+  bool    _loadedContainer = false; // φορτώθηκαν στάσεις από edit ενωμένης
+
+  // Αν επεξεργαζόμαστε ΕΝΩΜΕΝΗ (container) αποθηκευμένη, φόρτωσε τις
+  // στάσεις της: η 1η γίνεται η κύρια κράτηση (τα πεδία της φόρμας έχουν
+  // ήδη προσυμπληρωθεί από το job), οι υπόλοιπες γίνονται επιπλέον.
+  Future<void> _maybeLoadContainer() async {
+    final id = widget.editSavedJobId;
+    if (id == null || id.isEmpty) return;
+    try {
+      final doc = await FirebaseFirestore.instance
+          .collection('saved_jobs').doc(id).get();
+      final d = doc.data();
+      if (d == null || d['isShuttleContainer'] != true) return;
+      final stops = (d['shuttleStops'] as List? ?? [])
+          .whereType<Map>()
+          .map((m) => ShuttleStop.fromMap(Map<String, dynamic>.from(m)))
+          .toList();
+      if (stops.isEmpty) return;
+      final sharedIsPickup = d['shuttleSharedIsPickup'] == true;
+      setState(() {
+        _loadedContainer = true;
+        if (_vehicleType != 'bus') _vehicleType = 'shuttle';
+        _groupSharedIsDestination = !sharedIsPickup;
+        // Κύρια κράτηση ← 1η στάση
+        final first = stops.first;
+        _clientNameCtrl.text  = first.name;
+        _clientPhoneCtrl.text = first.phone ?? '';
+        _clientEmailCtrl.text = first.email ?? '';
+        _flightShipCtrl.text  = first.flightOrShip ?? '';
+        _priceCtrl.text = first.price.toStringAsFixed(2);
+        _persons = first.persons;
+        _luggage = first.luggage;
+        _mainStopZoneName = first.zoneName;
+        _mainStopOrder    = first.orderInZone;
+        final ownPick = PlacePick(
+            description: first.address, lat: first.lat, lng: first.lng);
+        if (sharedIsPickup) {
+          _toPick = ownPick;
+        } else {
+          _fromPick = ownPick;
+        }
+        // Επιπλέον κρατήσεις ← υπόλοιπες στάσεις
+        _extraBookings.clear();
+        for (final st in stops.skip(1)) {
+          final b = _ExtraBooking();
+          b.nameCtrl.text   = st.name;
+          b.phoneCtrl.text  = st.phone ?? '';
+          b.emailCtrl.text  = st.email ?? '';
+          b.flightCtrl.text = st.flightOrShip ?? '';
+          b.priceCtrl.text  = st.price.toStringAsFixed(2);
+          b.personsCtrl.text = '${st.persons}';
+          b.luggageCtrl.text = '${st.luggage}';
+          b.pick = PlacePick(
+              description: st.address, lat: st.lat, lng: st.lng);
+          b.zoneName    = st.zoneName;
+          b.orderInZone = st.orderInZone;
+          _extraBookings.add(b);
+        }
+      });
+    } catch (_) {}
+  }
+
+  // Χτίζει τις στάσεις (κύρια + επιπλέον) για αποθήκευση container.
+  // isPickupHere = παίρνουμε ΑΠΟ τη στάση (όταν το κοινό σημείο είναι ο
+  // προορισμός) — αλλιώς αφήνουμε ΣΤΗ στάση.
+  List<ShuttleStop> _buildGroupStops(Job job) {
+    final isPickupHere = _groupSharedIsDestination;
+    final mainOwn = isPickupHere ? _fromPick : _toPick;
+    final stops = <ShuttleStop>[
+      ShuttleStop(
+        savedJobId:   widget.editSavedJobId ?? '',
+        name:         _clientNameCtrl.text.trim(),
+        phone:        _clientPhoneCtrl.text.trim().isNotEmpty
+            ? _clientPhoneCtrl.text.trim() : null,
+        email:        _clientEmailCtrl.text.trim().isNotEmpty
+            ? _clientEmailCtrl.text.trim() : null,
+        flightOrShip: _flightShipCtrl.text.trim().isNotEmpty
+            ? _flightShipCtrl.text.trim() : null,
+        address:      (mainOwn?.description ?? '').trim(),
+        lat:          mainOwn?.lat,
+        lng:          mainOwn?.lng,
+        isPickupHere: isPickupHere,
+        price:        job.price,
+        persons:      _persons,
+        luggage:      _luggage,
+        childSeatCount: _childSeatCount,
+        zoneName:     _mainStopZoneName,
+        orderInZone:  _mainStopOrder,
+      ),
+    ];
+    for (final b in _extraBookings) {
+      final addr = (b.pick?.description ?? '').trim();
+      if (addr.isEmpty && b.nameCtrl.text.trim().isEmpty) continue;
+      stops.add(ShuttleStop(
+        savedJobId:   '',
+        name:         b.nameCtrl.text.trim(),
+        phone:        b.phoneCtrl.text.trim().isNotEmpty
+            ? b.phoneCtrl.text.trim() : null,
+        email:        b.emailCtrl.text.trim().isNotEmpty
+            ? b.emailCtrl.text.trim() : null,
+        flightOrShip: b.flightCtrl.text.trim().isNotEmpty
+            ? b.flightCtrl.text.trim() : null,
+        address:      addr,
+        lat:          b.pick?.lat,
+        lng:          b.pick?.lng,
+        isPickupHere: isPickupHere,
+        price:        double.tryParse(
+                b.priceCtrl.text.trim().replaceAll(',', '.')) ?? 0,
+        persons:      int.tryParse(b.personsCtrl.text.trim()) ?? 1,
+        luggage:      int.tryParse(b.luggageCtrl.text.trim()) ?? 0,
+        zoneName:     b.zoneName,
+        orderInZone:  b.orderInZone,
+      ));
+    }
+    return stops;
+  }
+
+  // Αποθήκευση ομαδικής (Shuttle/Λεωφορείο με 2+ κρατήσεις) ως container
+  // στις Αποθηκευμένες — ίδια δομή με το «Ένωση» ώστε όλα τα υπάρχοντα UI
+  // να δουλεύουν αυτούσια. Επιστρέφει true αν χειρίστηκε την αποθήκευση.
+  Future<bool> _saveGroupIfNeeded(Job job) async {
+    if (!_isGroupVehicle) return false;
+    if (_extraBookings.isEmpty && !_loadedContainer) return false;
+    final shared = _groupSharedIsDestination ? _toPick : _fromPick;
+    final stops = _buildGroupStops(job);
+    await SavedJobService.saveGroupContainer(
+      job: job,
+      stops: stops,
+      sharedPointName: (shared?.description ?? '').trim(),
+      sharedPointLat: shared?.lat,
+      sharedPointLng: shared?.lng,
+      sharedIsPickup: !_groupSharedIsDestination,
+      ownerUid: widget.isForeignOwned
+          ? widget.ownerOverrideUid! : widget.adminUid,
+      ownerName: widget.isForeignOwned
+          ? (widget.ownerOverrideName ?? '') : widget.adminName,
+      updateId: _loadedContainer ? widget.editSavedJobId : null,
+    );
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('🚐 Η ομαδική μεταφορά αποθηκεύτηκε στις «Αποθηκευμένες» '
+            'ως ενωμένη — από εκεί γίνεται και η αποστολή.'),
+        backgroundColor: Color(0xFF1565C0),
+        duration: Duration(seconds: 3),
+      ));
+      Navigator.of(context).pop(true);
+    }
+    return true;
+  }
+
+
   int     _timeoutMins = 5;
 
   // Συνολικό κόστος παιδικών καθισμάτων
@@ -233,6 +395,7 @@ class _JobFormPageState extends State<JobFormPage> {
       _fullyPaidManual = widget.editJob!.fullyPaid;
     } else if (widget.editSavedJob != null) {
       _prefill(widget.editSavedJob!);
+      _maybeLoadContainer();
       _loadSources();
       _fullyPaidManual = widget.editSavedJob!.fullyPaid;
     } else if (widget.copyFromJob != null) {
@@ -364,6 +527,7 @@ class _JobFormPageState extends State<JobFormPage> {
 
   @override
   void dispose() {
+    for (final b in _extraBookings) { b.dispose(); }
     _priceCtrl.dispose();
     _noteCtrl.dispose();
     _childSeatPriceCtrl.dispose();
@@ -453,6 +617,8 @@ class _JobFormPageState extends State<JobFormPage> {
   /// Όταν επιλεγεί πελάτης στο πεδίο "Από": γεμίζει η διεύθυνση-βάση και, αν
   /// ο πελάτης έχει αποθηκευμένες διαδρομές, εμφανίζεται επιλογή προορισμού.
   Future<void> _onClientPicked(Client c) async {
+    _mainStopZoneName = c.shuttleZoneName;
+    _mainStopOrder    = c.shuttleOrder;
     // Βάλε το "Από" = διεύθυνση-βάση πελάτη
     setState(() {
       _fromPick = PlacePick(
@@ -949,6 +1115,8 @@ class _JobFormPageState extends State<JobFormPage> {
 
     setState(() => _isSaving = true);
     try {
+      // Ομαδική (Shuttle/Λεωφορείο με 2+ κρατήσεις) → container στις Αποθηκευμένες
+      if (await _saveGroupIfNeeded(job)) return;
       if (widget.isSavedDraft) {
         if (widget.isForeignOwned) {
           await SavedJobService.updateAsEditor(
@@ -996,6 +1164,9 @@ class _JobFormPageState extends State<JobFormPage> {
     setState(() => _isSaving = true);
 
     try {
+      // Ομαδική (Shuttle/Λεωφορείο με 2+ κρατήσεις) → πρώτα αποθηκεύεται ως
+      // ενωμένη στις Αποθηκευμένες (η αποστολή γίνεται από εκεί).
+      if (await _saveGroupIfNeeded(job)) return;
       // Αν επεξεργαζόμασταν ΑΠΟΘΗΚΕΥΜΕΝΗ δουλειά και πατήθηκε «Αποστολή» →
       // στείλ' την κανονικά ΚΑΙ σβήσε το προσχέδιο.
       if (widget.isSavedDraft) {
@@ -1507,6 +1678,49 @@ class _JobFormPageState extends State<JobFormPage> {
             const SizedBox(width: 8),
             _vehicleChip('van',  'Van',        Icons.airport_shuttle_rounded),
           ]),
+          // ── Ομαδική μεταφορά: Shuttle / Λεωφορείο ──────────────────────────
+          const SizedBox(height: 8),
+          Row(children: [
+            _vehicleChip('shuttle', 'Shuttle',   Icons.directions_bus_rounded),
+            const SizedBox(width: 8),
+            _vehicleChip('bus',     'Λεωφορείο', Icons.directions_bus_filled_rounded),
+          ]),
+          if (_isGroupVehicle) ...[
+            const SizedBox(height: 14),
+            _section('Κρατήσεις ομαδικής μεταφοράς'),
+            const Padding(
+              padding: EdgeInsets.only(bottom: 6),
+              child: Text(
+                  'Η 1η κράτηση είναι τα πεδία της φόρμας (πελάτης, τηλέφωνο, '
+                  'διεύθυνση). Πρόσθεσε εδώ τις επόμενες — κάθε μία με δικά '
+                  'της στοιχεία, διεύθυνση και τιμή.',
+                  style: TextStyle(fontSize: 12, color: Colors.grey)),
+            ),
+            // Κοινό σημείο: Προορισμός (μαζεύουμε από καταλύματα) ή Αφετηρία
+            SegmentedButton<bool>(
+              segments: const [
+                ButtonSegment(value: true,
+                    label: Text('Κοινό: Προορισμός', style: TextStyle(fontSize: 12)),
+                    icon: Icon(Icons.flag_rounded, size: 16)),
+                ButtonSegment(value: false,
+                    label: Text('Κοινό: Αφετηρία', style: TextStyle(fontSize: 12)),
+                    icon: Icon(Icons.trip_origin_rounded, size: 16)),
+              ],
+              selected: {_groupSharedIsDestination},
+              onSelectionChanged: (v) =>
+                  setState(() => _groupSharedIsDestination = v.first),
+            ),
+            const SizedBox(height: 10),
+            for (int i = 0; i < _extraBookings.length; i++)
+              _extraBookingCard(i),
+            OutlinedButton.icon(
+              onPressed: () =>
+                  setState(() => _extraBookings.add(_ExtraBooking())),
+              icon: const Icon(Icons.person_add_alt_1_rounded, size: 18),
+              label: Text('Προσθήκη κράτησης '
+                  '(σύνολο: ${_extraBookings.length + 1})'),
+            ),
+          ],
 
           // ── Αποστολή σε... ────────────────────────────────────────────────
           const SizedBox(height: 20),
@@ -2113,6 +2327,123 @@ class _JobFormPageState extends State<JobFormPage> {
         ]),
       );
 
+  // Κάρτα μίας ΕΠΙΠΛΕΟΝ κράτησης της ομαδικής μεταφοράς.
+  Widget _extraBookingCard(int i) {
+    final b = _extraBookings[i];
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+      decoration: BoxDecoration(
+        border: Border.all(color: Colors.amber.shade200),
+        borderRadius: BorderRadius.circular(12),
+        color: Colors.amber.shade50.withValues(alpha: 0.4),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Expanded(
+            child: Text(
+                'Κράτηση ${i + 2}'
+                '${b.zoneName != null ? ' · ${b.zoneName}${b.orderInZone != null ? ' #${b.orderInZone}' : ''}' : ''}',
+                style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 13.5,
+                    color: Colors.amber.shade900)),
+          ),
+          IconButton(
+            visualDensity: VisualDensity.compact,
+            tooltip: 'Αφαίρεση κράτησης',
+            icon: const Icon(Icons.close_rounded, size: 18, color: Colors.red),
+            onPressed: () => setState(() {
+              _extraBookings.removeAt(i).dispose();
+            }),
+          ),
+        ]),
+        PlaceField(
+          label: _groupSharedIsDestination
+              ? 'Διεύθυνση παραλαβής *' : 'Διεύθυνση άφησης *',
+          icon: Icons.place_rounded,
+          value: b.pick,
+          onPicked: (p) => setState(() => b.pick = p),
+          clients: _clients,
+          onClientPicked: (c) => setState(() {
+            b.pick = PlacePick(
+                description: c.fromName.isNotEmpty ? c.fromName : c.name,
+                lat: c.fromLat, lng: c.fromLng);
+            b.zoneName    = c.shuttleZoneName;
+            b.orderInZone = c.shuttleOrder;
+          }),
+        ),
+        const SizedBox(height: 8),
+        Row(children: [
+          Expanded(
+            child: TextField(
+              controller: b.nameCtrl,
+              decoration: const InputDecoration(isDense: true,
+                  labelText: 'Όνομα', border: OutlineInputBorder()),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: TextField(
+              controller: b.phoneCtrl,
+              keyboardType: TextInputType.phone,
+              decoration: const InputDecoration(isDense: true,
+                  labelText: 'Τηλέφωνο', border: OutlineInputBorder()),
+            ),
+          ),
+        ]),
+        const SizedBox(height: 8),
+        Row(children: [
+          Expanded(
+            child: TextField(
+              controller: b.emailCtrl,
+              keyboardType: TextInputType.emailAddress,
+              decoration: const InputDecoration(isDense: true,
+                  labelText: 'Email', border: OutlineInputBorder()),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: TextField(
+              controller: b.flightCtrl,
+              decoration: const InputDecoration(isDense: true,
+                  labelText: 'Πτήση/Πλοίο', border: OutlineInputBorder()),
+            ),
+          ),
+        ]),
+        const SizedBox(height: 8),
+        Row(children: [
+          Expanded(
+            child: TextField(
+              controller: b.personsCtrl,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(isDense: true,
+                  labelText: 'Άτομα', border: OutlineInputBorder()),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: TextField(
+              controller: b.luggageCtrl,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(isDense: true,
+                  labelText: 'Βαλίτσες', border: OutlineInputBorder()),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: TextField(
+              controller: b.priceCtrl,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              decoration: const InputDecoration(isDense: true,
+                  labelText: 'Τιμή €', border: OutlineInputBorder()),
+            ),
+          ),
+        ]),
+      ]),
+    );
+  }
+
   Widget _vehicleChip(String type, String label, IconData icon) {
     final selected = _vehicleType == type;
     return Expanded(
@@ -2238,5 +2569,24 @@ class _ClientRoutePicker extends StatelessWidget {
         ]),
       ),
     );
+  }
+}
+
+// ── Μία επιπλέον κράτηση ομαδικής μεταφοράς (Shuttle/Λεωφορείο) ──
+class _ExtraBooking {
+  final nameCtrl    = TextEditingController();
+  final phoneCtrl   = TextEditingController();
+  final emailCtrl   = TextEditingController();
+  final flightCtrl  = TextEditingController();
+  final priceCtrl   = TextEditingController();
+  final personsCtrl = TextEditingController(text: '1');
+  final luggageCtrl = TextEditingController(text: '0');
+  PlacePick? pick;
+  String? zoneName;
+  int?    orderInZone;
+  void dispose() {
+    nameCtrl.dispose(); phoneCtrl.dispose(); emailCtrl.dispose();
+    flightCtrl.dispose(); priceCtrl.dispose();
+    personsCtrl.dispose(); luggageCtrl.dispose();
   }
 }

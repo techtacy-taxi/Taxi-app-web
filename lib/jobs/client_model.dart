@@ -86,6 +86,9 @@ class Client {
   final String? phone;       // προαιρετικό τηλέφωνο πελάτη
   final bool    hasShuttleBus; // ✅ διαθέτει υπηρεσία Shuttle Bus
   final bool    showInOnlineForm; // 🌐 εμφανίζεται στις προτάσεις Από/Προς των ONLINE φορμών (booking/booking2/index) — στη φόρμα δουλειάς της εφαρμογής φαίνεται ΠΑΝΤΑ
+  final String? shuttleZoneId;   // 🚐 ζώνη του καταλύματος (από pricing_zones) — αναγνώριση χωρίς γεωγραφικό υπολογισμό
+  final String? shuttleZoneName; // όνομα ζώνης για εμφάνιση χωρίς επιπλέον fetch
+  final int?    shuttleOrder;    // θέση στη σειρά παραλαβής Shuttle ΜΕΣΑ στη ζώνη (1 = πρώτο στην παραλαβή, τελευταίο στην επιστροφή)
   final List<ClientRoute> routes;
   final String  createdBy;
   final String  createdByName;
@@ -100,6 +103,9 @@ class Client {
     this.phone,
     this.hasShuttleBus = false,
     this.showInOnlineForm = true,
+    this.shuttleZoneId,
+    this.shuttleZoneName,
+    this.shuttleOrder,
     this.routes = const [],
     required this.createdBy,
     this.createdByName = '',
@@ -126,6 +132,9 @@ class Client {
       phone:         d['phone']    as String?,
       hasShuttleBus: d['hasShuttleBus'] == true,
       showInOnlineForm: d['showInOnlineForm'] != false, // default: φαίνεται
+      shuttleZoneId:   d['shuttleZoneId'] as String?,
+      shuttleZoneName: d['shuttleZoneName'] as String?,
+      shuttleOrder:    (d['shuttleOrder'] as num?)?.toInt(),
       routes:        routes,
       createdBy:     d['createdBy']     as String? ?? '',
       createdByName: d['createdByName'] as String? ?? '',
@@ -141,6 +150,9 @@ class Client {
         if (phone != null && phone!.isNotEmpty) 'phone': phone,
         'hasShuttleBus': hasShuttleBus,
         'showInOnlineForm': showInOnlineForm,
+        'shuttleZoneId':   shuttleZoneId,
+        'shuttleZoneName': shuttleZoneName,
+        'shuttleOrder':    shuttleOrder,
         'routes':        routes.map((r) => r.toMap()).toList(),
         'createdBy':     createdBy,
         'createdByName': createdByName,
@@ -157,6 +169,9 @@ class Client {
     String?  phone,
     bool?    hasShuttleBus,
     bool?    showInOnlineForm,
+    String?  shuttleZoneId,
+    String?  shuttleZoneName,
+    int?     shuttleOrder,
     List<ClientRoute>? routes,
   }) =>
       Client(
@@ -168,6 +183,9 @@ class Client {
         phone:         phone    ?? this.phone,
         hasShuttleBus: hasShuttleBus ?? this.hasShuttleBus,
         showInOnlineForm: showInOnlineForm ?? this.showInOnlineForm,
+        shuttleZoneId:   shuttleZoneId   ?? this.shuttleZoneId,
+        shuttleZoneName: shuttleZoneName ?? this.shuttleZoneName,
+        shuttleOrder:    shuttleOrder    ?? this.shuttleOrder,
         routes:        routes   ?? this.routes,
         createdBy:     createdBy,
         createdByName: createdByName,

@@ -44,6 +44,8 @@ class ShuttleStop {
   final int     persons;
   final int     luggage;
   final int     childSeatCount;
+  final String? zoneName;    // ζώνη του καταλύματος (για σειρά δρομολογίου)
+  final int?    orderInZone; // θέση στη σειρά ΜΕΣΑ στη ζώνη (από την καρτέλα πελάτη)
 
   const ShuttleStop({
     required this.savedJobId,
@@ -60,6 +62,8 @@ class ShuttleStop {
     this.persons = 1,
     this.luggage = 0,
     this.childSeatCount = 0,
+    this.zoneName,
+    this.orderInZone,
   });
 
   factory ShuttleStop.fromMap(Map<String, dynamic> m) => ShuttleStop(
@@ -77,6 +81,8 @@ class ShuttleStop {
         persons:        (m['persons'] as num?)?.toInt() ?? 1,
         luggage:        (m['luggage'] as num?)?.toInt() ?? 0,
         childSeatCount: (m['childSeatCount'] as num?)?.toInt() ?? 0,
+        zoneName:     m['zoneName'] as String?,
+        orderInZone:  (m['orderInZone'] as num?)?.toInt(),
       );
 
   Map<String, dynamic> toMap() => {
@@ -94,6 +100,8 @@ class ShuttleStop {
         'persons':        persons,
         'luggage':        luggage,
         'childSeatCount': childSeatCount,
+        if (zoneName != null) 'zoneName': zoneName,
+        if (orderInZone != null) 'orderInZone': orderInZone,
       };
 
   ShuttleStop copyWith({double? price}) => ShuttleStop(
@@ -101,6 +109,7 @@ class ShuttleStop {
         flightOrShip: flightOrShip, note: note, address: address, lat: lat, lng: lng,
         isPickupHere: isPickupHere, price: price ?? this.price,
         persons: persons, luggage: luggage, childSeatCount: childSeatCount,
+        zoneName: zoneName, orderInZone: orderInZone,
       );
 }
 
@@ -115,6 +124,7 @@ class SavedJob {
   final String?  origin;           // π.χ. 'public_form' = ήρθε από τη φόρμα site
   final bool     autoReturned;     // true = γύρισε μόνη της (αδιεκδίκητη, όχι χειροκίνητο draft)
   final int?     bookingNumber;    // μοναδικός αύξων αριθμός κράτησης (ανά tenant), αν από φόρμα
+  final String?  formBookingNumbers; // ενωμένο shuttle: «#4 + #5» — οι αριθμοί των αρχικών κρατήσεων
 
   // ── Ένωση Shuttle ──────────────────────────────────────────────────────
   // Αν mergedIntoId != null, αυτή η αποθηκευμένη δουλειά έχει «απορροφηθεί»
@@ -146,6 +156,7 @@ class SavedJob {
     this.origin,
     this.autoReturned = false,
     this.bookingNumber,
+    this.formBookingNumbers,
     this.mergedIntoId,
     this.isShuttleContainer = false,
     this.shuttleStops = const [],
@@ -178,6 +189,7 @@ class SavedJob {
       origin:   d['origin'] as String?,
       autoReturned: d['autoReturned'] == true,
       bookingNumber: (d['bookingNumber'] as num?)?.toInt(),
+      formBookingNumbers: d['formBookingNumbers'] as String?,
       mergedIntoId: d['mergedIntoId'] as String?,
       isShuttleContainer: d['isShuttleContainer'] == true,
       shuttleStops: (d['shuttleStops'] as List<dynamic>?)
@@ -287,6 +299,56 @@ class SavedJobService {
   // doc με όλες τις στάσεις· τα αρχικά docs ΔΕΝ διαγράφονται — μαρκάρονται
   // με mergedIntoId ώστε να κρύβονται από τη λίστα αλλά να μπορεί να γίνει
   // split αργότερα χωρίς απώλεια δεδομένων.
+  // ═══════════════════════════════════════════════════════════════════════
+  //  Ομαδική μεταφορά ΑΠΕΥΘΕΙΑΣ από τη φόρμα (Shuttle ή Λεωφορείο):
+  //  αποθηκεύει/ενημερώνει container στο saved_jobs με την ΙΔΙΑ δομή που
+  //  παράγει το mergeIntoShuttle — έτσι όλα τα υπάρχοντα UI (κάρτα ενωμένου,
+  //  διαχωρισμός, λεπτομέρειες κρατήσεων X/N) δουλεύουν αυτούσια.
+  //  Σύνολα (τιμή/άτομα/βαλίτσες/καθίσματα) υπολογίζονται από τις στάσεις.
+  // ═══════════════════════════════════════════════════════════════════════
+  static Future<String> saveGroupContainer({
+    required Job job,
+    required List<ShuttleStop> stops,
+    required String sharedPointName,
+    double? sharedPointLat,
+    double? sharedPointLng,
+    required bool sharedIsPickup,
+    required String ownerUid,
+    required String ownerName,
+    String? updateId, // αν επεξεργαζόμαστε υπάρχον container
+  }) async {
+    final totalPrice   = stops.fold<double>(0, (t, s) => t + s.price);
+    final totalPersons = stops.fold<int>(0, (t, s) => t + s.persons);
+    final totalLuggage = stops.fold<int>(0, (t, s) => t + s.luggage);
+    final totalSeats   = stops.fold<int>(0, (t, s) => t + s.childSeatCount);
+
+    final map = job.toMap();
+    map['price']          = totalPrice;
+    map['persons']        = totalPersons;
+    map['luggage']        = totalLuggage;
+    map['childSeatCount'] = totalSeats;
+    map['childSeat']      = totalSeats > 0;
+    map['note'] =
+        'Ενωμένη δουλειά Shuttle — ${stops.length} επιβάτες/κρατήσεις.';
+    map['ownerUid']  = ownerUid;
+    map['ownerName'] = ownerName;
+    map['isShuttleContainer'] = true;
+    map['shuttleSharedPointName'] = sharedPointName;
+    if (sharedPointLat != null) map['shuttleSharedPointLat'] = sharedPointLat;
+    if (sharedPointLng != null) map['shuttleSharedPointLng'] = sharedPointLng;
+    map['shuttleSharedIsPickup'] = sharedIsPickup;
+    map['shuttleStops'] = stops.map((s) => s.toMap()).toList();
+
+    final col = FirebaseFirestore.instance.collection('saved_jobs');
+    if (updateId != null && updateId.isNotEmpty) {
+      await col.doc(updateId).set(map, SetOptions(merge: true));
+      return updateId;
+    }
+    map['savedAt'] = FieldValue.serverTimestamp();
+    final ref = await col.add(map);
+    return ref.id;
+  }
+
   static Future<String> mergeIntoShuttle({
     required List<SavedJob> items,
     required String sharedPointName,
@@ -353,6 +415,18 @@ class SavedJobService {
     map['ownerName'] = ownerName;
     map['savedAt']   = FieldValue.serverTimestamp();
     map['isShuttleContainer'] = true;
+    // ── Διατήρηση ταυτότητας «ΑΠΟ ΦΟΡΜΑ» στην ενωμένη δουλειά: αν ΟΛΕΣ οι
+    // αρχικές κρατήσεις ήρθαν από τη δημόσια φόρμα, το ενωμένο doc κρατά το
+    // origin και τους αριθμούς κρατήσεων (π.χ. «#4 + #5») για το banner.
+    if (items.every((i) => i.isFromPublicForm)) {
+      map['origin'] = 'public_form';
+      final nums = items
+          .map((i) => i.bookingNumber)
+          .whereType<int>()
+          .map((n) => '#$n')
+          .join(' + ');
+      if (nums.isNotEmpty) map['formBookingNumbers'] = nums;
+    }
     map['shuttleSharedPointName'] = sharedPointName;
     if (sharedPointLat != null) map['shuttleSharedPointLat'] = sharedPointLat;
     if (sharedPointLng != null) map['shuttleSharedPointLng'] = sharedPointLng;

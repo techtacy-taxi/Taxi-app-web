@@ -368,7 +368,11 @@ class _ClientCardState extends State<_ClientCard>
                             Icon(Icons.directions_bus_filled_rounded,
                                 size: 12, color: Colors.amber.shade900),
                             const SizedBox(width: 3),
-                            Text('Shuttle',
+                            Text(
+                                // «Shuttle · Σπάτα #2» όταν έχει ζώνη/θέση
+                                'Shuttle'
+                                '${client.shuttleZoneName != null ? ' · ${client.shuttleZoneName}' : ''}'
+                                '${client.shuttleOrder != null ? ' #${client.shuttleOrder}' : ''}',
                                 style: TextStyle(
                                     fontSize: 10.5,
                                     fontWeight: FontWeight.bold,
@@ -637,6 +641,11 @@ class _ClientEditorPageState extends State<ClientEditorPage> {
   final _phoneCtrl = TextEditingController();
   PlacePick? _fromPick;
   bool _hasShuttleBus = false;
+  // Shuttle: ζώνη καταλύματος + θέση στη σειρά παραλαβής (ανά ζώνη)
+  String? _shuttleZoneId;
+  String? _shuttleZoneName;
+  final _shuttleOrderCtrl = TextEditingController();
+  List<({String id, String name})> _zones = [];
   List<_EditableRoute> _routes = [];
   List<JobSource> _sources = [];
   bool _saving = false;
@@ -654,11 +663,15 @@ class _ClientEditorPageState extends State<ClientEditorPage> {
   void initState() {
     super.initState();
     _loadSources();
+    _loadZones();
     final c = widget.client;
     if (c != null) {
       _nameCtrl.text  = c.name;
       _phoneCtrl.text = c.phone ?? '';
       _hasShuttleBus  = c.hasShuttleBus;
+      _shuttleZoneId   = c.shuttleZoneId;
+      _shuttleZoneName = c.shuttleZoneName;
+      if (c.shuttleOrder != null) _shuttleOrderCtrl.text = '${c.shuttleOrder}';
       _fromPick = PlacePick(
           description: c.fromName, lat: c.fromLat, lng: c.fromLng);
       _routes = c.routes.map((r) => _EditableRoute(
@@ -676,6 +689,18 @@ class _ClientEditorPageState extends State<ClientEditorPage> {
       _selectedOwnerName = widget.adminName;
     }
     if (widget.isMaster) _loadAdmins();
+  }
+
+  Future<void> _loadZones() async {
+    try {
+      final snap =
+          await FirebaseFirestore.instance.collection('pricing_zones').get();
+      final list = snap.docs
+          .map((d) => (id: d.id, name: (d.data()['name'] as String?) ?? '-'))
+          .toList()
+        ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+      if (mounted) setState(() => _zones = list);
+    } catch (_) {}
   }
 
   Future<void> _loadAdmins() async {
@@ -710,6 +735,7 @@ class _ClientEditorPageState extends State<ClientEditorPage> {
   @override
   void dispose() {
     _nameCtrl.dispose();
+    _shuttleOrderCtrl.dispose();
     _phoneCtrl.dispose();
     for (final r in _routes) {
       r.priceCtrl.dispose();
@@ -740,6 +766,62 @@ class _ClientEditorPageState extends State<ClientEditorPage> {
       _err('Συμπλήρωσε τη διεύθυνση «Από» του πελάτη');
       return;
     }
+    // Θέση στη σειρά Shuttle: έλεγχος σύγκρουσης ΜΕΣΑ στην ίδια ζώνη.
+    // Αν η θέση υπάρχει ήδη, ρωτάμε αν θα μετακινηθούν τα υπόλοιπα +1
+    // (2->3, 3->4, ...). «Άκυρο» = δεν αποθηκεύεται, αλλάζεις τη θέση.
+    final int? shuttleOrder = _hasShuttleBus
+        ? int.tryParse(_shuttleOrderCtrl.text.trim())
+        : null;
+    if (_hasShuttleBus && shuttleOrder != null && _shuttleZoneId != null) {
+      try {
+        final snap = await FirebaseFirestore.instance
+            .collection('clients')
+            .where('shuttleZoneId', isEqualTo: _shuttleZoneId)
+            .get();
+        final others = snap.docs
+            .where((d) => d.id != (widget.client?.id ?? ''))
+            .toList();
+        final conflict = others.where((d) =>
+            (d.data()['shuttleOrder'] as num?)?.toInt() == shuttleOrder);
+        if (conflict.isNotEmpty) {
+          final conflictName =
+              (conflict.first.data()['name'] as String?) ?? '-';
+          if (!mounted) return;
+          final ok = await showDialog<bool>(
+            context: context,
+            builder: (dctx) => AlertDialog(
+              title: Text('Η θέση $shuttleOrder υπάρχει ήδη'),
+              content: Text(
+                  'Στη ζώνη «${_shuttleZoneName ?? ''}» τη θέση $shuttleOrder '
+                  'την έχει το «$conflictName».\n\nΝα μετακινηθούν τα υπόλοιπα '
+                  'καταλύματα μία θέση πάνω; ($shuttleOrder -> ${shuttleOrder + 1}, '
+                  '${shuttleOrder + 1} -> ${shuttleOrder + 2}, ...)'),
+              actions: [
+                TextButton(
+                    onPressed: () => Navigator.of(dctx).pop(false),
+                    child: const Text('Άκυρο')),
+                FilledButton(
+                    onPressed: () => Navigator.of(dctx).pop(true),
+                    child: const Text('ΟΚ, μετακίνησέ τα')),
+              ],
+            ),
+          );
+          if (ok != true) return; // μένει στη φόρμα να αλλάξει θέση
+          final batch = FirebaseFirestore.instance.batch();
+          for (final d in others) {
+            final o = (d.data()['shuttleOrder'] as num?)?.toInt();
+            if (o != null && o >= shuttleOrder) {
+              batch.update(d.reference, {'shuttleOrder': o + 1});
+            }
+          }
+          await batch.commit();
+        }
+      } catch (e) {
+        _err('Σφάλμα ελέγχου θέσης: $e');
+        return;
+      }
+    }
+
     setState(() => _saving = true);
 
     final routes = <ClientRoute>[];
@@ -771,6 +853,12 @@ class _ClientEditorPageState extends State<ClientEditorPage> {
           ? _phoneCtrl.text.trim()
           : null,
       hasShuttleBus: _hasShuttleBus,
+      // Διατήρηση της ορατότητας online (διακοπτάκι) — πριν, η επεξεργασία
+      // επανέφερε το default και ο κρυμμένος πελάτης ξαναφαινόταν.
+      showInOnlineForm: widget.client?.showInOnlineForm ?? true,
+      shuttleZoneId:   _hasShuttleBus ? _shuttleZoneId : null,
+      shuttleZoneName: _hasShuttleBus ? _shuttleZoneName : null,
+      shuttleOrder:    shuttleOrder,
       routes:        routes,
       createdBy:     _selectedOwnerUid ??
           (widget.client?.createdBy.isNotEmpty == true
@@ -913,6 +1001,54 @@ class _ClientEditorPageState extends State<ClientEditorPage> {
               onChanged: (v) => setState(() => _hasShuttleBus = v),
             ),
           ),
+          // Ζώνη + θέση στη σειρά Shuttle — μόνο όταν το Shuttle είναι ΟΝ.
+          // Η αρίθμηση είναι ΑΝΑ ζώνη (κάθε ζώνη ξεκινά από το 1).
+          if (_hasShuttleBus) ...[
+            const SizedBox(height: 10),
+            Row(children: [
+              Expanded(
+                flex: 3,
+                child: DropdownButtonFormField<String>(
+                  initialValue: _zones.any((z) => z.id == _shuttleZoneId)
+                      ? _shuttleZoneId
+                      : null,
+                  isExpanded: true,
+                  decoration: const InputDecoration(
+                      isDense: true,
+                      labelText: 'Ζώνη Shuttle',
+                      border: OutlineInputBorder()),
+                  items: _zones
+                      .map((z) =>
+                          DropdownMenuItem(value: z.id, child: Text(z.name)))
+                      .toList(),
+                  onChanged: (v) => setState(() {
+                    _shuttleZoneId = v;
+                    _shuttleZoneName =
+                        _zones.where((z) => z.id == v).firstOrNull?.name;
+                  }),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                flex: 2,
+                child: TextField(
+                  controller: _shuttleOrderCtrl,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                      isDense: true,
+                      labelText: 'Θέση στη σειρά',
+                      border: OutlineInputBorder()),
+                ),
+              ),
+            ]),
+            const Padding(
+              padding: EdgeInsets.only(top: 6),
+              child: Text(
+                  '1 = πρώτο στην παραλαβή προς το κοινό σημείο, τελευταίο στην '
+                  'επιστροφή. Κάθε ζώνη έχει δική της αρίθμηση από το 1.',
+                  style: TextStyle(fontSize: 11.5, color: Colors.grey)),
+            ),
+          ],
           const SizedBox(height: 20),
           _section('Διεύθυνση «Από» (βάση πελάτη)'),
           const Padding(

@@ -22,6 +22,10 @@ class Job {
   final int?       routeMinutes;  // εκτιμώμενη διάρκεια διαδρομής σε λεπτά (με κίνηση)
   final String?    routePolyline; // encoded polyline διαδρομής (νέα φόρμα)
   final double     price;
+  final bool       isShuttleContainer;
+  final List<Map<String, dynamic>> shuttleStops;
+  final bool       shuttleSharedIsPickup;
+  final String?    shuttleSharedPointName;
   final double     commission;   // προμήθεια πηγής (γιαούρτι)
   final double     appCommission; // προμήθεια App
   final String     commissionLabel;
@@ -93,6 +97,10 @@ class Job {
     this.routeMinutes,
     this.routePolyline,
     required this.price,
+    this.isShuttleContainer = false,
+    this.shuttleStops = const [],
+    this.shuttleSharedIsPickup = false,
+    this.shuttleSharedPointName,
     this.commission    = 0,
     this.appCommission = 0,
     this.commissionLabel = '',
@@ -187,6 +195,13 @@ class Job {
       routeMinutes:     (d['routeMinutes'] as num?)?.toInt(),
       routePolyline:    d['routePolyline'] as String?,
       price:            (d['price']    as num?)?.toDouble() ?? 0,
+      isShuttleContainer: d['isShuttleContainer'] == true,
+      shuttleStops: (d['shuttleStops'] as List? ?? [])
+          .whereType<Map>()
+          .map((m) => Map<String, dynamic>.from(m))
+          .toList(),
+      shuttleSharedIsPickup: d['shuttleSharedIsPickup'] == true,
+      shuttleSharedPointName: d['shuttleSharedPointName'] as String?,
       commission:       (d['commission']    as num?)?.toDouble() ?? 0,
       appCommission:    (d['appCommission'] as num?)?.toDouble() ?? 0,
       commissionLabel:  d['commissionLabel'] ?? '',
@@ -247,6 +262,13 @@ class Job {
     if (routeMinutes != null) 'routeMinutes': routeMinutes,
     if (routePolyline != null) 'routePolyline': routePolyline,
     'price':            price,
+    if (isShuttleContainer) ...{
+      'isShuttleContainer': true,
+      'shuttleStops': shuttleStops,
+      'shuttleSharedIsPickup': shuttleSharedIsPickup,
+      if (shuttleSharedPointName != null)
+        'shuttleSharedPointName': shuttleSharedPointName,
+    },
     'commission':       commission,
     'appCommission':    appCommission,
     'commissionLabel':  commissionLabel,
@@ -299,6 +321,9 @@ class Job {
     id: id, from: from, to: to, fromLat: fromLat, fromLng: fromLng,
     toLat: toLat, toLng: toLng, routeKm: routeKm, routeMinutes: routeMinutes,
     routePolyline: routePolyline, price: price, commission: commission,
+    isShuttleContainer: isShuttleContainer, shuttleStops: shuttleStops,
+    shuttleSharedIsPickup: shuttleSharedIsPickup,
+    shuttleSharedPointName: shuttleSharedPointName,
     appCommission: appCommission, commissionLabel: commissionLabel,
     persons: persons, luggage: luggage, childSeat: childSeat,
     childSeatCount: childSeatCount, withReturn: withReturn, withStops: withStops,

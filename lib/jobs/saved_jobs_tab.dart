@@ -255,8 +255,10 @@ class _SavedJobsTabState extends State<SavedJobsTab> {
                             index: i,
                             child: _ShuttleContainerCard(
                               saved: items[i],
+                              onSend: lvl.canSend
+                                  ? () => _chooseSendTarget(items[i]) : null,
                               onSplit: () => _splitShuttle(items[i]),
-                              onTapStop: (stop) => _showStopDetails(stop),
+                              onTapStop: (stop) => _showStopDetails(items[i], stop),
                               onEditPrice: (stop) => _editStopPrice(items[i], stop),
                             ),
                           );
@@ -599,64 +601,84 @@ class _SavedJobsTabState extends State<SavedJobsTab> {
     }
   }
 
-  void _showStopDetails(ShuttleStop stop) {
+  // Λεπτομερής κάρτα ΚΑΘΕ κράτησης του ενωμένου Shuttle, με «Κράτηση X/N»
+  // και βελάκια ‹ › για μετάβαση στην επόμενη/προηγούμενη κράτηση της ομάδας.
+  void _showStopDetails(SavedJob saved, ShuttleStop stop) {
+    final stops = saved.shuttleStops;
+    int idx = stops.indexOf(stop);
+    if (idx < 0) idx = 0;
     showDialog<void>(
       context: context,
-      builder: (dctx) => AlertDialog(
-        title: Text(stop.name.isNotEmpty ? stop.name : '(χωρίς όνομα)'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            if (stop.phone != null && stop.phone!.isNotEmpty)
-              Row(children: [
-                const Icon(Icons.phone_rounded, size: 16, color: Colors.grey),
-                const SizedBox(width: 8),
-                Text(stop.phone!),
-              ]),
-            if (stop.email != null && stop.email!.isNotEmpty) ...[
-              const SizedBox(height: 6),
-              Row(children: [
-                const Icon(Icons.email_rounded, size: 16, color: Colors.grey),
-                const SizedBox(width: 8),
-                Expanded(child: Text(stop.email!)),
-              ]),
-            ],
-            if (stop.flightOrShip != null && stop.flightOrShip!.isNotEmpty) ...[
-              const SizedBox(height: 6),
-              Row(children: [
-                const Icon(Icons.flight_rounded, size: 16, color: Colors.grey),
-                const SizedBox(width: 8),
-                Text(stop.flightOrShip!),
-              ]),
-            ],
-            const SizedBox(height: 6),
-            Row(children: [
-              const Icon(Icons.place_rounded, size: 16, color: Colors.grey),
-              const SizedBox(width: 8),
-              Expanded(child: Text(stop.address)),
+      builder: (dctx) => StatefulBuilder(
+        builder: (dctx, setD) {
+          final st = stops[idx];
+          Widget row(IconData ic, String text) => Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Icon(ic, size: 16, color: Colors.grey),
+                  const SizedBox(width: 8),
+                  Expanded(child: Text(text)),
+                ]),
+              );
+          return AlertDialog(
+            titlePadding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+            title: Row(children: [
+              IconButton(
+                visualDensity: VisualDensity.compact,
+                tooltip: 'Προηγούμενη κράτηση',
+                icon: const Icon(Icons.chevron_left_rounded),
+                onPressed: stops.length > 1
+                    ? () => setD(() => idx = (idx - 1 + stops.length) % stops.length)
+                    : null,
+              ),
+              Expanded(
+                child: Column(children: [
+                  Text('Κράτηση ${idx + 1}/${stops.length}',
+                      style: TextStyle(
+                          fontSize: 12, fontWeight: FontWeight.bold,
+                          color: Colors.amber.shade800)),
+                  Text(st.name.isNotEmpty ? st.name : '(χωρίς όνομα)',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+                ]),
+              ),
+              IconButton(
+                visualDensity: VisualDensity.compact,
+                tooltip: 'Επόμενη κράτηση',
+                icon: const Icon(Icons.chevron_right_rounded),
+                onPressed: stops.length > 1
+                    ? () => setD(() => idx = (idx + 1) % stops.length)
+                    : null,
+              ),
             ]),
-            const SizedBox(height: 6),
-            Row(children: [
-              const Icon(Icons.groups_rounded, size: 16, color: Colors.grey),
-              const SizedBox(width: 8),
-              Text('${stop.persons} άτομα'
-                  '${stop.luggage > 0 ? ' · ${stop.luggage} βαλίτσες' : ''}'
-                  '${stop.childSeatCount > 0 ? ' · ${stop.childSeatCount} παιδικό κάθισμα${stop.childSeatCount > 1 ? "ά" : ""}' : ''}'),
-            ]),
-            if (stop.note != null && stop.note!.isNotEmpty) ...[
-              const SizedBox(height: 6),
-              Row(children: [
-                const Icon(Icons.comment_rounded, size: 16, color: Colors.grey),
-                const SizedBox(width: 8),
-                Expanded(child: Text(stop.note!)),
-              ]),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (st.phone != null && st.phone!.isNotEmpty)
+                    row(Icons.phone_rounded, st.phone!),
+                  if (st.email != null && st.email!.isNotEmpty)
+                    row(Icons.email_rounded, st.email!),
+                  if (st.flightOrShip != null && st.flightOrShip!.isNotEmpty)
+                    row(Icons.flight_rounded, st.flightOrShip!),
+                  row(Icons.place_rounded,
+                      (st.isPickupHere ? 'Παραλαβή: ' : 'Άφηση: ') + st.address),
+                  row(Icons.groups_rounded,
+                      '${st.persons} άτομα'
+                      '${st.luggage > 0 ? ' · ${st.luggage} βαλίτσες' : ''}'
+                      '${st.childSeatCount > 0 ? ' · ${st.childSeatCount} παιδικό κάθισμα${st.childSeatCount > 1 ? "ά" : ""}' : ''}'),
+                  row(Icons.euro_rounded, '${st.price.toStringAsFixed(2)}€ (αυτή η κράτηση)'),
+                  if (st.note != null && st.note!.isNotEmpty)
+                    row(Icons.comment_rounded, st.note!),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(onPressed: () => Navigator.of(dctx).pop(), child: const Text('Κλείσιμο')),
             ],
-          ],
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.of(dctx).pop(), child: const Text('Κλείσιμο')),
-        ],
+          );
+        },
       ),
     );
   }
@@ -665,6 +687,19 @@ class _SavedJobsTabState extends State<SavedJobsTab> {
   // το backend (functions/index.js), ώστε η πρόταση ένωσης να ελέγχει
   // πραγματική συμμετοχή σε ζώνη, όχι απλή σύγκριση κειμένου διεύθυνσης.
   bool _pointInZone(double lat, double lng, PricingZone z) {
+    // ΝΕΟ μοντέλο: ελεύθερο πολύγωνο (8 σημεία) — ray casting, ίδιο με backend.
+    if (z.hasPolygon) {
+      bool inside = false;
+      final pts = z.points!;
+      for (int i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+        final yi = pts[i].latitude, xi = pts[i].longitude;
+        final yj = pts[j].latitude, xj = pts[j].longitude;
+        final intersects = ((yi > lat) != (yj > lat)) &&
+            (lng < (xj - xi) * (lat - yi) / (yj - yi) + xi);
+        if (intersects) inside = !inside;
+      }
+      return inside;
+    }
     if (z.north != null && z.south != null && z.east != null && z.west != null) {
       final rot = z.rotationDeg;
       if (rot == 0) {
@@ -1607,12 +1642,14 @@ class _MergeShuttleDialogState extends State<_MergeShuttleDialog> {
 // ─────────────────────────────────────────────────────────────────────────
 class _ShuttleContainerCard extends StatelessWidget {
   final SavedJob saved;
+  final VoidCallback? onSend; // αποστολή της ενωμένης σε οδηγούς/εμένα
   final VoidCallback onSplit;
   final void Function(ShuttleStop) onTapStop;
   final void Function(ShuttleStop) onEditPrice;
 
   const _ShuttleContainerCard({
     required this.saved,
+    this.onSend,
     required this.onSplit,
     required this.onTapStop,
     required this.onEditPrice,
@@ -1636,13 +1673,47 @@ class _ShuttleContainerCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // Banner «ΑΠΟ ΦΟΡΜΑ» — ίδιο με τις απλές κάρτες, ώστε το ενωμένο
+            // Shuttle να μη «χάνει» την ταυτότητά του όταν οι αρχικές
+            // κρατήσεις ήρθαν από τη δημόσια φόρμα.
+            if (saved.isFromPublicForm) ...[
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                margin: const EdgeInsets.only(bottom: 8),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFFB300),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                  const Icon(Icons.public_rounded, color: Color(0xFF5A3D00), size: 16),
+                  const SizedBox(width: 6),
+                  Text(
+                      saved.formBookingNumbers != null
+                          ? 'ΑΠΟ ΦΟΡΜΑ · ${saved.formBookingNumbers}'
+                          : (saved.bookingNumber != null
+                              ? 'ΑΠΟ ΦΟΡΜΑ · #${saved.bookingNumber}'
+                              : 'ΑΠΟ ΦΟΡΜΑ'),
+                      style: const TextStyle(
+                          color: Color(0xFF5A3D00), fontSize: 13,
+                          fontWeight: FontWeight.w900, letterSpacing: 1.2)),
+                ]),
+              ),
+            ],
             Row(children: [
               Icon(Icons.directions_bus_filled_rounded, color: Colors.amber.shade800, size: 20),
               const SizedBox(width: 8),
               Expanded(
-                child: Text('Ενωμένο Shuttle · ${stops.length} επιβάτες',
+                child: Text('Ενωμένο Shuttle · ${stops.length} κρατήσεις',
                     style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
               ),
+              if (onSend != null)
+                IconButton(
+                  icon: const Icon(Icons.send_rounded,
+                      size: 20, color: Color(0xFF1E8E3E)),
+                  tooltip: 'Αποστολή',
+                  onPressed: onSend,
+                ),
               IconButton(
                 icon: const Icon(Icons.call_split_rounded, size: 20),
                 tooltip: 'Διαχωρισμός',

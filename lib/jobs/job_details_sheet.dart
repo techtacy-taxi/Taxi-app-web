@@ -7,6 +7,7 @@ import 'package:vibration/vibration.dart';
 import 'job_shared_widgets.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 import 'job_model.dart';
 import 'job_service.dart';
@@ -264,6 +265,10 @@ class JobDetailsSheet extends StatelessWidget {
 
           // Drag handle
           const SheetHandle(bottomMargin: 16),
+
+          // Ομαδική μεταφορά: στάσεις/κρατήσεις με σειρά, πλοήγηση,
+          // επικοινωνία, τιμές και τσεκ παραλαβής.
+          GroupStopsSection(job: job),
 
           // Header υπενθύμισης (αν δοθεί)
           if (headerLabel != null) ...[
@@ -945,5 +950,216 @@ class _JobToCalendarButtonState extends State<_JobToCalendarButton> {
             style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
       ),
     );
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  Στάσεις ομαδικής μεταφοράς (Shuttle/Λεωφορείο) στο Job Details.
+//  Σειρά: κατά ζώνη/θέση καταλύματος — ΑΥΞΟΥΣΑ όταν το κοινό σημείο είναι
+//  ο ΠΡΟΟΡΙΣΜΟΣ (μαζεύουμε), ΦΘΙΝΟΥΣΑ όταν είναι η ΑΦΕΤΗΡΙΑ (αφήνουμε —
+//  το μικρότερο νούμερο περνάει ΤΕΛΕΥΤΑΙΟ). Χωρίς θέση → στο τέλος.
+//  Κάθε στάση: βελάκι πλοήγησης στη διεύθυνσή της. Κάθε κράτηση: κλήση,
+//  WhatsApp, email, τιμή στο τέλος, και τσεκ «παρελήφθη» (γράφεται στο doc
+//  της δουλειάς: stopDone.<index>).
+// ═══════════════════════════════════════════════════════════════════════
+class GroupStopsSection extends StatefulWidget {
+  final Job job;
+  const GroupStopsSection({super.key, required this.job});
+
+  @override
+  State<GroupStopsSection> createState() => _GroupStopsSectionState();
+}
+
+class _GroupStopsSectionState extends State<GroupStopsSection> {
+  late Map<String, bool> _done; // key: original index ως string
+
+  @override
+  void initState() {
+    super.initState();
+    _done = {};
+  }
+
+  Future<void> _toggleDone(int originalIndex, bool v) async {
+    setState(() => _done['$originalIndex'] = v);
+    try {
+      await FirebaseFirestore.instance
+          .collection('jobs')
+          .doc(widget.job.id)
+          .set({'stopDone': {'$originalIndex': v}}, SetOptions(merge: true));
+    } catch (_) {}
+  }
+
+  Future<void> _launch(Uri uri, {bool external = false}) async {
+    try {
+      if (await canLaunchUrl(uri)) {
+        await launchUrl(uri,
+            mode: external
+                ? LaunchMode.externalApplication
+                : LaunchMode.platformDefault);
+      }
+    } catch (_) {}
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final job = widget.job;
+    if (!job.isShuttleContainer || job.shuttleStops.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    final ascending = !job.shuttleSharedIsPickup; // κοινό=προορισμός → αύξουσα
+    // (index, map) για να κρατάμε το original index (τσεκ ανά στάση)
+    final entries = List.generate(
+        job.shuttleStops.length, (i) => (i, job.shuttleStops[i]));
+    int orderOf(Map<String, dynamic> m) =>
+        (m['orderInZone'] as num?)?.toInt() ?? 1 << 20; // χωρίς θέση → τέλος
+    entries.sort((a, b) {
+      final za = (a.$2['zoneName'] as String?) ?? '\uFFFF';
+      final zb = (b.$2['zoneName'] as String?) ?? '\uFFFF';
+      final zc = za.compareTo(zb);
+      if (zc != 0) return zc;
+      final oc = orderOf(a.$2).compareTo(orderOf(b.$2));
+      return ascending ? oc : -oc;
+    });
+
+    Widget iconBtn(IconData ic, Color c, VoidCallback onTap,
+            {Widget? override}) =>
+        InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(20),
+          child: Padding(
+            padding: const EdgeInsets.all(5),
+            child: override ?? Icon(ic, size: 19, color: c),
+          ),
+        );
+
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      const SizedBox(height: 14),
+      Row(children: [
+        Icon(Icons.directions_bus_rounded,
+            size: 18, color: Colors.amber.shade800),
+        const SizedBox(width: 6),
+        Text(
+            '${job.vehicleType == 'bus' ? 'Λεωφορείο' : 'Shuttle'} · '
+            '${job.shuttleStops.length} κρατήσεις — '
+            '${ascending ? 'παίρνεις με σειρά' : 'αφήνεις με σειρά'}:',
+            style: const TextStyle(
+                fontWeight: FontWeight.bold, fontSize: 14)),
+      ]),
+      const SizedBox(height: 6),
+      for (int k = 0; k < entries.length; k++) ...[
+        Builder(builder: (_) {
+          final origIdx = entries[k].$1;
+          final m = entries[k].$2;
+          final name = (m['name'] as String?) ?? '';
+          final addr = (m['address'] as String?) ?? '';
+          final zone = m['zoneName'] as String?;
+          final ord = (m['orderInZone'] as num?)?.toInt();
+          final phone = (m['phone'] as String?)?.trim();
+          final email = (m['email'] as String?)?.trim();
+          final price = (m['price'] as num?)?.toDouble() ?? 0;
+          final persons = (m['persons'] as num?)?.toInt() ?? 1;
+          final lat = (m['lat'] as num?)?.toDouble();
+          final lng = (m['lng'] as num?)?.toDouble();
+          final done = _done['$origIdx'] == true;
+          return Container(
+            margin: const EdgeInsets.only(bottom: 6),
+            padding: const EdgeInsets.symmetric(vertical: 6),
+            decoration: BoxDecoration(
+              border: Border(
+                  bottom: BorderSide(color: Colors.grey.shade200)),
+            ),
+            child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Γραμμή καταλύματος: αρίθμηση σειράς + διεύθυνση + πλοήγηση
+                  Row(children: [
+                    Container(
+                      width: 24, height: 24, alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: Colors.amber.shade100,
+                        shape: BoxShape.circle,
+                      ),
+                      child: Text('${k + 1}',
+                          style: TextStyle(
+                              fontSize: 12, fontWeight: FontWeight.bold,
+                              color: Colors.amber.shade900)),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                          addr +
+                              (zone != null
+                                  ? '  ·  $zone${ord != null ? ' #$ord' : ''}'
+                                  : ''),
+                          style: const TextStyle(
+                              fontSize: 13, fontWeight: FontWeight.w600)),
+                    ),
+                    iconBtn(Icons.navigation_rounded, const Color(0xFF185FA5),
+                        () {
+                      final dest = (lat != null && lng != null)
+                          ? '$lat,$lng'
+                          : Uri.encodeComponent(addr);
+                      _launch(
+                          Uri.parse(
+                              'https://www.google.com/maps/dir/?api=1&destination=$dest'),
+                          external: true);
+                    }),
+                  ]),
+                  // Γραμμή κράτησης: όνομα/άτομα + επικοινωνία + κενό + τιμή
+                  Padding(
+                    padding: const EdgeInsets.only(left: 32, top: 2),
+                    child: Row(children: [
+                      Checkbox(
+                        value: done,
+                        visualDensity: VisualDensity.compact,
+                        materialTapTargetSize:
+                            MaterialTapTargetSize.shrinkWrap,
+                        onChanged: (v) => _toggleDone(origIdx, v == true),
+                      ),
+                      Expanded(
+                        child: Text(
+                            '${name.isNotEmpty ? name : '(χωρίς όνομα)'} · $persons άτομ${persons == 1 ? 'ο' : 'α'}',
+                            style: TextStyle(
+                                fontSize: 13,
+                                decoration: done
+                                    ? TextDecoration.lineThrough
+                                    : null,
+                                color: done ? Colors.grey : null)),
+                      ),
+                      if (phone != null && phone.isNotEmpty) ...[
+                        iconBtn(Icons.phone_rounded, Colors.blue, () {
+                          final clean =
+                              phone.replaceAll(RegExp(r'\s+'), '');
+                          _launch(Uri(scheme: 'tel', path: clean));
+                        }),
+                        iconBtn(Icons.circle, const Color(0xFF25D366), () {
+                          final clean =
+                              phone.replaceAll(RegExp(r'\s+'), '');
+                          final wa = clean.startsWith('+')
+                              ? clean.substring(1) : clean;
+                          _launch(Uri.parse('https://wa.me/$wa'),
+                              external: true);
+                        },
+                            override: const FaIcon(
+                                FontAwesomeIcons.whatsapp,
+                                size: 19, color: Color(0xFF25D366))),
+                      ],
+                      if (email != null && email.isNotEmpty)
+                        iconBtn(Icons.email_rounded, Colors.orange, () {
+                          _launch(Uri(scheme: 'mailto', path: email));
+                        }),
+                      const SizedBox(width: 12),
+                      Text('${price.toStringAsFixed(0)} €',
+                          style: const TextStyle(
+                              fontSize: 13.5,
+                              fontWeight: FontWeight.bold,
+                              color: Color(0xFF0F6E56))),
+                    ]),
+                  ),
+                ]),
+          );
+        }),
+      ],
+    ]);
   }
 }
