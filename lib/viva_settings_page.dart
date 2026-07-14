@@ -633,8 +633,17 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
       length: tabCount,
       child: Scaffold(
         appBar: AppBar(
-          backgroundColor: Colors.teal,
           foregroundColor: Colors.white,
+          elevation: 0,
+          flexibleSpace: Container(
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [Color(0xFF00695C), Color(0xFF26A69A)],
+              ),
+            ),
+          ),
           title: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
@@ -648,9 +657,11 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
             ],
           ),
           bottom: TabBar(
-            indicatorColor: Colors.white,
+            indicatorColor: Colors.amberAccent,
+            indicatorWeight: 3,
             labelColor: Colors.white,
-            unselectedLabelColor: Colors.white70,
+            unselectedLabelColor: Colors.white60,
+            labelStyle: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold),
             isScrollable: true,
             tabs: [
               const Tab(icon: Icon(Icons.account_balance_rounded, size: 20), text: 'Bank'),
@@ -662,6 +673,7 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
             ],
           ),
         ),
+        backgroundColor: const Color(0xFFF3F5F7),
         body: SafeArea(
           child: Column(
             children: [
@@ -686,18 +698,24 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
                 padding: const EdgeInsets.all(16),
                 child: SizedBox(
                   width: double.infinity,
-                  child: FilledButton(
+                  child: FilledButton.icon(
                     style: FilledButton.styleFrom(
                       backgroundColor: kPistachioAccent,
                       foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 15),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14)),
+                      textStyle: const TextStyle(
+                          fontWeight: FontWeight.bold, fontSize: 15),
                     ),
                     onPressed: _saving ? null : _save,
-                    child: _saving
+                    icon: _saving
                         ? const SizedBox(
                             width: 20, height: 20,
                             child: CircularProgressIndicator(
                                 strokeWidth: 2, color: Colors.white))
-                        : const Text('Αποθήκευση (όλα τα tabs)'),
+                        : const Icon(Icons.save_rounded),
+                    label: const Text('Αποθήκευση (όλα τα tabs)'),
                   ),
                 ),
               ),
@@ -712,6 +730,35 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
   // ── Dropdown επιλογής tenant — ΜΟΝΟ για σένα (super-admin). Σου επιτρέπει
   // να συμπληρώνεις τις ρυθμίσεις Viva/Google Cloud/Στοιχεία Επιχείρησης για
   // λογαριασμό οποιουδήποτε πελάτη, χωρίς να χρειάζεται να συνδεθείς ως αυτός.
+  // ── Κομψό περιτύλιγμα tab: απαλό φόντο + λευκή στρογγυλεμένη κάρτα με
+  // διακριτική σκιά. Ένα σημείο αλλαγής για ΟΛΑ τα tabs.
+  Widget _tabWrap({required Widget child}) {
+    return Container(
+      color: const Color(0xFFF3F5F7),
+      child: SingleChildScrollView(
+        padding: EdgeInsets.fromLTRB(14, 14, 14,
+            14 + MediaQuery.of(context).viewPadding.bottom),
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.fromLTRB(18, 18, 18, 20),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: Colors.grey.shade200),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.05),
+                blurRadius: 14,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: child,
+        ),
+      ),
+    );
+  }
+
   Widget _buildTenantSwitcher() {
     return Container(
       width: double.infinity,
@@ -760,8 +807,7 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
   }
 
   Widget _buildVivaTab() {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
+    return _tabWrap(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1052,8 +1098,7 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
 
   // ─── Tab 2: Google Cloud ──────────────────────────────────────────────────
   Widget _buildGoogleCloudTab() {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
+    return _tabWrap(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1122,8 +1167,7 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
 
   // ─── Tab 3: Στοιχεία Επιχείρησης ─────────────────────────────────────────
   Widget _buildBusinessTab() {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
+    return _tabWrap(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1232,8 +1276,7 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
   }
 
   Widget _buildEmailTab() {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
+    return _tabWrap(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1442,8 +1485,7 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
   }
 
   Widget _buildReceiptTab() {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
+    return _tabWrap(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [

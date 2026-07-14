@@ -2451,6 +2451,24 @@ function isOutsideAttica(lat, lng) {
 // περιστροφή rotationDeg γύρω από το κέντρο, ΚΑΙ το παλιό μοντέλο κύκλου
 // (lat/lng/radius) για ζώνες που δεν έχουν ξανααποθηκευτεί με το νέο UI.
 function pointInZone(lat, lng, z) {
+  // ── ΝΕΟ μοντέλο: ελεύθερο ΠΟΛΥΓΩΝΟ (8 σημεία — «περίεργο οκτάγωνο»).
+  // Ray-casting: μετράμε πόσες πλευρές τέμνει μια οριζόντια ακτίνα από το
+  // σημείο — μονός αριθμός = μέσα. Δουλεύει για ΟΠΟΙΟΔΗΠΟΤΕ (και μη κυρτό)
+  // πολύγωνο. Αν η ζώνη έχει points, ΑΥΤΑ μετράνε (τα παλιά bounds μένουν
+  // μόνο ως πληροφορία/χάρτης-fit).
+  if (Array.isArray(z.points) && z.points.length >= 3) {
+    let inside = false;
+    const pts = z.points;
+    for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+      const yi = Number(pts[i].lat), xi = Number(pts[i].lng);
+      const yj = Number(pts[j].lat), xj = Number(pts[j].lng);
+      if (!isFinite(yi) || !isFinite(xi) || !isFinite(yj) || !isFinite(xj)) continue;
+      const intersects = ((yi > lat) !== (yj > lat)) &&
+        (lng < (xj - xi) * (lat - yi) / (yj - yi) + xi);
+      if (intersects) inside = !inside;
+    }
+    return inside;
+  }
   if (z.north != null && z.south != null && z.east != null && z.west != null) {
     const rot = Number(z.rotationDeg || 0);
     if (!rot) {

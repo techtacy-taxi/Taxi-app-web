@@ -69,8 +69,9 @@ class PricingZone {
   final double lat;
   final double lng;
   final double radius; // μέτρα — ΠΑΛΙΟ μοντέλο (κύκλος), κρατιέται για fallback
-  final double? north, south, east, west; // ΝΕΟ μοντέλο (ορθογώνιο)
+  final double? north, south, east, west; // παλιό μοντέλο (ορθογώνιο)
   final double rotationDeg; // περιστροφή ορθογωνίου γύρω από το κέντρο (μοίρες)
+  final List<LatLng>? points; // ΝΕΟΤΕΡΟ μοντέλο: ελεύθερο πολύγωνο 8 σημείων («περίεργο οκτάγωνο»)
 
   PricingZone({
     required this.id,
@@ -83,9 +84,11 @@ class PricingZone {
     this.east,
     this.west,
     this.rotationDeg = 0,
+    this.points,
   });
 
   bool get hasBounds => north != null && south != null && east != null && west != null;
+  bool get hasPolygon => points != null && points!.length >= 3;
 
   // Πάντα επιστρέφει ορθογώνιο — είτε το αποθηκευμένο, είτε παράγωγο (τετράγωνο)
   // από το παλιό μοντέλο κύκλου, για ζώνες που δεν έχουν ακόμα μετατραπεί.
@@ -109,6 +112,14 @@ class PricingZone {
       east:   (m['east'] as num?)?.toDouble(),
       west:   (m['west'] as num?)?.toDouble(),
       rotationDeg: (m['rotationDeg'] as num?)?.toDouble() ?? 0,
+      points: (m['points'] is List)
+          ? (m['points'] as List)
+              .whereType<Map>()
+              .map((p) => LatLng(
+                  (p['lat'] as num?)?.toDouble() ?? 0,
+                  (p['lng'] as num?)?.toDouble() ?? 0))
+              .toList()
+          : null,
     );
   }
 }
@@ -213,6 +224,33 @@ class _PricingZonesPageState extends State<PricingZonesPage> {
   // Ορθογώνιο υπό επεξεργασία (νέα ζώνη ή επιλεγμένη υπάρχουσα).
   double? _editNorth, _editSouth, _editEast, _editWest;
   double _editRotation = 0; // μοίρες
+  // ── ΝΕΟ: τα 8 σημεία του πολυγώνου σε επεξεργασία. 4 γωνίες + 4 μέσα
+  // πλευρών — το ΚΑΘΕΝΑ σέρνεται ανεξάρτητα («περίεργο οκτάγωνο»).
+  List<LatLng> _editPoints = [];
+
+  LatLng get _editCentroid {
+    double la = 0, lo = 0;
+    for (final p in _editPoints) { la += p.latitude; lo += p.longitude; }
+    final n = _editPoints.isEmpty ? 1 : _editPoints.length;
+    return LatLng(la / n, lo / n);
+  }
+
+  // Φτιάχνει 8 σημεία (γωνίες + μέσα πλευρών) από ορθογώνιο+περιστροφή —
+  // για ΝΕΕΣ ζώνες και για μετατροπή παλιών ορθογώνιων ζωνών σε πολύγωνο.
+  List<LatLng> _octagonFromBounds(_Bounds b, double rotationDeg) {
+    final c = b.center;
+    final hw = b.halfWidthM, hh = b.halfHeightM;
+    return [
+      _offsetRotated(c, -hw,  hh, rotationDeg), // ΒΔ γωνία
+      _offsetRotated(c,   0,  hh, rotationDeg), // Β μέση
+      _offsetRotated(c,  hw,  hh, rotationDeg), // ΒΑ γωνία
+      _offsetRotated(c,  hw,   0, rotationDeg), // Α μέση
+      _offsetRotated(c,  hw, -hh, rotationDeg), // ΝΑ γωνία
+      _offsetRotated(c,   0, -hh, rotationDeg), // Ν μέση
+      _offsetRotated(c, -hw, -hh, rotationDeg), // ΝΔ γωνία
+      _offsetRotated(c, -hw,   0, rotationDeg), // Δ μέση
+    ];
+  }
   LatLng _cameraCenter = const LatLng(37.9838, 23.7275);
   bool _saving = false;
 
@@ -503,6 +541,9 @@ class _PricingZonesPageState extends State<PricingZonesPage> {
       _editEast  = _cameraCenter.longitude + dLng;
       _editWest  = _cameraCenter.longitude - dLng;
       _editRotation = 0;
+      _editPoints = _octagonFromBounds(
+          _Bounds(north: _editNorth!, south: _editSouth!,
+                  east: _editEast!, west: _editWest!), 0);
     });
   }
 
@@ -517,6 +558,11 @@ class _PricingZonesPageState extends State<PricingZonesPage> {
       _editEast  = b.east;
       _editWest  = b.west;
       _editRotation = z.rotationDeg;
+      // Ζώνη με πολύγωνο → επεξεργαζόμαστε τα σημεία της· παλιά ορθογώνια/
+      // κυκλική → μετατρέπεται ΤΩΡΑ σε 8 σημεία (γωνίες + μέσα πλευρών).
+      _editPoints = z.hasPolygon
+          ? List<LatLng>.from(z.points!)
+          : _octagonFromBounds(b, z.rotationDeg);
     });
   }
 
@@ -525,79 +571,66 @@ class _PricingZonesPageState extends State<PricingZonesPage> {
       _placingNew = false;
       _selectedZoneId = null;
       _editNorth = _editSouth = _editEast = _editWest = null;
+      _editPoints = [];
       _nameCtrl.text = '';
     });
   }
 
-  // Μετακίνηση όλου του ορθογωνίου (ίδιο μέγεθος, νέο κέντρο) — λαβή κέντρου.
+  // Μετακίνηση όλου του πολυγώνου (ίδιο σχήμα, νέο κέντρο) — λαβή κέντρου.
   void _translateTo(LatLng newCenter) {
-    final oldCenter = _Bounds(north: _editNorth!, south: _editSouth!, east: _editEast!, west: _editWest!).center;
+    final oldCenter = _editCentroid;
     final dLat = newCenter.latitude - oldCenter.latitude;
     final dLng = newCenter.longitude - oldCenter.longitude;
     setState(() {
-      _editNorth = _editNorth! + dLat;
-      _editSouth = _editSouth! + dLat;
-      _editEast  = _editEast! + dLng;
-      _editWest  = _editWest! + dLng;
+      _editPoints = _editPoints
+          .map((p) => LatLng(p.latitude + dLat, p.longitude + dLng))
+          .toList();
     });
   }
 
-  // Αλλαγή μεγέθους τραβώντας μια γωνία (μόνο web) — ελεύθερο σχήμα.
-  // Λειτουργεί και με περιστροφή: μεταφράζουμε το σημείο στο «τοπικό» σύστημα
-  // του ορθογωνίου (αντίστροφη περιστροφή), και το μισό πλάτος/ύψος γίνεται η
-  // απόστασή του από το κέντρο. Το κέντρο μένει σταθερό.
-  void _resizeToPoint(_Bounds b, LatLng p) {
-    final c = b.center;
-    final dxM = _degLngToM(p.longitude - c.longitude, c.latitude);
-    final dyM = _degLatToM(p.latitude - c.latitude);
-    final rad = -_editRotation * math.pi / 180; // αντίστροφη περιστροφή
-    final lx = (dxM * math.cos(rad) - dyM * math.sin(rad)).abs();
-    final ly = (dxM * math.sin(rad) + dyM * math.cos(rad)).abs();
-    final hw = lx.clamp(200.0, 60000.0);
-    final hh = ly.clamp(200.0, 60000.0);
-    final dLat = _mToDegLat(hh);
-    final dLng = _mToDegLng(hw, c.latitude);
-    setState(() {
-      _editNorth = c.latitude + dLat;
-      _editSouth = c.latitude - dLat;
-      _editEast  = c.longitude + dLng;
-      _editWest  = c.longitude - dLng;
-    });
+  // Σύρσιμο ΕΝΟΣ από τα 8 σημεία — μόνο αυτό μετακινείται («περίεργο οκτάγωνο»).
+  void _moveVertex(int index, LatLng p) {
+    if (index < 0 || index >= _editPoints.length) return;
+    setState(() => _editPoints[index] = p);
   }
 
   // Περιστροφή: η γωνία ορίζεται από τη θέση της πράσινης λαβής ως προς το
   // κέντρο (atan2 σε μέτρα). 0° = η λαβή ακριβώς βόρεια.
-  void _rotateTo(_Bounds b, LatLng p) {
-    final c = b.center;
+  void _rotateTo(LatLng p) {
+    final c = _editCentroid;
     final dxM = _degLngToM(p.longitude - c.longitude, c.latitude);
     final dyM = _degLatToM(p.latitude - c.latitude);
     final deg = math.atan2(dxM, dyM) * 180 / math.pi;
-    setState(() => _editRotation = deg);
+    final delta = deg - _editRotation;
+    // Περιστρέφουμε ΟΛΑ τα σημεία γύρω από το κέντρο κατά τη διαφορά γωνίας.
+    final rad = delta * math.pi / 180;
+    setState(() {
+      _editPoints = _editPoints.map((pt) {
+        final dx = _degLngToM(pt.longitude - c.longitude, c.latitude);
+        final dy = _degLatToM(pt.latitude - c.latitude);
+        final rx = dx * math.cos(rad) - dy * math.sin(rad);
+        final ry = dx * math.sin(rad) + dy * math.cos(rad);
+        return LatLng(c.latitude + _mToDegLat(ry),
+            c.longitude + _mToDegLng(rx, c.latitude));
+      }).toList();
+      _editRotation = deg;
+    });
   }
 
   // Αναλογική μεγέθυνση/σμίκρυνση (κινητό) — κρατά το ΥΠΑΡΧΟΝ σχήμα (π.χ.
   // επίμηκες), δεν το ξαναφέρνει σε τετράγωνο/κύκλο.
   double get _editAvgHalfSizeM {
-    final b = _Bounds(north: _editNorth!, south: _editSouth!, east: _editEast!, west: _editWest!);
-    return (b.halfHeightM + b.halfWidthM) / 2;
+    final c = _editCentroid;
+    if (_editPoints.isEmpty) return 3000;
+    double sum = 0;
+    for (final p in _editPoints) {
+      final dx = _degLngToM(p.longitude - c.longitude, c.latitude);
+      final dy = _degLatToM(p.latitude - c.latitude);
+      sum += math.sqrt(dx * dx + dy * dy);
+    }
+    return sum / _editPoints.length;
   }
 
-  void _scaleProportionally(double newAvgHalfSizeM) {
-    final b = _Bounds(north: _editNorth!, south: _editSouth!, east: _editEast!, west: _editWest!);
-    final curAvg = _editAvgHalfSizeM;
-    final scale = curAvg > 1 ? newAvgHalfSizeM / curAvg : 1.0;
-    final center = b.center;
-    final newHalfHeightM = (b.halfHeightM * scale).clamp(200.0, 40000.0);
-    final newHalfWidthM  = (b.halfWidthM  * scale).clamp(200.0, 40000.0);
-    final dLat = _mToDegLat(newHalfHeightM);
-    final dLng = _mToDegLng(newHalfWidthM, center.latitude);
-    setState(() {
-      _editNorth = center.latitude + dLat;
-      _editSouth = center.latitude - dLat;
-      _editEast  = center.longitude + dLng;
-      _editWest  = center.longitude - dLng;
-    });
-  }
 
   Future<void> _saveZone() async {
     final name = _nameCtrl.text.trim();
@@ -608,18 +641,31 @@ class _PricingZonesPageState extends State<PricingZonesPage> {
       return;
     }
     setState(() => _saving = true);
-    final b = _Bounds(north: _editNorth!, south: _editSouth!, east: _editEast!, west: _editWest!);
-    final center = b.center;
+    // ── ΝΕΟ μοντέλο: αποθηκεύεται το ΠΟΛΥΓΩΝΟ (8 σημεία). Κρατάμε ΚΑΙ
+    // lat/lng (κέντρο βάρους — το χρησιμοποιεί το matchZone για tie-break),
+    // radius/north/south/east/west (bounding box) για legacy/χάρτη-fit.
+    final center = _editCentroid;
+    double n = -90, so = 90, e = -180, w = 180;
+    for (final p in _editPoints) {
+      if (p.latitude  > n)  n  = p.latitude;
+      if (p.latitude  < so) so = p.latitude;
+      if (p.longitude > e)  e  = p.longitude;
+      if (p.longitude < w)  w  = p.longitude;
+    }
+    final bb = _Bounds(north: n, south: so, east: e, west: w);
     final data = <String, dynamic>{
       'name':   name,
       'lat':    center.latitude,
       'lng':    center.longitude,
-      'radius': (b.halfHeightM + b.halfWidthM) / 2, // fallback/legacy πληροφορία
-      'north':  b.north,
-      'south':  b.south,
-      'east':   b.east,
-      'west':   b.west,
-      'rotationDeg': _editRotation,
+      'radius': (bb.halfHeightM + bb.halfWidthM) / 2, // fallback/legacy πληροφορία
+      'north':  n,
+      'south':  so,
+      'east':   e,
+      'west':   w,
+      'rotationDeg': 0, // το σχήμα ζει πια στα points — η περιστροφή είναι «ψημένη» μέσα τους
+      'points': _editPoints
+          .map((p) => {'lat': p.latitude, 'lng': p.longitude})
+          .toList(),
       'tenantId': _effectiveTenantId,
     };
     try {
@@ -729,26 +775,27 @@ class _PricingZonesPageState extends State<PricingZonesPage> {
         final selected = _selectedZoneId != null
             ? zones.where((z) => z.id == _selectedZoneId).cast<PricingZone?>().firstOrNull
             : null;
-        final editingBounds = _isEditing && _editNorth != null
-            ? _Bounds(north: _editNorth!, south: _editSouth!, east: _editEast!, west: _editWest!)
-            : null;
+        final editing = _isEditing && _editPoints.isNotEmpty;
 
         final polygons = <Polygon>{
           for (final z in zones)
-            if (!(z.id == _selectedZoneId && editingBounds != null))
+            if (!(z.id == _selectedZoneId && editing))
               Polygon(
                 polygonId: PolygonId(z.id),
-                points: _rectPoints(z.bounds, z.rotationDeg),
+                // Πολύγωνο αν υπάρχει, αλλιώς το παλιό (περιστραμμένο) ορθογώνιο.
+                points: z.hasPolygon
+                    ? z.points!
+                    : _rectPoints(z.bounds, z.rotationDeg),
                 consumeTapEvents: true,
                 strokeWidth: 1,
                 strokeColor: _kAmber,
                 fillColor: _kAmber.withValues(alpha: 0.18),
                 onTap: () => _selectZone(z),
               ),
-          if (editingBounds != null)
+          if (editing)
             Polygon(
               polygonId: PolygonId(_placingNew ? '_newZone' : _selectedZoneId!),
-              points: _rectPoints(editingBounds, _editRotation),
+              points: _editPoints,
               strokeWidth: 3,
               strokeColor: _placingNew ? Colors.red : Colors.deepPurple,
               fillColor: (_placingNew ? Colors.red : Colors.deepPurple).withValues(alpha: 0.18),
@@ -756,21 +803,22 @@ class _PricingZonesPageState extends State<PricingZonesPage> {
         };
 
         final markers = <Marker>{};
-        if (editingBounds != null) {
-          // Κέντρο — μετακίνηση όλου του ορθογωνίου (και στις δύο πλατφόρμες).
+        if (editing) {
+          final centroid = _editCentroid;
+          // Κέντρο — μετακίνηση ΟΛΟΥ του πολυγώνου (και στις δύο πλατφόρμες).
           markers.add(Marker(
             markerId: const MarkerId('_center'),
-            position: editingBounds.center,
+            position: centroid,
             draggable: true,
             icon: BitmapDescriptor.defaultMarkerWithHue(
                 _placingNew ? BitmapDescriptor.hueRed : BitmapDescriptor.hueViolet),
             onDrag: _translateTo,
             onDragEnd: _translateTo,
           ));
-          // Λαβή ΠΕΡΙΣΤΡΟΦΗΣ — πράσινη πινέζα πάνω από την (περιστραμμένη)
-          // πάνω πλευρά. Τη σέρνεις γύρω-γύρω και το ορθογώνιο γυρίζει.
-          final rotHandle = _offsetRotated(editingBounds.center, 0,
-              editingBounds.halfHeightM * 1.45, _editRotation);
+          // Λαβή ΠΕΡΙΣΤΡΟΦΗΣ — πράσινη πινέζα: γυρίζει ΟΛΟ το πολύγωνο
+          // γύρω από το κέντρο του.
+          final rotHandle = _offsetRotated(centroid, 0,
+              math.max(600.0, _editAvgHalfSizeM * 1.45), _editRotation);
           markers.add(Marker(
             markerId: const MarkerId('_rot'),
             position: rotHandle,
@@ -778,25 +826,25 @@ class _PricingZonesPageState extends State<PricingZonesPage> {
             anchor: const Offset(0.5, 0.5),
             icon: _rotateIcon ??
                 BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen),
-            onDrag: (p) => _rotateTo(editingBounds, p),
-            onDragEnd: (p) => _rotateTo(editingBounds, p),
+            onDrag: _rotateTo,
+            onDragEnd: _rotateTo,
           ));
-          // Γωνίες — ΜΟΝΟ web: ελεύθερη αλλαγή μεγέθους/σχήματος, σαν crop tool.
-          if (isDesktop) {
-            final corners = _rectPoints(editingBounds, _editRotation);
-            final ids = ['_nw', '_ne', '_se', '_sw'];
-            for (int i = 0; i < 4; i++) {
-              markers.add(Marker(
-                markerId: MarkerId(ids[i]),
-                position: corners[i],
-                draggable: true,
-                anchor: const Offset(0.5, 0.5),
-                icon: _cornerIcon ??
-                    BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueOrange),
-                onDrag: (p) => _resizeToPoint(editingBounds, p),
-                onDragEnd: (p) => _resizeToPoint(editingBounds, p),
-              ));
-            }
+          // ── 8 ΛΑΒΕΣ (4 γωνίες + 4 μέσα πλευρών) — Η ΚΑΘΕΜΙΑ σέρνεται
+          // ΑΝΕΞΑΡΤΗΤΑ και μετακινεί ΜΟΝΟ το δικό της σημείο → «περίεργο
+          // οκτάγωνο». Και στο web (σύρσιμο) και στο Android (παρατεταμένο
+          // πάτημα + σύρσιμο του marker).
+          for (int i = 0; i < _editPoints.length; i++) {
+            final idx = i;
+            markers.add(Marker(
+              markerId: MarkerId('_v$i'),
+              position: _editPoints[i],
+              draggable: true,
+              anchor: const Offset(0.5, 0.5),
+              icon: _cornerIcon ??
+                  BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueOrange),
+              onDrag: (p) => _moveVertex(idx, p),
+              onDragEnd: (p) => _moveVertex(idx, p),
+            ));
           }
         }
 
@@ -865,42 +913,11 @@ class _PricingZonesPageState extends State<PricingZonesPage> {
                 ),
               ),
             ),
-            // Κινητό ΜΟΝΟ: slider αναλογικής μεγέθυνσης — κρατά επίμηκες σχήμα.
-            if (_isEditing && !isDesktop && editingBounds != null)
+            // Υπενθύμιση λαβών — ΙΔΙΑ σε web ΚΑΙ κινητό (ίδια εμπειρία).
+            if (_isEditing)
               Positioned(
-                left: 0, right: 0, bottom: 0,
-                child: SafeArea(
-                  top: false,
-                  child: Container(
-                    margin: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(14),
-                      boxShadow: const [BoxShadow(blurRadius: 10, color: Colors.black38)],
-                    ),
-                    child: Row(
-                      children: [
-                        Text('Μέγεθος: ${(_editAvgHalfSizeM / 1000).toStringAsFixed(1)} χλμ',
-                            style: const TextStyle(fontWeight: FontWeight.w600)),
-                        Expanded(
-                          child: Slider(
-                            min: 300, max: 20000,
-                            value: _editAvgHalfSizeM.clamp(300, 20000),
-                            activeColor: _placingNew ? Colors.red : Colors.deepPurple,
-                            label: '${(_editAvgHalfSizeM / 1000).toStringAsFixed(1)} χλμ',
-                            onChanged: _scaleProportionally,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            // Web: μικρή υπενθύμιση για τις λαβές γωνιών.
-            if (_isEditing && isDesktop)
-              Positioned(
-                left: 12, bottom: 12,
+                left: 12, right: 12,
+                bottom: 12 + MediaQuery.of(context).viewPadding.bottom,
                 child: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                   decoration: BoxDecoration(
@@ -908,7 +925,7 @@ class _PricingZonesPageState extends State<PricingZonesPage> {
                     borderRadius: BorderRadius.circular(10),
                   ),
                   child: const Text(
-                    'Μαύρο τετράγωνο: μέγεθος/σχήμα · βελάκι: περιστροφή · κόκκινο: μετακίνηση',
+                    '8 μαύρα τετράγωνα: τράβα το καθένα για ελεύθερο σχήμα (στο κινητό: παρατεταμένο πάτημα και σύρσιμο) · βελάκι: περιστροφή · πινέζα: μετακίνηση',
                     style: TextStyle(color: Colors.white, fontSize: 12),
                   ),
                 ),
