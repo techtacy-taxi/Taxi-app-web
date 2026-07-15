@@ -1385,9 +1385,6 @@ class _PricingConfigTabState extends State<_PricingConfigTab> {
   // ── Ποσοστό προκαταβολής στη δημόσια φόρμα (προεπιλογή 10%) — η
   // στρογγυλοποίηση στο επόμενο ευρώ παραμένει ίδια, ό,τι ποσοστό κι αν βάλεις.
   final _depositPercentCtrl = TextEditingController();
-  // Προμήθεια app (δηλώνεται από master) + έξτρα λεπτά ανά κράτηση Shuttle
-  final _appCommissionPerBookingCtrl = TextEditingController();
-  final _shuttleExtraMinutesCtrl = TextEditingController(text: '10');
   // Έκπτωση «γνωριμίας» στη δυναμική τιμολόγηση (όχι ζώνες) — προεπιλογή 8%.
   // 0 = δείξε ΚΑΤΕΥΘΕΙΑΝ την τελική τιμή, χωρίς διαγραμμένη «αρχική»/badge έκπτωσης.
   final _dynamicDiscountCtrl = TextEditingController();
@@ -1421,8 +1418,6 @@ class _PricingConfigTabState extends State<_PricingConfigTab> {
       ctrl.dispose();
     }
     _depositPercentCtrl.dispose();
-    _appCommissionPerBookingCtrl.dispose();
-    _shuttleExtraMinutesCtrl.dispose();
     _dynamicDiscountCtrl.dispose();
     super.dispose();
   }
@@ -1475,11 +1470,6 @@ class _PricingConfigTabState extends State<_PricingConfigTab> {
               ? dynamicDiscount.toStringAsFixed(0)
               : dynamicDiscount.toString();
 
-          final appComm = (data['appCommissionPerBooking'] as num?)?.toDouble() ?? 0;
-          _appCommissionPerBookingCtrl.text =
-              appComm > 0 ? appComm.toStringAsFixed(2) : '';
-          final extraMin = (data['shuttleExtraMinutesPerBooking'] as num?)?.toInt() ?? 10;
-          _shuttleExtraMinutesCtrl.text = '$extraMin';
           _fullPaymentEnabled = data['fullPaymentEnabled'] != false;
           _clientsOnlyBooking = data['clientsOnlyBooking'] == true;
           _clientsCatalogMode = data['clientsCatalogMode'] == true;
@@ -1656,35 +1646,6 @@ class _PricingConfigTabState extends State<_PricingConfigTab> {
                 onChanged: (v) => setState(() => _fullPaymentEnabled = v),
               ),
 
-              const SizedBox(height: 20),
-              const Divider(),
-              const SizedBox(height: 8),
-              const Text('Χρέωση App',
-                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-              const SizedBox(height: 8),
-              TextField(
-                controller: _appCommissionPerBookingCtrl,
-                keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                decoration: const InputDecoration(
-                    isDense: true,
-                    labelText: 'Προμήθεια app ανά κράτηση (€)',
-                    prefixText: '€ ',
-                    helperText: 'Χρεώνεται αυτόματα σε ΚΑΘΕ κράτηση (πάνω απ\' ό,τι '
-                        'ορίζει η πηγή, αν υπάρχει). Άφησέ το κενό ή 0 για καμία χρέωση.',
-                    border: OutlineInputBorder()),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: _shuttleExtraMinutesCtrl,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(
-                    isDense: true,
-                    labelText: 'Έξτρα λεπτά ανά κράτηση Shuttle',
-                    suffixText: 'λεπτά',
-                    helperText: 'Κάθε επιπλέον κράτηση σε ενωμένο Shuttle προσθέτει '
-                        'τόσα λεπτά στον εκτιμώμενο χρόνο διαδρομής (προεπιλογή 10).',
-                    border: OutlineInputBorder()),
-              ),
               const SizedBox(height: 8),
               Row(children: [
                 Icon(Icons.list_alt_rounded, size: 18, color: Colors.deepPurple.shade700),
@@ -1962,10 +1923,6 @@ class _PricingConfigTabState extends State<_PricingConfigTab> {
           .clamp(0, 100),
       'dynamicDiscountPercent': (double.tryParse(_dynamicDiscountCtrl.text.replaceAll(',', '.')) ?? 8)
           .clamp(0, 90),
-      'appCommissionPerBooking':
-          double.tryParse(_appCommissionPerBookingCtrl.text.replaceAll(',', '.')) ?? 0,
-      'shuttleExtraMinutesPerBooking':
-          int.tryParse(_shuttleExtraMinutesCtrl.text.trim()) ?? 10,
       'fullPaymentEnabled': _fullPaymentEnabled,
       'clientsOnlyBooking': _clientsOnlyBooking,
       'clientsCatalogMode': _clientsCatalogMode,

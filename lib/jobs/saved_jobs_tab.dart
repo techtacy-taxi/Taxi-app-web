@@ -257,6 +257,7 @@ class _SavedJobsTabState extends State<SavedJobsTab> {
                               saved: items[i],
                               onSend: lvl.canSend
                                   ? () => _chooseSendTarget(items[i]) : null,
+                              onEdit: lvl.canEdit ? () => _editSaved(items[i]) : null,
                               onSplit: () => _splitShuttle(items[i]),
                               onTapStop: (stop) => _showStopDetails(items[i], stop),
                               onEditPrice: (stop) => _editStopPrice(items[i], stop),
@@ -539,20 +540,45 @@ class _SavedJobsTabState extends State<SavedJobsTab> {
 
   // ─── Split ενωμένου Shuttle πίσω στα αρχικά κομμάτια ──────────────────────
   Future<void> _splitShuttle(SavedJob container) async {
+    // Επιλογή ΠΟΙΕΣ κρατήσεις θα ξαναγίνουν απλές — οι υπόλοιπες μένουν ενωμένες.
+    final stops = container.shuttleStops;
+    final selected = <int>{for (var i = 0; i < stops.length; i++) i};
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (dctx) => AlertDialog(
+      builder: (dctx) => StatefulBuilder(builder: (dctx, setD) => AlertDialog(
         title: const Text('Διαχωρισμός Shuttle'),
-        content: const Text('Θα ξαναφανούν οι αρχικές, ξεχωριστές δουλειές. Σίγουρα;'),
+        content: SizedBox(
+          width: 380,
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            const Text('Επίλεξε ποιες κρατήσεις θα ξαναγίνουν ξεχωριστές δουλειές:',
+                style: TextStyle(fontSize: 13)),
+            const SizedBox(height: 6),
+            for (var i = 0; i < stops.length; i++)
+              CheckboxListTile(
+                dense: true,
+                value: selected.contains(i),
+                title: Text(stops[i].name.isNotEmpty ? stops[i].name : '(χωρίς όνομα)',
+                    style: const TextStyle(fontSize: 13.5)),
+                subtitle: Text(stops[i].address,
+                    style: const TextStyle(fontSize: 11.5), maxLines: 1,
+                    overflow: TextOverflow.ellipsis),
+                onChanged: (v) => setD(() =>
+                    v == true ? selected.add(i) : selected.remove(i)),
+              ),
+          ]),
+        ),
         actions: [
           TextButton(onPressed: () => Navigator.of(dctx).pop(false), child: const Text('Άκυρο')),
-          FilledButton(onPressed: () => Navigator.of(dctx).pop(true), child: const Text('Διαχωρισμός')),
+          FilledButton(
+            onPressed: selected.isEmpty ? null : () => Navigator.of(dctx).pop(true),
+            child: Text('Διαχωρισμός (${selected.length})'),
+          ),
         ],
-      ),
+      )),
     );
     if (confirmed != true) return;
     try {
-      await SavedJobService.splitShuttle(container);
+      await SavedJobService.splitShuttlePartial(container, selected);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
           content: Text('Διαχωρίστηκε.'),
@@ -1643,6 +1669,7 @@ class _MergeShuttleDialogState extends State<_MergeShuttleDialog> {
 class _ShuttleContainerCard extends StatelessWidget {
   final SavedJob saved;
   final VoidCallback? onSend; // αποστολή της ενωμένης σε οδηγούς/εμένα
+  final VoidCallback? onEdit; // άνοιγμα στη φόρμα με ΟΛΕΣ τις κρατήσεις προσυμπληρωμένες
   final VoidCallback onSplit;
   final void Function(ShuttleStop) onTapStop;
   final void Function(ShuttleStop) onEditPrice;
@@ -1650,6 +1677,7 @@ class _ShuttleContainerCard extends StatelessWidget {
   const _ShuttleContainerCard({
     required this.saved,
     this.onSend,
+    this.onEdit,
     required this.onSplit,
     required this.onTapStop,
     required this.onEditPrice,
@@ -1713,6 +1741,12 @@ class _ShuttleContainerCard extends StatelessWidget {
                       size: 20, color: Color(0xFF1E8E3E)),
                   tooltip: 'Αποστολή',
                   onPressed: onSend,
+                ),
+              if (onEdit != null)
+                IconButton(
+                  icon: const Icon(Icons.edit_rounded, size: 20),
+                  tooltip: 'Επεξεργασία όλων των κρατήσεων',
+                  onPressed: onEdit,
                 ),
               IconButton(
                 icon: const Icon(Icons.call_split_rounded, size: 20),

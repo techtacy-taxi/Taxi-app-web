@@ -341,9 +341,7 @@ class SavedJobService {
     map['shuttleStops'] = stops.map((s) => s.toMap()).toList();
     if (shuttleTotalMinutes > 0) {
       map['shuttleTotalMinutes'] = shuttleTotalMinutes;
-      map['note'] = (map['note'] as String? ?? '') +
-          ' (εκτιμώμενος χρόνος Shuttle: $shuttleTotalMinutes\' για '
-          '${stops.length} κρατήσεις)';
+      map['note'] = '${map['note'] as String? ?? ''} (εκτιμώμενος χρόνος Shuttle: $shuttleTotalMinutes\' για ${stops.length} κρατήσεις)';
     }
 
     final col = FirebaseFirestore.instance.collection('saved_jobs');
@@ -455,6 +453,90 @@ class SavedJobService {
 
   /// Ξεχωρίζει ξανά μια ενωμένη Shuttle δουλειά στα αρχικά της κομμάτια —
   /// διαγράφει το container, ξαναφέρνει ορατά τα αρχικά (mergedIntoId: null).
+  /// Διαχωρισμός ΕΠΙΛΕΚΤΙΚΩΝ κρατήσεων από ενωμένο Shuttle (index-based, ίδια
+  /// σειρά με container.shuttleStops). Οι επιλεγμένες γίνονται ξανά απλές,
+  /// ανεξάρτητες δουλειές στις Αποθηκευμένες· οι υπόλοιπες μένουν ενωμένες.
+  /// Αν μείνει ≤1 στάση, ΟΛΟΚΛΗΡΟ το container διαλύεται.
+  static Future<void> splitShuttlePartial(
+    SavedJob container, Set<int> indicesToSplitOut,
+  ) async {
+    if (!container.isShuttleContainer) return;
+    final stops = container.shuttleStops;
+    final childIds = container.mergedChildIds; // ίδια σειρά με stops (αν από «Ένωση»)
+    final batch = _fs.batch();
+
+    Future<void> restoreOrCreate(int i) async {
+      final childId = (i < childIds.length) ? childIds[i] : '';
+      if (childId.isNotEmpty) {
+        // Προϋπήρχε ως ξεχωριστό doc → απλώς αφαιρούμε το mergedIntoId του.
+        batch.update(_fs.collection(_coll).doc(childId),
+            {'mergedIntoId': FieldValue.delete()});
+      } else {
+        // Δημιουργήθηκε απευθείας μέσα στο container (από τη φόρμα) → φτιάχνουμε
+        // τώρα το ανεξάρτητο doc του, με τα ίδια στοιχεία στάσης.
+        final st = stops[i];
+        final sharedIsPickup = container.job.shuttleSharedIsPickup;
+        final ownName = st.isPickupHere ? st.address : container.job.from;
+        final destName = st.isPickupHere ? container.job.to : st.address;
+        final job = Job(
+          id: '', from: sharedIsPickup ? destName : ownName,
+          to: sharedIsPickup ? ownName : destName,
+          fromLat: sharedIsPickup ? container.job.fromLat : st.lat,
+          fromLng: sharedIsPickup ? container.job.fromLng : st.lng,
+          toLat: sharedIsPickup ? st.lat : container.job.toLat,
+          toLng: sharedIsPickup ? st.lng : container.job.toLng,
+          clientName: st.name, clientPhone: st.phone, clientEmail: st.email,
+          flightOrShip: st.flightOrShip, note: st.note ?? '',
+          persons: st.persons, luggage: st.luggage,
+          childSeatCount: st.childSeatCount, childSeat: st.childSeatCount > 0,
+          vehicleType: container.job.vehicleType,
+          price: st.price, commission: 0, appCommission: 0,
+          scheduledAt: container.job.scheduledAt,
+        );
+        batch.set(_fs.collection(_coll).doc(), {
+          ...job.toMap(),
+          'ownerUid': container.ownerUid, 'ownerName': container.ownerName,
+          'origin': container.job.isFromPublicForm ? 'public_form' : null,
+          'savedAt': FieldValue.serverTimestamp(),
+        });
+      }
+    }
+
+    for (final i in indicesToSplitOut) {
+      await restoreOrCreate(i);
+    }
+
+    final remaining = <int>[];
+    for (var i = 0; i < stops.length; i++) {
+      if (!indicesToSplitOut.contains(i)) remaining.add(i);
+    }
+
+    if (remaining.length <= 1) {
+      // Ό,τι απέμεινε (0 ή 1 στάση) βγαίνει ΚΙ αυτό ανεξάρτητο doc.
+      for (final i in remaining) {
+        await restoreOrCreate(i);
+      }
+      batch.delete(_fs.collection(_coll).doc(container.id));
+    } else {
+      final newStops = remaining.map((i) => stops[i]).toList();
+      final newChildIds = childIds.length == stops.length
+          ? remaining.map((i) => childIds[i]).toList()
+          : <String>[];
+      final newPrice = newStops.fold<double>(0, (t, s) => t + s.price);
+      final newPersons = newStops.fold<int>(0, (t, s) => t + s.persons);
+      final newLuggage = newStops.fold<int>(0, (t, s) => t + s.luggage);
+      final newSeats = newStops.fold<int>(0, (t, s) => t + s.childSeatCount);
+      batch.update(_fs.collection(_coll).doc(container.id), {
+        'shuttleStops': newStops.map((s) => s.toMap()).toList(),
+        'mergedChildIds': newChildIds,
+        'price': newPrice, 'persons': newPersons,
+        'luggage': newLuggage, 'childSeatCount': newSeats,
+        'childSeat': newSeats > 0,
+      });
+    }
+    await batch.commit();
+  }
+
   static Future<void> splitShuttle(SavedJob container) async {
     if (!container.isShuttleContainer) return;
     final batch = _fs.batch();

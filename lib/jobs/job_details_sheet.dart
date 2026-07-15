@@ -1038,13 +1038,24 @@ class _GroupStopsSectionState extends State<GroupStopsSection> {
         Icon(Icons.directions_bus_rounded,
             size: 18, color: Colors.amber.shade800),
         const SizedBox(width: 6),
-        Text(
-            '${job.vehicleType == 'bus' ? 'Λεωφορείο' : 'Shuttle'} · '
-            '${job.shuttleStops.length} κρατήσεις — '
-            '${ascending ? 'παίρνεις με σειρά' : 'αφήνεις με σειρά'}:',
-            style: const TextStyle(
-                fontWeight: FontWeight.bold, fontSize: 14)),
+        Expanded(
+          child: Text(
+              '${job.vehicleType == 'bus' ? 'Λεωφορείο' : 'Shuttle'} · '
+              '${job.shuttleStops.length} κρατήσεις — '
+              '${ascending ? 'παίρνεις με σειρά' : 'αφήνεις με σειρά'}:',
+              style: const TextStyle(
+                  fontWeight: FontWeight.bold, fontSize: 14)),
+        ),
       ]),
+      if (job.childSeatCount > 0)
+        Padding(
+          padding: const EdgeInsets.only(top: 2, left: 24),
+          child: Text(
+              '🍼 Σύνολο παιδικά καθίσματα: ${job.childSeatCount}',
+              style: TextStyle(
+                  fontSize: 12.5, color: Colors.orange.shade800,
+                  fontWeight: FontWeight.w600)),
+        ),
       const SizedBox(height: 6),
       for (int k = 0; k < entries.length; k++) ...[
         Builder(builder: (_) {
@@ -1058,6 +1069,8 @@ class _GroupStopsSectionState extends State<GroupStopsSection> {
           final email = (m['email'] as String?)?.trim();
           final price = (m['price'] as num?)?.toDouble() ?? 0;
           final persons = (m['persons'] as num?)?.toInt() ?? 1;
+          final childSeats = (m['childSeatCount'] as num?)?.toInt() ?? 0;
+          final note = (m['note'] as String?)?.trim();
           final lat = (m['lat'] as num?)?.toDouble();
           final lng = (m['lng'] as num?)?.toDouble();
           final done = _done['$origIdx'] == true;
@@ -1118,7 +1131,9 @@ class _GroupStopsSectionState extends State<GroupStopsSection> {
                       ),
                       Expanded(
                         child: Text(
-                            '${name.isNotEmpty ? name : '(χωρίς όνομα)'} · $persons άτομ${persons == 1 ? 'ο' : 'α'}',
+                            '${name.isNotEmpty ? name : '(χωρίς όνομα)'} · $persons άτομ${persons == 1 ? 'ο' : 'α'}'
+                            '${childSeats > 0 ? ' · 🍼×$childSeats' : ''}'
+                            '${note != null && note.isNotEmpty ? '\n$note' : ''}',
                             style: TextStyle(
                                 fontSize: 13,
                                 decoration: done

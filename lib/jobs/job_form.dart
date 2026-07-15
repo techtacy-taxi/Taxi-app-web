@@ -154,19 +154,16 @@ class _JobFormPageState extends State<JobFormPage> {
   // Αν επεξεργαζόμαστε ΕΝΩΜΕΝΗ (container) αποθηκευμένη, φόρτωσε τις
   // στάσεις της: η 1η γίνεται η κύρια κράτηση (τα πεδία της φόρμας έχουν
   // ήδη προσυμπληρωθεί από το job), οι υπόλοιπες γίνονται επιπλέον.
-  // Προμήθεια app ανά κράτηση + έξτρα λεπτά Shuttle — δηλωμένα από τον
-  // master στις Ρυθμίσεις Online Φόρμας (tab «Δυναμικοί Τύποι»).
+  // Προμήθεια app + έξτρα λεπτά Shuttle — ίδιο global ρύθμισης doc με τη
+  // σελίδα «Διαχειριστές» (JobService.getAppSettings), όχι ανά tenant.
   Future<void> _loadAppCommissionDefaults() async {
     try {
-      final doc = await FirebaseFirestore.instance
-          .collection('app_settings').doc('pricing').get();
-      final d = doc.data();
-      if (d == null || !mounted) return;
+      final settings = await JobService.getAppSettings();
+      if (!mounted) return;
       setState(() {
-        _appCommissionPerBookingDefault =
-            (d['appCommissionPerBooking'] as num?)?.toDouble() ?? 0;
+        _appCommissionPerBookingDefault = settings['appCommission'] ?? 0;
         _shuttleExtraMinutesPerBooking =
-            (d['shuttleExtraMinutesPerBooking'] as num?)?.toInt() ?? 10;
+            (settings['shuttleExtraMinutesPerBooking'] ?? 10).toInt();
       });
     } catch (_) {}
   }
@@ -218,6 +215,8 @@ class _JobFormPageState extends State<JobFormPage> {
           b.priceCtrl.text  = st.price.toStringAsFixed(2);
           b.personsCtrl.text = '${st.persons}';
           b.luggageCtrl.text = '${st.luggage}';
+          b.childSeatCtrl.text = '${st.childSeatCount}';
+          b.noteCtrl.text = st.note ?? '';
           b.pick = PlacePick(
               description: st.address, lat: st.lat, lng: st.lng);
           b.zoneName    = st.zoneName;
@@ -252,6 +251,8 @@ class _JobFormPageState extends State<JobFormPage> {
         persons:      _persons,
         luggage:      _luggage,
         childSeatCount: _childSeatCount,
+        note:         _noteCtrl.text.trim().isNotEmpty
+            ? _noteCtrl.text.trim() : null,
         zoneName:     _mainStopZoneName,
         orderInZone:  _mainStopOrder,
       ),
@@ -276,6 +277,9 @@ class _JobFormPageState extends State<JobFormPage> {
                 b.priceCtrl.text.trim().replaceAll(',', '.')) ?? 0,
         persons:      int.tryParse(b.personsCtrl.text.trim()) ?? 1,
         luggage:      int.tryParse(b.luggageCtrl.text.trim()) ?? 0,
+        childSeatCount: int.tryParse(b.childSeatCtrl.text.trim()) ?? 0,
+        note:         b.noteCtrl.text.trim().isNotEmpty
+            ? b.noteCtrl.text.trim() : null,
         zoneName:     b.zoneName,
         orderInZone:  b.orderInZone,
       ));
@@ -2467,6 +2471,15 @@ class _JobFormPageState extends State<JobFormPage> {
           const SizedBox(width: 8),
           Expanded(
             child: TextField(
+              controller: b.childSeatCtrl,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(isDense: true,
+                  labelText: 'Παιδικό κάθισμα', border: OutlineInputBorder()),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: TextField(
               controller: b.priceCtrl,
               keyboardType: const TextInputType.numberWithOptions(decimal: true),
               decoration: const InputDecoration(isDense: true,
@@ -2474,6 +2487,12 @@ class _JobFormPageState extends State<JobFormPage> {
             ),
           ),
         ]),
+        const SizedBox(height: 8),
+        TextField(
+          controller: b.noteCtrl,
+          decoration: const InputDecoration(isDense: true,
+              labelText: 'Σχόλια', border: OutlineInputBorder()),
+        ),
       ]),
     );
   }
@@ -2613,8 +2632,10 @@ class _ExtraBooking {
   final emailCtrl   = TextEditingController();
   final flightCtrl  = TextEditingController();
   final priceCtrl   = TextEditingController();
-  final personsCtrl = TextEditingController(text: '1');
-  final luggageCtrl = TextEditingController(text: '0');
+  final personsCtrl   = TextEditingController(text: '1');
+  final luggageCtrl   = TextEditingController(text: '0');
+  final childSeatCtrl = TextEditingController(text: '0');
+  final noteCtrl      = TextEditingController();
   PlacePick? pick;
   String? zoneName;
   int?    orderInZone;
@@ -2622,5 +2643,6 @@ class _ExtraBooking {
     nameCtrl.dispose(); phoneCtrl.dispose(); emailCtrl.dispose();
     flightCtrl.dispose(); priceCtrl.dispose();
     personsCtrl.dispose(); luggageCtrl.dispose();
+    childSeatCtrl.dispose(); noteCtrl.dispose();
   }
 }

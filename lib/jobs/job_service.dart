@@ -1100,12 +1100,15 @@ class JobService {
         'subscription':  (d?['subscription']  as num?)?.toDouble() ?? 5.00,
         'calendarSubscription':
             (d?['calendarSubscription'] as num?)?.toDouble() ?? 0.00,
+        'shuttleExtraMinutesPerBooking':
+            (d?['shuttleExtraMinutesPerBooking'] as num?)?.toDouble() ?? 10,
       };
     } catch (_) {
       return {
         'appCommission': 1.50,
         'subscription': 5.00,
         'calendarSubscription': 0.00,
+        'shuttleExtraMinutesPerBooking': 10,
       };
     }
   }
@@ -1151,6 +1154,15 @@ class JobService {
   static Future<void> setCalendarSubscription(double value) async {
     await _fs.collection(_settingsDoc).doc('config').set(
       {'calendarSubscription': value},
+      SetOptions(merge: true),
+    );
+  }
+
+  /// Λεπτά που προστίθενται στον εκτιμώμενο χρόνο Shuttle ΓΙΑ ΚΑΘΕ επιπλέον
+  /// κράτηση πέραν της 1ης (π.χ. 10' → 1 κράτηση=60', 2=70', 3=80', ...).
+  static Future<void> setShuttleExtraMinutes(double value) async {
+    await _fs.collection(_settingsDoc).doc('config').set(
+      {'shuttleExtraMinutesPerBooking': value},
       SetOptions(merge: true),
     );
   }

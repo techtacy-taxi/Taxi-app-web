@@ -2584,6 +2584,19 @@ function nearestShuttleSlots(requestedMin, slots, fromZoneId, toZoneId) {
   return { before: before.time, after: after.time };
 }
 
+// Global προμήθεια app ανά κράτηση — ΙΔΙΟ doc (app_settings/config) με τη
+// σελίδα «Διαχειριστές» στο Flutter (JobService.getAppSettings). Αφορά τις
+// online κρατήσεις από τις δημόσιες φόρμες (χωρίς επιλεγμένη «πηγή»).
+async function getGlobalAppCommission() {
+  try {
+    const doc = await getFirestore().collection("app_settings").doc("config").get();
+    return Number(doc.data()?.appCommission) || 0;
+  } catch (e) {
+    console.error("getGlobalAppCommission error:", e.message);
+    return 0;
+  }
+}
+
 async function getPricingData(tenantId) {
   const tid = tenantId || "default";
   const now = Date.now();
@@ -3223,7 +3236,9 @@ exports.submitPublicBooking = onRequest(
         note:           fullNote,
         price:          estimate.price,   // υπολογισμένη τιμή (ζώνη ή δυναμικός τύπος)
         // Προμήθεια app ανά κράτηση, δηλωμένη από τον master.
-        appCommission:  Number(cfg.appCommissionPerBooking) || 0,
+        // Global προμήθεια app (ίδιο doc με τη σελίδα «Διαχειριστές» στο Flutter) —
+        // ΟΧΙ ανά tenant.
+        appCommission:  await getGlobalAppCommission(),
         scheduledAt:    Timestamp.fromDate(startDate),  // ραντεβού (Job.fromDoc)
         lang:           lang,
         ownerUid:       masterUid,
@@ -3921,8 +3936,7 @@ async function finalizeSuccessfulPayment(db, pendingRef, pd, providerMeta) {
   const bookingNumber = await nextBookingNumber(pd.tenantId || "default");
   // Προμήθεια app ανά κράτηση, όπως τη δηλώνει ο master (Ρυθμίσεις Online
   // Φόρμας → Δυναμικοί Τύποι) — ισχύει και σε αυτές τις online κρατήσεις.
-  const { cfg: pricingCfg } = await getPricingData(pd.tenantId || "default");
-  const appCommissionPerBooking = Number(pricingCfg.appCommissionPerBooking) || 0;
+  const appCommissionPerBooking = await getGlobalAppCommission();
   const savedRef = await db.collection("saved_jobs").add({
     origin:         "public_form",
     tenantId:       pd.tenantId || "default",

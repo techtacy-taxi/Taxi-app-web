@@ -186,6 +186,9 @@ class _MastersAdminPageState extends State<MastersAdminPage> {
         text: (settings['subscription'] ?? 5.00).toStringAsFixed(2));
     final calCtrl = TextEditingController(
         text: (settings['calendarSubscription'] ?? 0.00).toStringAsFixed(2));
+    final shuttleMinCtrl = TextEditingController(
+        text: (settings['shuttleExtraMinutesPerBooking'] ?? 10)
+            .toStringAsFixed(0));
 
     await showDialog<void>(
       context: context,
@@ -244,6 +247,22 @@ class _MastersAdminPageState extends State<MastersAdminPage> {
                 border: OutlineInputBorder(),
               ),
             ),
+            const SizedBox(height: 18),
+            // Έξτρα λεπτά ανά κράτηση Shuttle
+            TextField(
+              controller: shuttleMinCtrl,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                labelText:  'Έξτρα λεπτά ανά κράτηση Shuttle',
+                helperText: 'Κάθε επιπλέον κράτηση σε ενωμένο Shuttle προσθέτει '
+                    'τόσα λεπτά στον εκτιμώμενο χρόνο (π.χ. 10\' → 1 κράτηση='
+                    '60\', 2=70\', 3=80\'...).',
+                suffixText: 'λεπτά',
+                prefixIcon: Icon(Icons.directions_bus_rounded,
+                    color: Colors.amber),
+                border: OutlineInputBorder(),
+              ),
+            ),
           ]),
         ),
         actions: [
@@ -267,6 +286,11 @@ class _MastersAdminPageState extends State<MastersAdminPage> {
               }
               if (calV != null) {
                 await JobService.setCalendarSubscription(calV);
+              }
+              final shuttleMinV =
+                  double.tryParse(shuttleMinCtrl.text.trim());
+              if (shuttleMinV != null) {
+                await JobService.setShuttleExtraMinutes(shuttleMinV);
               }
               if (context.mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
