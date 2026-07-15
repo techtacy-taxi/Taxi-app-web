@@ -492,11 +492,13 @@ class SavedJobService {
           vehicleType: container.job.vehicleType,
           price: st.price, commission: 0, appCommission: 0,
           scheduledAt: container.job.scheduledAt,
+          createdBy: container.ownerUid,
+          createdAt: DateTime.now(),
         );
         batch.set(_fs.collection(_coll).doc(), {
           ...job.toMap(),
           'ownerUid': container.ownerUid, 'ownerName': container.ownerName,
-          'origin': container.job.isFromPublicForm ? 'public_form' : null,
+          if (container.isFromPublicForm) 'origin': 'public_form',
           'savedAt': FieldValue.serverTimestamp(),
         });
       }
