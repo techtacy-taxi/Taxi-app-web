@@ -237,8 +237,7 @@ class _JobFormPageState extends State<JobFormPage> {
       ShuttleStop(
         savedJobId:   widget.editSavedJobId ?? '',
         name:         _clientNameCtrl.text.trim(),
-        phone:        _clientPhoneCtrl.text.trim().isNotEmpty
-            ? _clientPhoneCtrl.text.trim() : null,
+        phone:        _normalizedPhone(_clientPhoneCtrl.text),
         email:        _clientEmailCtrl.text.trim().isNotEmpty
             ? _clientEmailCtrl.text.trim() : null,
         flightOrShip: _flightShipCtrl.text.trim().isNotEmpty
@@ -263,8 +262,7 @@ class _JobFormPageState extends State<JobFormPage> {
       stops.add(ShuttleStop(
         savedJobId:   '',
         name:         b.nameCtrl.text.trim(),
-        phone:        b.phoneCtrl.text.trim().isNotEmpty
-            ? b.phoneCtrl.text.trim() : null,
+        phone:        _normalizedPhone(b.phoneCtrl.text),
         email:        b.emailCtrl.text.trim().isNotEmpty
             ? b.emailCtrl.text.trim() : null,
         flightOrShip: b.flightCtrl.text.trim().isNotEmpty
@@ -2366,18 +2364,74 @@ class _JobFormPageState extends State<JobFormPage> {
       );
 
   // Κάρτα μίας ΕΠΙΠΛΕΟΝ κράτησης της ομαδικής μεταφοράς.
+  // Τηλέφωνα ΧΩΡΙΣ κωδικό χώρας δεν καλούνται/whatsapp-άρονται σωστά —
+  // αν ο admin γράψει μόνο τοπικό αριθμό, μπαίνει αυτόματα το +30.
+  String? _normalizedPhone(String raw) {
+    final t = raw.trim();
+    if (t.isEmpty) return null;
+    if (t.startsWith('+') || t.startsWith('00')) return t;
+    final digits = t.replaceAll(RegExp(r'[^\d]'), '');
+    return digits.isEmpty ? null : '+30$digits';
+  }
+
+  // Μικρό +/- stepper για αριθμητικά πεδία (άτομα/βαλίτσες/κάθισμα).
+  Widget _stepperField(String label, TextEditingController ctrl,
+      {int min = 0}) {
+    int val() => int.tryParse(ctrl.text.trim()) ?? min;
+    void set(int v) => ctrl.text = '${v < min ? min : v}';
+    return StatefulBuilder(builder: (context, setS) {
+      return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(label, style: TextStyle(fontSize: 11.5, color: Colors.grey.shade700)),
+        const SizedBox(height: 3),
+        Container(
+          decoration: BoxDecoration(
+            border: Border.all(color: Colors.grey.shade300),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            InkWell(
+              onTap: () => setS(() => set(val() - 1)),
+              child: const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  child: Icon(Icons.remove_rounded, size: 16)),
+            ),
+            SizedBox(
+              width: 26,
+              child: Text('${val()}',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+            ),
+            InkWell(
+              onTap: () => setS(() => set(val() + 1)),
+              child: const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  child: Icon(Icons.add_rounded, size: 16)),
+            ),
+          ]),
+        ),
+      ]);
+    });
+  }
+
   Widget _extraBookingCard(int i) {
     final b = _extraBookings[i];
     return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.fromLTRB(14, 10, 10, 14),
       decoration: BoxDecoration(
         border: Border.all(color: Colors.amber.shade200),
-        borderRadius: BorderRadius.circular(12),
-        color: Colors.amber.shade50.withValues(alpha: 0.4),
+        borderRadius: BorderRadius.circular(14),
+        color: Colors.amber.shade50.withValues(alpha: 0.5),
+        boxShadow: [
+          BoxShadow(color: Colors.black.withValues(alpha: 0.04),
+              blurRadius: 6, offset: const Offset(0, 2)),
+        ],
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
+          Icon(Icons.person_pin_circle_rounded,
+              size: 18, color: Colors.amber.shade800),
+          const SizedBox(width: 6),
           Expanded(
             child: Text(
                 'Κράτηση ${i + 2}'
@@ -2396,6 +2450,7 @@ class _JobFormPageState extends State<JobFormPage> {
             }),
           ),
         ]),
+        const SizedBox(height: 6),
         PlaceField(
           label: _groupSharedIsDestination
               ? 'Διεύθυνση παραλαβής *' : 'Διεύθυνση άφησης *',
@@ -2417,6 +2472,7 @@ class _JobFormPageState extends State<JobFormPage> {
             child: TextField(
               controller: b.nameCtrl,
               decoration: const InputDecoration(isDense: true,
+                  prefixIcon: Icon(Icons.person_outline_rounded, size: 18),
                   labelText: 'Όνομα', border: OutlineInputBorder()),
             ),
           ),
@@ -2426,7 +2482,10 @@ class _JobFormPageState extends State<JobFormPage> {
               controller: b.phoneCtrl,
               keyboardType: TextInputType.phone,
               decoration: const InputDecoration(isDense: true,
-                  labelText: 'Τηλέφωνο', border: OutlineInputBorder()),
+                  prefixIcon: Icon(Icons.phone_outlined, size: 18),
+                  labelText: 'Τηλέφωνο', hintText: 'π.χ. 6912345678',
+                  helperText: 'Χωρίς +30 → προστίθεται αυτόματα',
+                  border: OutlineInputBorder()),
             ),
           ),
         ]),
@@ -2437,6 +2496,7 @@ class _JobFormPageState extends State<JobFormPage> {
               controller: b.emailCtrl,
               keyboardType: TextInputType.emailAddress,
               decoration: const InputDecoration(isDense: true,
+                  prefixIcon: Icon(Icons.email_outlined, size: 18),
                   labelText: 'Email', border: OutlineInputBorder()),
             ),
           ),
@@ -2445,45 +2505,26 @@ class _JobFormPageState extends State<JobFormPage> {
             child: TextField(
               controller: b.flightCtrl,
               decoration: const InputDecoration(isDense: true,
+                  prefixIcon: Icon(Icons.flight_outlined, size: 18),
                   labelText: 'Πτήση/Πλοίο', border: OutlineInputBorder()),
             ),
           ),
         ]),
-        const SizedBox(height: 8),
+        const SizedBox(height: 10),
         Row(children: [
-          Expanded(
-            child: TextField(
-              controller: b.personsCtrl,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(isDense: true,
-                  labelText: 'Άτομα', border: OutlineInputBorder()),
-            ),
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: TextField(
-              controller: b.luggageCtrl,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(isDense: true,
-                  labelText: 'Βαλίτσες', border: OutlineInputBorder()),
-            ),
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: TextField(
-              controller: b.childSeatCtrl,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(isDense: true,
-                  labelText: 'Παιδικό κάθισμα', border: OutlineInputBorder()),
-            ),
-          ),
-          const SizedBox(width: 8),
-          Expanded(
+          _stepperField('Άτομα', b.personsCtrl, min: 1),
+          const SizedBox(width: 14),
+          _stepperField('Βαλίτσες', b.luggageCtrl),
+          const SizedBox(width: 14),
+          _stepperField('Καθίσματα', b.childSeatCtrl),
+          const Spacer(),
+          SizedBox(
+            width: 100,
             child: TextField(
               controller: b.priceCtrl,
               keyboardType: const TextInputType.numberWithOptions(decimal: true),
               decoration: const InputDecoration(isDense: true,
-                  labelText: 'Τιμή €', border: OutlineInputBorder()),
+                  labelText: 'Τιμή', prefixText: '€ ', border: OutlineInputBorder()),
             ),
           ),
         ]),
@@ -2491,6 +2532,7 @@ class _JobFormPageState extends State<JobFormPage> {
         TextField(
           controller: b.noteCtrl,
           decoration: const InputDecoration(isDense: true,
+              prefixIcon: Icon(Icons.comment_outlined, size: 18),
               labelText: 'Σχόλια', border: OutlineInputBorder()),
         ),
       ]),

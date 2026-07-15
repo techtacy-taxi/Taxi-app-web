@@ -23,6 +23,8 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:url_launcher/url_launcher.dart';
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 
 import '../voice/recipient_picker.dart';
 import '../voice/voice_models.dart';
@@ -629,6 +631,18 @@ class _SavedJobsTabState extends State<SavedJobsTab> {
 
   // Λεπτομερής κάρτα ΚΑΘΕ κράτησης του ενωμένου Shuttle, με «Κράτηση X/N»
   // και βελάκια ‹ › για μετάβαση στην επόμενη/προηγούμενη κράτηση της ομάδας.
+  Future<void> _launchUri(Uri uri, {bool external = false}) async {
+    try {
+      if (await canLaunchUrl(uri)) {
+        await launchUrl(uri,
+            mode: external ? LaunchMode.externalApplication : LaunchMode.platformDefault);
+      }
+    } catch (_) {}
+  }
+
+  // Λεπτομερής κάρτα κράτησης — ίδιο πνεύμα με το GroupStopsSection (job
+  // details): ενεργά κουμπιά κλήσης/WhatsApp/email/πλοήγησης, με βελάκια
+  // πλοήγησης «Κράτηση X/N» στην κορυφή.
   void _showStopDetails(SavedJob saved, ShuttleStop stop) {
     final stops = saved.shuttleStops;
     int idx = stops.indexOf(stop);
@@ -638,71 +652,123 @@ class _SavedJobsTabState extends State<SavedJobsTab> {
       builder: (dctx) => StatefulBuilder(
         builder: (dctx, setD) {
           final st = stops[idx];
-          Widget row(IconData ic, String text) => Padding(
-                padding: const EdgeInsets.only(bottom: 6),
+          final phone = st.phone?.trim();
+          Widget iconBtn(IconData ic, Color c, VoidCallback onTap, {Widget? override}) =>
+              InkWell(
+                onTap: onTap,
+                borderRadius: BorderRadius.circular(24),
+                child: Container(
+                  width: 42, height: 42,
+                  decoration: BoxDecoration(
+                    color: c.withValues(alpha: 0.12),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Center(child: override ?? Icon(ic, size: 20, color: c)),
+                ),
+              );
+          Widget infoRow(IconData ic, String text) => Padding(
+                padding: const EdgeInsets.only(bottom: 8),
                 child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Icon(ic, size: 16, color: Colors.grey),
-                  const SizedBox(width: 8),
-                  Expanded(child: Text(text)),
+                  Icon(ic, size: 17, color: Colors.grey.shade500),
+                  const SizedBox(width: 10),
+                  Expanded(child: Text(text, style: const TextStyle(fontSize: 13.5))),
                 ]),
               );
-          return AlertDialog(
-            titlePadding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
-            title: Row(children: [
-              IconButton(
-                visualDensity: VisualDensity.compact,
-                tooltip: 'Προηγούμενη κράτηση',
-                icon: const Icon(Icons.chevron_left_rounded),
-                onPressed: stops.length > 1
-                    ? () => setD(() => idx = (idx - 1 + stops.length) % stops.length)
-                    : null,
-              ),
-              Expanded(
-                child: Column(children: [
-                  Text('Κράτηση ${idx + 1}/${stops.length}',
-                      style: TextStyle(
-                          fontSize: 12, fontWeight: FontWeight.bold,
-                          color: Colors.amber.shade800)),
-                  Text(st.name.isNotEmpty ? st.name : '(χωρίς όνομα)',
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+          return Dialog(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(18, 16, 18, 14),
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                // Κεφαλίδα με βελάκια Χ/Ν πλοήγησης
+                Row(children: [
+                  IconButton(
+                    tooltip: 'Προηγούμενη κράτηση',
+                    icon: const Icon(Icons.chevron_left_rounded),
+                    onPressed: stops.length > 1
+                        ? () => setD(() => idx = (idx - 1 + stops.length) % stops.length)
+                        : null,
+                  ),
+                  Expanded(
+                    child: Column(children: [
+                      Text('Κράτηση ${idx + 1}/${stops.length}',
+                          style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold,
+                              color: Colors.amber.shade800, letterSpacing: 0.5)),
+                      const SizedBox(height: 2),
+                      Text(st.name.isNotEmpty ? st.name : '(χωρίς όνομα)',
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                    ]),
+                  ),
+                  IconButton(
+                    tooltip: 'Επόμενη κράτηση',
+                    icon: const Icon(Icons.chevron_right_rounded),
+                    onPressed: stops.length > 1
+                        ? () => setD(() => idx = (idx + 1) % stops.length)
+                        : null,
+                  ),
                 ]),
-              ),
-              IconButton(
-                visualDensity: VisualDensity.compact,
-                tooltip: 'Επόμενη κράτηση',
-                icon: const Icon(Icons.chevron_right_rounded),
-                onPressed: stops.length > 1
-                    ? () => setD(() => idx = (idx + 1) % stops.length)
-                    : null,
-              ),
-            ]),
-            content: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  if (st.phone != null && st.phone!.isNotEmpty)
-                    row(Icons.phone_rounded, st.phone!),
+                const Divider(height: 18),
+                // Ενεργές ενέργειες επικοινωνίας + πλοήγησης
+                Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
+                  if (phone != null && phone.isNotEmpty) ...[
+                    iconBtn(Icons.phone_rounded, Colors.blue,
+                        () => _launchUri(Uri(scheme: 'tel', path: phone))),
+                    iconBtn(Icons.circle, const Color(0xFF25D366), () {
+                      final wa = phone.startsWith('+') ? phone.substring(1) : phone;
+                      _launchUri(Uri.parse('https://wa.me/$wa'), external: true);
+                    }, override: const FaIcon(FontAwesomeIcons.whatsapp,
+                        size: 20, color: Color(0xFF25D366))),
+                  ],
                   if (st.email != null && st.email!.isNotEmpty)
-                    row(Icons.email_rounded, st.email!),
-                  if (st.flightOrShip != null && st.flightOrShip!.isNotEmpty)
-                    row(Icons.flight_rounded, st.flightOrShip!),
-                  row(Icons.place_rounded,
-                      (st.isPickupHere ? 'Παραλαβή: ' : 'Άφηση: ') + st.address),
-                  row(Icons.groups_rounded,
-                      '${st.persons} άτομα'
-                      '${st.luggage > 0 ? ' · ${st.luggage} βαλίτσες' : ''}'
-                      '${st.childSeatCount > 0 ? ' · ${st.childSeatCount} παιδικό κάθισμα${st.childSeatCount > 1 ? "ά" : ""}' : ''}'),
-                  row(Icons.euro_rounded, '${st.price.toStringAsFixed(2)}€ (αυτή η κράτηση)'),
-                  if (st.note != null && st.note!.isNotEmpty)
-                    row(Icons.comment_rounded, st.note!),
-                ],
-              ),
+                    iconBtn(Icons.email_rounded, Colors.orange,
+                        () => _launchUri(Uri(scheme: 'mailto', path: st.email!))),
+                  iconBtn(Icons.navigation_rounded, const Color(0xFF185FA5), () {
+                    final dest = (st.lat != null && st.lng != null)
+                        ? '${st.lat},${st.lng}'
+                        : Uri.encodeComponent(st.address);
+                    _launchUri(
+                        Uri.parse('https://www.google.com/maps/dir/?api=1&destination=$dest'),
+                        external: true);
+                  }),
+                ]),
+                const Divider(height: 22),
+                // Λεπτομέρειες
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    if (phone != null && phone.isNotEmpty) infoRow(Icons.phone_rounded, phone),
+                    if (st.email != null && st.email!.isNotEmpty)
+                      infoRow(Icons.email_rounded, st.email!),
+                    if (st.flightOrShip != null && st.flightOrShip!.isNotEmpty)
+                      infoRow(Icons.flight_rounded, st.flightOrShip!),
+                    infoRow(Icons.place_rounded,
+                        (st.isPickupHere ? 'Παραλαβή: ' : 'Άφηση: ') + st.address),
+                    infoRow(Icons.groups_rounded,
+                        '${st.persons} άτομα'
+                        '${st.luggage > 0 ? ' · ${st.luggage} βαλίτσες' : ''}'
+                        '${st.childSeatCount > 0 ? ' · ${st.childSeatCount} παιδικό κάθισμα${st.childSeatCount > 1 ? "ά" : ""}' : ''}'),
+                    if (st.note != null && st.note!.isNotEmpty)
+                      infoRow(Icons.comment_rounded, st.note!),
+                  ]),
+                ),
+                const SizedBox(height: 6),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(vertical: 10),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF0F6E56).withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Text('${st.price.toStringAsFixed(2)} € — αυτή η κράτηση',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(fontWeight: FontWeight.bold,
+                          color: Color(0xFF0F6E56), fontSize: 14.5)),
+                ),
+                const SizedBox(height: 10),
+                TextButton(onPressed: () => Navigator.of(dctx).pop(),
+                    child: const Text('Κλείσιμο')),
+              ]),
             ),
-            actions: [
-              TextButton(onPressed: () => Navigator.of(dctx).pop(), child: const Text('Κλείσιμο')),
-            ],
           );
         },
       ),

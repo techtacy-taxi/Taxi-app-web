@@ -421,10 +421,10 @@ class CalendarEventParser {
       return (null, false);
     }
 
-    if (digits.startsWith('69') && digits.length == 10) return (digits, false);
+    if (digits.startsWith('69') && digits.length == 10) return ('+30$digits', false);
 
     // Σταθερό: αρχίζει με 2, σύνολο 10 ψηφία.
-    if (digits.startsWith('2') && digits.length == 10) return (digits, true);
+    if (digits.startsWith('2') && digits.length == 10) return ('+30$digits', true);
 
     return (null, false);
   }
