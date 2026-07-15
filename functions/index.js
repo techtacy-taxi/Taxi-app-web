@@ -3292,6 +3292,89 @@ exports.submitPublicBooking = onRequest(
         console.error("booking FCM failed:", e);
       }
 
+      // ── 2β) Email επιβεβαίωσης στον ΠΕΛΑΤΗ — ΚΑΙ χωρίς online πληρωμή
+      // (πληρώνει απευθείας τον οδηγό). Ίδιο στυλ/branding (λογότυπο, στοιχεία
+      // επιχείρησης, WhatsApp) με το email μετά από πληρωμή Viva/Stripe.
+      if (email) {
+        try {
+          const t = await getFirestore().collection("tenants").doc(tenantId).get()
+            .then((d) => d.data() || {});
+          const noKeyAtAll = !t.hasOwnResendKey && t.emailsEnabled === false;
+          if (!noKeyAtAll) {
+            const businessName = t.businessName || (tenantId === "default" ? "TaxiAthensTransfers.com" : "Taxi Transfers");
+            const whatsapp     = (t.whatsappNumber || (tenantId === "default" ? "306936123322" : "")).replace(/[^0-9]/g, "");
+            const logoUrl      = t.logoUrl || "";
+            const footerPhone  = t.contactPhone || (tenantId === "default" ? "+30 693 612 3322" : "");
+            const footerEmail  = t.contactEmail || (tenantId === "default" ? "info@taxiathenstransfers.com" : "");
+            const fromEmail    = tenantId === "default" ? "booking@taxiathenstransfers.com" : "info@taxiathenstransfers.com";
+            let apiKeyOverride = null;
+            if (t.hasOwnResendKey && t.emailsEnabled !== true) {
+              try { apiKeyOverride = await readSecret(tenantSecretId(tenantId, "resend-api-key")); } catch (_) {}
+            }
+            const isEl = (lang || "el") === "el";
+            const waLine = whatsapp
+              ? (isEl
+                  ? "Από εδώ και πέρα η επικοινωνία θα γίνεται μέσω WhatsApp: <a href=\"https://wa.me/" + whatsapp + "\">+" + whatsapp + "</a>"
+                  : "From now on, communication will happen via WhatsApp: <a href=\"https://wa.me/" + whatsapp + "\">+" + whatsapp + "</a>")
+              : "";
+            const subject = isEl
+              ? "✅ Κράτηση #" + bookingNumber + " καταχωρήθηκε — " + from + " → " + to
+              : "✅ Booking #" + bookingNumber + " received — " + from + " → " + to;
+            const logoHtml = logoUrl
+              ? "<img src=\"" + logoUrl + "\" alt=\"" + businessName + "\" style=\"max-height:56px;margin-bottom:16px;\"><br>"
+              : "";
+            const footerContactLine = [footerPhone, footerEmail].filter(Boolean).join(" · ");
+            const footerHtml =
+              "<table style=\"margin-top:28px;border-top:1px solid #eee;padding-top:16px;\"><tr>" +
+              (logoUrl ? "<td style=\"padding-right:14px;vertical-align:middle;\"><img src=\"" + logoUrl + "\" alt=\"\" style=\"max-height:44px;\"></td>" : "") +
+              "<td style=\"vertical-align:middle;color:#666;font-size:13px;\">" +
+              "<b style=\"color:#333;\">" + businessName + "</b>" +
+              (footerContactLine ? "<br>" + footerContactLine : "") +
+              "</td></tr></table>";
+            const vehicleLabelEl = vehicleType === "van" ? "Βαν" : vehicleType === "shuttle" ? "Shuttle" : vehicleType === "bus" ? "Λεωφορείο" : "Ταξί";
+            const vehicleLabelEn = vehicleType === "van" ? "Van" : vehicleType === "shuttle" ? "Shuttle" : vehicleType === "bus" ? "Bus" : "Taxi";
+            const bodyEl =
+              "<h2 style=\"color:#1a1a2e;\">Η κράτησή σας καταχωρήθηκε!</h2>" +
+              "<p>Γεια σας " + name + ",</p>" +
+              "<p>Δεν χρειάζεται καμία online πληρωμή — πληρώνετε απευθείας τον οδηγό.</p>" +
+              "<table style=\"border-collapse:collapse;margin:12px 0;\">" +
+              "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Booking ID:</td><td><b>#" + bookingNumber + "</b></td></tr>" +
+              "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Διαδρομή:</td><td><b>" + from + " → " + to + "</b></td></tr>" +
+              "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Ημερομηνία/ώρα:</td><td>" + whenStr + "</td></tr>" +
+              "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Άτομα/Βαλίτσες:</td><td>" + persons + " / " + luggage + (childSeatCount ? " · Παιδικά καθ.: " + childSeatCount : "") + "</td></tr>" +
+              "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Όχημα:</td><td>" + vehicleLabelEl + "</td></tr>" +
+              (flight ? "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Πτήση/Πλοίο:</td><td>" + flight + "</td></tr>" : "") +
+              "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Θα πληρώσετε στον οδηγό:</td><td><b>" + estimate.price.toFixed(2) + "€</b></td></tr>" +
+              (note ? "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Σχόλια:</td><td>" + note + "</td></tr>" : "") +
+              "</table>" +
+              "<p>" + waLine + "</p>";
+            const bodyEn =
+              "<h2 style=\"color:#1a1a2e;\">Your booking has been received!</h2>" +
+              "<p>Hi " + name + ",</p>" +
+              "<p>No online payment is required — you pay the driver directly.</p>" +
+              "<table style=\"border-collapse:collapse;margin:12px 0;\">" +
+              "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Booking ID:</td><td><b>#" + bookingNumber + "</b></td></tr>" +
+              "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Route:</td><td><b>" + from + " → " + to + "</b></td></tr>" +
+              "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Date/time:</td><td>" + whenStr + "</td></tr>" +
+              "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Persons/Luggage:</td><td>" + persons + " / " + luggage + (childSeatCount ? " · Child seats: " + childSeatCount : "") + "</td></tr>" +
+              "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Vehicle:</td><td>" + vehicleLabelEn + "</td></tr>" +
+              (flight ? "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Flight/Ship:</td><td>" + flight + "</td></tr>" : "") +
+              "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">To pay the driver:</td><td><b>€" + estimate.price.toFixed(2) + "</b></td></tr>" +
+              (note ? "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Comments:</td><td>" + note + "</td></tr>" : "") +
+              "</table>" +
+              "<p>" + waLine + "</p>";
+            const html =
+              "<div style=\"font-family:sans-serif;font-size:15px;color:#222;max-width:520px;margin:0 auto;\">" +
+              logoHtml + (isEl ? bodyEl : bodyEn) + footerHtml + "</div>";
+            await sendCustomerEmailViaResend({
+              to: email, subject, html, fromName: businessName, fromEmail, apiKeyOverride,
+            });
+          }
+        } catch (e) {
+          console.error("submitPublicBooking: customer email failed:", e);
+        }
+      }
+
       return res.status(200).json({ ok: true, id: savedRef.id, bookingNumber });
     } catch (e) {
       console.error("submitPublicBooking error:", e);
@@ -4139,6 +4222,9 @@ async function finalizeSuccessfulPayment(db, pendingRef, pd, providerMeta) {
           "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Διαδρομή:</td><td><b>" + pd.from + " → " + pd.to + "</b></td></tr>" +
           "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Ημερομηνία/ώρα:</td><td>" + whenStr + "</td></tr>" +
           "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Πληρώθηκε:</td><td>" + pd.depositAmount + "€" + (pd.fullyPaid ? " (πλήρης πληρωμή)" : " (προκαταβολή)") + "</td></tr>" +
+          (pd.price > 0.005
+            ? "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Θα πληρώσετε στον οδηγό:</td><td><b>" + pd.price.toFixed(2) + "€</b></td></tr>"
+            : "") +
           markLineEl +
           iviewLineEl +
           "</table>" +
@@ -4152,6 +4238,9 @@ async function finalizeSuccessfulPayment(db, pendingRef, pd, providerMeta) {
           "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Route:</td><td><b>" + pd.from + " → " + pd.to + "</b></td></tr>" +
           "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Date/time:</td><td>" + whenStr + "</td></tr>" +
           "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Paid:</td><td>€" + pd.depositAmount + (pd.fullyPaid ? " (full payment)" : " (deposit)") + "</td></tr>" +
+          (pd.price > 0.005
+            ? "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">To pay the driver:</td><td><b>€" + pd.price.toFixed(2) + "</b></td></tr>"
+            : "") +
           markLineEn +
           iviewLineEn +
           "</table>" +
