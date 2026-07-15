@@ -207,7 +207,7 @@ class _WebAuthGatewayState extends State<WebAuthGateway> {
       referredBy: '',
       plateNumber: '',
       vehicleType: VehicleType.taxi,
-      hasBus: false,
+      initialHasBus: false,
       onSaved: ({
         required name, required lastName, required phone,
         required vehicleModel, required referredBy, required plateNumber,

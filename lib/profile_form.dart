@@ -50,6 +50,7 @@ Future<void> showProfileForm({
   required String referredBy,
   required String plateNumber,
   required VehicleType vehicleType,
+  required bool initialHasBus, // εδώ μόνο για συμβατότητα κλήσης — η φόρμα φορτώνει πάντα φρέσκο hasBus από Firestore
   required OnProfileSaved onSaved,
 }) async {
   // Φορτώνουμε πάντα φρέσκα δεδομένα από Firestore πριν ανοίξει η φόρμα
