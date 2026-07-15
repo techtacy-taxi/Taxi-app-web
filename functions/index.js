@@ -3222,6 +3222,8 @@ exports.submitPublicBooking = onRequest(
         vehicleType:    vehicleType,     // 'taxi' | 'van'
         note:           fullNote,
         price:          estimate.price,   // υπολογισμένη τιμή (ζώνη ή δυναμικός τύπος)
+        // Προμήθεια app ανά κράτηση, δηλωμένη από τον master.
+        appCommission:  Number(cfg.appCommissionPerBooking) || 0,
         scheduledAt:    Timestamp.fromDate(startDate),  // ραντεβού (Job.fromDoc)
         lang:           lang,
         ownerUid:       masterUid,
@@ -3917,6 +3919,10 @@ async function finalizeSuccessfulPayment(db, pendingRef, pd, providerMeta) {
 
   const { Timestamp } = require("firebase-admin/firestore");
   const bookingNumber = await nextBookingNumber(pd.tenantId || "default");
+  // Προμήθεια app ανά κράτηση, όπως τη δηλώνει ο master (Ρυθμίσεις Online
+  // Φόρμας → Δυναμικοί Τύποι) — ισχύει και σε αυτές τις online κρατήσεις.
+  const { cfg: pricingCfg } = await getPricingData(pd.tenantId || "default");
+  const appCommissionPerBooking = Number(pricingCfg.appCommissionPerBooking) || 0;
   const savedRef = await db.collection("saved_jobs").add({
     origin:         "public_form",
     tenantId:       pd.tenantId || "default",
@@ -3943,6 +3949,7 @@ async function finalizeSuccessfulPayment(db, pendingRef, pd, providerMeta) {
     vehicleType:    pd.vehicleType,
     note:           fullNote,
     price:          pd.price,
+    appCommission:  appCommissionPerBooking,
     scheduledAt:    Timestamp.fromDate(startDate),
     lang:           pd.lang,
     ownerUid:       masterUid,

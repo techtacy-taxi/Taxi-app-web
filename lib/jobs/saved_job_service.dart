@@ -316,6 +316,7 @@ class SavedJobService {
     required String ownerUid,
     required String ownerName,
     String? updateId, // αν επεξεργαζόμαστε υπάρχον container
+    int shuttleTotalMinutes = 0, // 60' βάση + Χ'/επιπλέον κράτηση (0 = μη ενωμένο)
   }) async {
     final totalPrice   = stops.fold<double>(0, (t, s) => t + s.price);
     final totalPersons = stops.fold<int>(0, (t, s) => t + s.persons);
@@ -338,6 +339,12 @@ class SavedJobService {
     if (sharedPointLng != null) map['shuttleSharedPointLng'] = sharedPointLng;
     map['shuttleSharedIsPickup'] = sharedIsPickup;
     map['shuttleStops'] = stops.map((s) => s.toMap()).toList();
+    if (shuttleTotalMinutes > 0) {
+      map['shuttleTotalMinutes'] = shuttleTotalMinutes;
+      map['note'] = (map['note'] as String? ?? '') +
+          ' (εκτιμώμενος χρόνος Shuttle: $shuttleTotalMinutes\' για '
+          '${stops.length} κρατήσεις)';
+    }
 
     final col = FirebaseFirestore.instance.collection('saved_jobs');
     if (updateId != null && updateId.isNotEmpty) {

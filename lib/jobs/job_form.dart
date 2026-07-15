@@ -136,6 +136,8 @@ class _JobFormPageState extends State<JobFormPage> {
   bool    _withReturn = false;
   bool    _withStops  = false;
   String  _vehicleType = 'any';
+  double _appCommissionPerBookingDefault = 0;
+  int    _shuttleExtraMinutesPerBooking  = 10;
 
   // ═══ Ομαδική μεταφορά (Shuttle / Λεωφορείο) — πολλαπλές κρατήσεις ═══
   // Η ΚΥΡΙΑ κράτηση είναι τα κανονικά πεδία της φόρμας (πελάτης/τηλ/από...).
@@ -152,6 +154,23 @@ class _JobFormPageState extends State<JobFormPage> {
   // Αν επεξεργαζόμαστε ΕΝΩΜΕΝΗ (container) αποθηκευμένη, φόρτωσε τις
   // στάσεις της: η 1η γίνεται η κύρια κράτηση (τα πεδία της φόρμας έχουν
   // ήδη προσυμπληρωθεί από το job), οι υπόλοιπες γίνονται επιπλέον.
+  // Προμήθεια app ανά κράτηση + έξτρα λεπτά Shuttle — δηλωμένα από τον
+  // master στις Ρυθμίσεις Online Φόρμας (tab «Δυναμικοί Τύποι»).
+  Future<void> _loadAppCommissionDefaults() async {
+    try {
+      final doc = await FirebaseFirestore.instance
+          .collection('app_settings').doc('pricing').get();
+      final d = doc.data();
+      if (d == null || !mounted) return;
+      setState(() {
+        _appCommissionPerBookingDefault =
+            (d['appCommissionPerBooking'] as num?)?.toDouble() ?? 0;
+        _shuttleExtraMinutesPerBooking =
+            (d['shuttleExtraMinutesPerBooking'] as num?)?.toInt() ?? 10;
+      });
+    } catch (_) {}
+  }
+
   Future<void> _maybeLoadContainer() async {
     final id = widget.editSavedJobId;
     if (id == null || id.isEmpty) return;
@@ -272,9 +291,18 @@ class _JobFormPageState extends State<JobFormPage> {
     if (_extraBookings.isEmpty && !_loadedContainer) return false;
     final shared = _groupSharedIsDestination ? _toPick : _fromPick;
     final stops = _buildGroupStops(job);
+    // Χρόνος Shuttle: ΒΑΣΗ 60' (1η κράτηση) + Χ' ΓΙΑ ΚΑΘΕ επιπλέον κράτηση —
+    // π.χ. με Χ=10: 1 κράτηση=60', 2=70', 3=80', 4=90' κ.ο.κ. Το Χ δηλώνεται
+    // από τον master (Ρυθμίσεις Online Φόρμας → Δυναμικοί Τύποι).
+    const shuttleBaseMinutes = 60;
+    final totalShuttleMinutes = stops.length <= 1
+        ? 0 // ένα shuttle με μία μόνο κράτηση δεν είναι «ενωμένο» — καμία προσαύξηση
+        : shuttleBaseMinutes +
+            (stops.length - 1) * _shuttleExtraMinutesPerBooking;
     await SavedJobService.saveGroupContainer(
       job: job,
       stops: stops,
+      shuttleTotalMinutes: totalShuttleMinutes,
       sharedPointName: (shared?.description ?? '').trim(),
       sharedPointLat: shared?.lat,
       sharedPointLng: shared?.lng,
@@ -370,8 +398,13 @@ class _JobFormPageState extends State<JobFormPage> {
   // Προμήθεια App
   double get _appCommission {
     if (_appCommissionEdited) return double.tryParse(_appCommissionCtrl.text) ?? 0;
-    if (_selectedSource == null) return 0;
-    return _selectedSource!.calculateApp(_commissionablePrice);
+    if (_selectedSource != null) {
+      final fromSource = _selectedSource!.calculateApp(_commissionablePrice);
+      if (fromSource > 0) return fromSource;
+    }
+    // Καμία πηγή/χειροκίνητη τιμή → η γενική προμήθεια app ανά κράτηση,
+    // όπως τη δηλώνει ο master στις ρυθμίσεις.
+    return _appCommissionPerBookingDefault;
   }
 
   double get _driverEarning {
@@ -384,6 +417,7 @@ class _JobFormPageState extends State<JobFormPage> {
   @override
   void initState() {
     super.initState();
+    _loadAppCommissionDefaults();
     _loadGroups();
     _loadClients();
     if (widget.editJob != null) {

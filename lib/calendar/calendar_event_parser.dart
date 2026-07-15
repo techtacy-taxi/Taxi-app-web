@@ -435,6 +435,19 @@ class CalendarEventParser {
   /// Ψάχνει τηλέφωνο μέσα σε μια γραμμή που μπορεί να έχει κι άλλα.
   /// Επιστρέφει (τηλέφωνο, isLandline) ή (null, false).
   static (String?, bool) _findPhoneTyped(String line) {
+    // ── Link WhatsApp (wa.me/χρτ.gg κ.λπ.): ό,τι ακολουθεί το "wa.me/" ΕΙΝΑΙ
+    // το τηλέφωνο, μαζί με το "+" αν υπάρχει — π.χ. https://wa.me/+306936123322.
+    // Ελέγχεται ΠΡΩΤΗ, πριν οτιδήποτε άλλο, γιατί είναι το πιο αξιόπιστο σημάδι.
+    final waMatch =
+        RegExp(r'wa\.me/\+?(\d[\d\s\-]{6,})', caseSensitive: false)
+            .firstMatch(line);
+    if (waMatch != null) {
+      final digits = waMatch.group(1)!.replaceAll(RegExp(r'[\s\-]'), '');
+      final withPlus = digits.startsWith('+') ? digits : '+$digits';
+      final p = _parsePhoneTyped(withPlus);
+      if (p.$1 != null) return p;
+    }
+
     // Ολόκληρη γραμμή πρώτα.
     final whole = _parsePhoneTyped(line);
     if (whole.$1 != null) return whole;
