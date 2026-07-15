@@ -1385,6 +1385,7 @@ class _PricingConfigTabState extends State<_PricingConfigTab> {
   // ── Ποσοστό προκαταβολής στη δημόσια φόρμα (προεπιλογή 10%) — η
   // στρογγυλοποίηση στο επόμενο ευρώ παραμένει ίδια, ό,τι ποσοστό κι αν βάλεις.
   final _depositPercentCtrl = TextEditingController();
+  final _busMaxSeatsCtrl = TextEditingController(text: '20');
   // Έκπτωση «γνωριμίας» στη δυναμική τιμολόγηση (όχι ζώνες) — προεπιλογή 8%.
   // 0 = δείξε ΚΑΤΕΥΘΕΙΑΝ την τελική τιμή, χωρίς διαγραμμένη «αρχική»/badge έκπτωσης.
   final _dynamicDiscountCtrl = TextEditingController();
@@ -1418,6 +1419,7 @@ class _PricingConfigTabState extends State<_PricingConfigTab> {
       ctrl.dispose();
     }
     _depositPercentCtrl.dispose();
+    _busMaxSeatsCtrl.dispose();
     _dynamicDiscountCtrl.dispose();
     super.dispose();
   }
@@ -1470,6 +1472,8 @@ class _PricingConfigTabState extends State<_PricingConfigTab> {
               ? dynamicDiscount.toStringAsFixed(0)
               : dynamicDiscount.toString();
 
+          final busSeats = (data['busMaxSeats'] as num?)?.toInt() ?? 20;
+          _busMaxSeatsCtrl.text = '$busSeats';
           _fullPaymentEnabled = data['fullPaymentEnabled'] != false;
           _clientsOnlyBooking = data['clientsOnlyBooking'] == true;
           _clientsCatalogMode = data['clientsCatalogMode'] == true;
@@ -1644,6 +1648,18 @@ class _PricingConfigTabState extends State<_PricingConfigTab> {
                     style: TextStyle(fontSize: 11)),
                 value: _fullPaymentEnabled,
                 onChanged: (v) => setState(() => _fullPaymentEnabled = v),
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: _busMaxSeatsCtrl,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                    isDense: true,
+                    labelText: 'Μέγιστες θέσεις Λεωφορείου',
+                    suffixText: 'θέσεις',
+                    helperText: 'Πάνω από αυτόν τον αριθμό ατόμων ΔΕΝ εξυπηρετεί ούτε '
+                        'Λεωφορείο/Shuttle (προεπιλογή 20).',
+                    border: OutlineInputBorder()),
               ),
 
               const SizedBox(height: 8),
@@ -1924,6 +1940,7 @@ class _PricingConfigTabState extends State<_PricingConfigTab> {
       'dynamicDiscountPercent': (double.tryParse(_dynamicDiscountCtrl.text.replaceAll(',', '.')) ?? 8)
           .clamp(0, 90),
       'fullPaymentEnabled': _fullPaymentEnabled,
+      'busMaxSeats': int.tryParse(_busMaxSeatsCtrl.text.trim()) ?? 20,
       'clientsOnlyBooking': _clientsOnlyBooking,
       'clientsCatalogMode': _clientsCatalogMode,
       'shuttleTimeSlots': _shuttleSlots

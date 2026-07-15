@@ -119,6 +119,14 @@ function stageOf(job) {
 }
 
 // ─── Helper: tokens οδηγών για ΣΥΓΚΕΚΡΙΜΕΝΟ στάδιο μιας δουλειάς ─────────────
+// Χωρητικότητα οδηγού ανά δηλωμένο όχημα — Ταξί 4, Van 8, Λεωφορείο έως
+// busMaxSeats (ρύθμιση tenant, προεπιλογή 20). Ο οδηγός δηλώνει hasBus=true
+// στο προφίλ του (ΕΠΙΠΛΕΟΝ στο κανονικό Ταξί/Van, όχι αντικατάσταση).
+function driverCapacity(d, busMaxSeats) {
+  if (d.hasBus === true) return busMaxSeats;
+  return d.vehicleType === "van" ? 8 : 4;
+}
+
 async function getTokensForStage(job, stage) {
   const db = getFirestore();
   let q = db.collection("presence").where("isApproved", "==", true);
@@ -138,12 +146,30 @@ async function getTokensForStage(job, stage) {
   }
 
   const snap = await q.get();
+  // Ζώνες & Τιμές: μέγιστες θέσεις λεωφορείου του tenant (προεπιλογή 20).
+  let busMaxSeats = 20;
+  if (job.vehicleType === "shuttle" || job.vehicleType === "bus") {
+    try {
+      const { cfg } = await getPricingData(job.tenantId || "default");
+      busMaxSeats = Number(cfg.busMaxSeats) || 20;
+    } catch (_) {}
+  }
+  const persons = Number(job.persons) || 1;
   const tokens = [];
   for (const doc of snap.docs) {
     const d = doc.data();
-    // Φίλτρο οχήματος — ο master το παρακάμπτει (λαμβάνει κάθε δουλειά ανεξαρτήτως οχήματος)
-    if (d.master !== true && job.vehicleType && job.vehicleType !== "any") {
-      if (d.vehicleType !== job.vehicleType) continue;
+    if (d.master !== true) {
+      if (job.vehicleType === "shuttle") {
+        // Υπηρεσία, όχι συγκεκριμένο αμάξι — προτείνεται σε ΟΠΟΙΟΝΔΗΠΟΤΕ οδηγό
+        // μπορεί να εξυπηρετήσει τόσα άτομα (Ταξί/Van/Λεωφορείο).
+        if (driverCapacity(d, busMaxSeats) < persons) continue;
+      } else if (job.vehicleType === "bus") {
+        // Ρητά Λεωφορείο: ΜΟΝΟ όσοι έχουν δηλώσει hasBus, με αρκετές θέσεις.
+        if (d.hasBus !== true || busMaxSeats < persons) continue;
+      } else if (job.vehicleType && job.vehicleType !== "any") {
+        // Ταξί/Van: ίδια λογική με πριν (ακριβές ταίριασμα).
+        if (d.vehicleType !== job.vehicleType) continue;
+      }
     }
     // Φίλτρο βάσης
     if (baseSet && !baseSet.has(doc.id)) continue;

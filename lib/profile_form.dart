@@ -33,6 +33,7 @@ typedef OnProfileSaved = void Function({
   required String referredBy,
   required String plateNumber,
   required VehicleType vehicleType,
+  required bool hasBus,
   required bool homeOwner,
   required String? ownerOfClientId,
   required String? ownerOfClientName,
@@ -59,6 +60,7 @@ Future<void> showProfileForm({
   String fsRef      = referredBy;
   String fsPlate    = plateNumber;
   VehicleType fsVehicle = vehicleType;
+  bool   fsHasBus    = false;
   bool   fsHomeOwner = false;
   String? fsOwnerClientId;
   String? fsOwnerClientName;
@@ -80,6 +82,7 @@ Future<void> showProfileForm({
         if ((data['vehicleType']  as String?) == VehicleType.van.name) {
           fsVehicle = VehicleType.van;
         }
+        fsHasBus          = data['hasBus'] == true;
         fsHomeOwner       = data['homeOwner'] == true;
         fsOwnerClientId   = data['ownerOfClientId'] as String?;
         fsOwnerClientName = data['ownerOfClientName'] as String?;
@@ -103,6 +106,7 @@ Future<void> showProfileForm({
   );
 
   VehicleType selectedVehicle = fsVehicle;
+  bool hasBus = fsHasBus;
   String? errorMessage;
   bool isHomeOwner = fsHomeOwner;
   String? selectedClientId = fsOwnerClientId;
@@ -392,6 +396,23 @@ Future<void> showProfileForm({
                         ],
                       ),
                     ),
+                    const SizedBox(height: 6),
+                    // Επιπλέον ικανότητα (ΟΧΙ αντικατάσταση Ταξί/Van): ο
+                    // οδηγός δηλώνει ότι διαθέτει ΚΑΙ λεωφορείο, ώστε να
+                    // λαμβάνει δουλειές Shuttle/Λεωφορείο πολλών ατόμων.
+                    CheckboxListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      controlAffinity: ListTileControlAffinity.leading,
+                      value: hasBus,
+                      onChanged: (v) => setDialogState(() => hasBus = v ?? false),
+                      secondary: const Icon(Icons.directions_bus_rounded),
+                      title: const Text('Έχω επίσης Λεωφορείο',
+                          style: TextStyle(fontSize: 14)),
+                      subtitle: const Text(
+                          'Θα λαμβάνεις δουλειές Shuttle/Λεωφορείο πολλών ατόμων',
+                          style: TextStyle(fontSize: 11.5)),
+                    ),
                   ] else ...[
                     const SizedBox(height: 10),
                     Container(
@@ -531,6 +552,7 @@ Future<void> showProfileForm({
                               ? ''
                               : 'ΤΑ$plateLetter-${plateNumberController.text.trim()}',
                           vehicleType: selectedVehicle,
+                          hasBus: hasBus,
                           homeOwner: isHomeOwner,
                           ownerOfClientId: isHomeOwner ? selectedClientId : null,
                           ownerOfClientName: isHomeOwner ? selectedClientName : null,

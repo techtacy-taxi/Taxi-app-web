@@ -7,6 +7,8 @@ Future<VehicleType?> showVehicleTypeMenu({
   required BuildContext context,
   required BuildContext itemCtx,
   required VehicleType  currentType,
+  bool hasBus = false,          // δηλωμένη ικανότητα Λεωφορείου
+  VoidCallback? onToggleBus,     // toggle — ΔΕΝ αλλάζει το κύριο Ταξί/Van
 }) async {
   final RenderBox box    = itemCtx.findRenderObject() as RenderBox;
   final Offset    offset = box.localToGlobal(Offset.zero);
@@ -62,6 +64,13 @@ Future<VehicleType?> showVehicleTypeMenu({
               _subMenuItem(ctx: ctx, icon: Icons.airport_shuttle_rounded, label: 'Van',
                   selected: currentType == VehicleType.van, activeColor: Colors.black,
                   onTap: () => Navigator.pop(ctx, VehicleType.van)),
+              if (onToggleBus != null) ...[
+                const Divider(height: 1, color: Colors.black12),
+                _subMenuItem(ctx: ctx, icon: Icons.directions_bus_rounded,
+                    label: hasBus ? 'Λεωφορείο ✓ (ενεργό)' : 'Λεωφορείο (ανενεργό)',
+                    selected: hasBus, activeColor: Colors.brown,
+                    onTap: () { onToggleBus(); Navigator.pop(ctx); }),
+              ],
               const SizedBox(height: 6),
             ]),
           ),

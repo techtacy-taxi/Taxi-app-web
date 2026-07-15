@@ -207,11 +207,12 @@ class _WebAuthGatewayState extends State<WebAuthGateway> {
       referredBy: '',
       plateNumber: '',
       vehicleType: VehicleType.taxi,
+      hasBus: false,
       onSaved: ({
         required name, required lastName, required phone,
         required vehicleModel, required referredBy, required plateNumber,
-        required vehicleType, required homeOwner, required ownerOfClientId,
-        required ownerOfClientName,
+        required vehicleType, required hasBus, required homeOwner,
+        required ownerOfClientId, required ownerOfClientName,
       }) async {
         await FirebaseFirestore.instance.collection('presence').doc(user.uid).set({
           'displayName': name,
@@ -221,6 +222,7 @@ class _WebAuthGatewayState extends State<WebAuthGateway> {
           'referredBy': referredBy,
           'plateNumber': plateNumber,
           'vehicleType': vehicleType.name,
+          'hasBus': hasBus,
           'homeOwner': homeOwner,
           if (homeOwner) 'ownerOfClientId': ownerOfClientId,
           if (homeOwner) 'ownerOfClientName': ownerOfClientName,

@@ -57,6 +57,7 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
   // ─── state ───────────────────────────────────────────────────────────────────
 
   VehicleType _vehicleType  = VehicleType.taxi;
+  bool _hasBus = false; // δηλωμένη ΕΠΙΠΛΕΟΝ ικανότητα Λεωφορείου (Shuttle/Bus jobs)
   String _displayName       = 'Driver';
   String _lastName          = '';
   String _phone             = '';
@@ -155,6 +156,7 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
             if ((data['vehicleType'] as String?) == VehicleType.van.name) {
               _vehicleType = VehicleType.van;
             }
+            _hasBus = data['hasBus'] == true;
           }
         }
       } catch (e) {
@@ -654,13 +656,14 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
       context: context, uid: _uid, appVersion: _appVersion,
       displayName: _displayName, lastName: _lastName, phone: _phone,
       vehicleModel: _vehicleModel, referredBy: _referredBy,
-      plateNumber: _plateNumber, vehicleType: _vehicleType,
+      plateNumber: _plateNumber, vehicleType: _vehicleType, hasBus: _hasBus,
       onSaved: ({required name, required lastName, required phone,
           required vehicleModel, required referredBy, required plateNumber, required vehicleType,
+          required hasBus,
           required homeOwner, required ownerOfClientId, required ownerOfClientName}) {
         _saveProfile(name: name, lastName: lastName, phone: phone,
             vehicleModel: vehicleModel, referredBy: referredBy,
-            plateNumber: plateNumber, vehicleType: vehicleType,
+            plateNumber: plateNumber, vehicleType: vehicleType, hasBus: hasBus,
             homeOwner: homeOwner, ownerOfClientId: ownerOfClientId,
             ownerOfClientName: ownerOfClientName);
       },
@@ -671,6 +674,7 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
     required String name, required String lastName, required String phone,
     required String vehicleModel, required String referredBy,
     required String plateNumber, required VehicleType vehicleType,
+    required bool hasBus,
     required bool homeOwner, required String? ownerOfClientId,
     required String? ownerOfClientName,
   }) async {
@@ -684,6 +688,7 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
     _displayName = name; _lastName = lastName; _phone = phone;
     _vehicleModel = vehicleModel; _referredBy = referredBy;
     _plateNumber = plateNumber; _vehicleType = vehicleType;
+    _hasBus = hasBus;
 
     await _saveSettings();
 
@@ -703,6 +708,7 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
       await FirebaseFirestore.instance.collection('presence').doc(_uid).set({
         'displayName': _displayName, 'lastName': _lastName, 'phone': _phone,
         'vehicleModel': _vehicleModel, 'vehicleType': _vehicleType.name,
+        'hasBus': _hasBus,
         'referredBy': _referredBy, 'plateNumber': _plateNumber,
         'appVersion': _appVersion, 'isApproved': currentApproval,
         'admin': _isAdmin, 'email': FirebaseAuth.instance.currentUser?.email,
@@ -1237,7 +1243,18 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
                           builder: (itemCtx) => GestureDetector(
                             onTap: () async {
                               final result = await showVehicleTypeMenu(
-                                context: context, itemCtx: itemCtx, currentType: _vehicleType);
+                                context: context, itemCtx: itemCtx, currentType: _vehicleType,
+                                hasBus: _hasBus,
+                                onToggleBus: () async {
+                                  _hasBus = !_hasBus;
+                                  if (_uid != null) {
+                                    await FirebaseFirestore.instance
+                                        .collection('presence').doc(_uid)
+                                        .set({'hasBus': _hasBus}, SetOptions(merge: true));
+                                  }
+                                  if (mounted) setState(() {});
+                                },
+                              );
                               if (result != null && result != _vehicleType) {
                                 _vehicleType = result;
                                 await _saveSettings();
