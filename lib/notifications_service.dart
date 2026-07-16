@@ -753,6 +753,19 @@ class NotificationsService {
       stopRingtoneLoop();
 
       final resp = launchDetails!.notificationResponse;
+      // ⚠️ Ο ΣΥΝΕΧΟΜΕΝΟΣ ήχος των ειδοποιήσεων φόρμας/κλήσης είναι το native
+      // INSISTENT flag της ίδιας της ειδοποίησης. Στο άνοιγμα μέσω
+      // full-screen intent (κλειστή οθόνη) το tap ΔΕΝ την ακυρώνει αυτόματα,
+      // οπότε ο ήχος/δόνηση συνέχιζαν για πάντα μέχρι να σκοτωθεί το app.
+      // Λύση: ακυρώνουμε ρητά την ειδοποίηση που μας άνοιξε (και, για τις
+      // κρατήσεις φόρμας, ΟΛΕΣ — το κάνει ούτως ή άλλως και το «ΟΚ»).
+      try {
+        if (resp?.id != null) await _localNotifs.cancel(resp!.id!);
+        final t = resp?.payload != null
+            ? (jsonDecode(resp!.payload!) as Map<String, dynamic>)['type']
+            : null;
+        if (t == 'public_booking') await _localNotifs.cancelAll();
+      } catch (_) {}
       if (resp != null && resp.payload != null) {
         try {
           final data  = jsonDecode(resp.payload!) as Map<String, dynamic>;
@@ -787,6 +800,20 @@ class NotificationsService {
   static void _onForegroundTap(NotificationResponse response) {
     // ignore: unawaited_futures
     stopRingtoneLoop();
+    // Ακύρωση της native ειδοποίησης (σταματά το INSISTENT ήχο/δόνηση) —
+    // βλ. σχόλιο στο cold-start handler παραπάνω.
+    try {
+      if (response.id != null) {
+        // ignore: unawaited_futures
+        _localNotifs.cancel(response.id!);
+      }
+      final p = response.payload;
+      if (p != null &&
+          (jsonDecode(p) as Map<String, dynamic>)['type'] == 'public_booking') {
+        // ignore: unawaited_futures
+        _localNotifs.cancelAll();
+      }
+    } catch (_) {}
 
     if (response.payload == null) return;
     try {

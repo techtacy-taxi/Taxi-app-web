@@ -8,7 +8,7 @@ const { SecretManagerServiceClient } = require("@google-cloud/secret-manager");
 initializeApp();
 
 // ─── Helper: στέλνει DATA-ONLY FCM σε λίστα tokens ──────────────────────────
-async function sendDataOnly(tokens, data) {
+async function sendDataOnly(tokens, data, opts = {}) {
   if (!tokens.length) return;
 
   const chunks = [];
@@ -24,7 +24,11 @@ async function sendDataOnly(tokens, data) {
       data,                                  // ΜΟΝΟ data field — όχι notification
       android: {
         priority: "high",                    // ξυπνάει συσκευή ακόμη και σε doze
-        ttl:      60 * 1000,                 // 60s (δουλειές είναι time-sensitive)
+        // Προεπιλογή 60s (οι δουλειές προς οδηγούς είναι time-sensitive), ΑΛΛΑ
+        // οι ειδοποιήσεις κράτησης στον master θέλουν ΜΕΓΑΛΟ TTL: σε βαθύ Doze
+        // η παράδοση μπορεί να αργήσει λεπτά — με 60s το μήνυμα ΠΕΤΙΟΤΑΝ και
+        // η ειδοποίηση δεν ερχόταν ΠΟΤΕ.
+        ttl:      opts.ttlMs || 60 * 1000,
       },
     });
 
@@ -3141,7 +3145,9 @@ function buildIcs({ from, to, startDate, durationMin, summary, description }) {
 
 exports.submitPublicBooking = onRequest(
   { region: "us-central1", cors: BOOKING_ALLOWED_ORIGINS, memory: "256MiB",
-    secrets: [GCAL_CLIENT_SECRET, ROUTES_API_KEY] },
+    // RESEND_API_KEY: απαραίτητο για το email επιβεβαίωσης χωρίς πληρωμή —
+    // χωρίς αυτό το binding, το .value() σκάει και το email δεν φεύγει ΠΟΤΕ.
+    secrets: [GCAL_CLIENT_SECRET, ROUTES_API_KEY, RESEND_API_KEY] },
   async (req, res) => {
     // CORS preflight το χειρίζεται το cors:[...] παραπάνω.
     if (req.method !== "POST") {
@@ -3287,7 +3293,7 @@ exports.submitPublicBooking = onRequest(
           when:       whenStr,
           title:      "Νέα κράτηση #" + bookingNumber + " από φόρμα",
           body:       from + " → " + to + " · " + name,
-        });
+        }, { ttlMs: 6 * 3600 * 1000 });
       } catch (e) {
         console.error("booking FCM failed:", e);
       }
@@ -4100,7 +4106,7 @@ async function finalizeSuccessfulPayment(db, pendingRef, pd, providerMeta) {
       when:       whenStr,
       title:      "Νέα κράτηση #" + bookingNumber + " (" + (pd.fullyPaid ? "πληρωμένη πλήρως" : "πληρωμένη προκαταβολή") + ")",
       body:       pd.from + " → " + pd.to + " · " + pd.clientName + " · " + pd.depositAmount + "€",
-    });
+    }, { ttlMs: 6 * 3600 * 1000 });
   } catch (e) {
     console.error("booking FCM failed:", e);
   }
