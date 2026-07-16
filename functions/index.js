@@ -2617,6 +2617,18 @@ function nearestShuttleSlots(requestedMin, slots, fromZoneId, toZoneId) {
 // Global προμήθεια app ανά κράτηση — ΙΔΙΟ doc (app_settings/config) με τη
 // σελίδα «Διαχειριστές» στο Flutter (JobService.getAppSettings). Αφορά τις
 // online κρατήσεις από τις δημόσιες φόρμες (χωρίς επιλεγμένη «πηγή»).
+// Spam filters (SpamAssassin SUBJ_ALL_CAPS) υποβαθμίζουν emails με θέμα σε
+// ΟΛΟΚΛΗΡΑ κεφαλαία. Οι διευθύνσεις "Από/Προς" έρχονται όπως τις γράφει ο
+// πελάτης — αν τύχει να είναι όλο κεφαλαία, το ΘΕΜΑ (όχι το σώμα) τις δείχνει
+// σε Title Case, ώστε να μη «μυρίζει» spam.
+function titleCaseIfAllCaps(str) {
+  const s2 = String(str || "");
+  if (s2 === s2.toUpperCase() && /[A-ZΑ-Ω]/.test(s2)) {
+    return s2.toLowerCase().replace(/(^|\s)(\S)/g, (m, sp, c) => sp + c.toUpperCase());
+  }
+  return s2;
+}
+
 async function getGlobalAppCommission() {
   try {
     const doc = await getFirestore().collection("app_settings").doc("config").get();
@@ -3323,12 +3335,13 @@ exports.submitPublicBooking = onRequest(
             const isEl = (lang || "el") === "el";
             const waLine = whatsapp
               ? (isEl
-                  ? "Από εδώ και πέρα η επικοινωνία θα γίνεται μέσω WhatsApp: <a href=\"https://wa.me/" + whatsapp + "\">+" + whatsapp + "</a>"
-                  : "From now on, communication will happen via WhatsApp: <a href=\"https://wa.me/" + whatsapp + "\">+" + whatsapp + "</a>")
+                  ? "Θα είμαστε σε επικοινωνία μαζί σας μέσω WhatsApp για οποιαδήποτε ενημέρωση χρειαστεί: <a href=\"https://wa.me/" + whatsapp + "\">+" + whatsapp + "</a>"
+                  : "We'll be in touch with you via WhatsApp for any updates you may need: <a href=\"https://wa.me/" + whatsapp + "\">+" + whatsapp + "</a>")
               : "";
+            const subjFrom = titleCaseIfAllCaps(from), subjTo = titleCaseIfAllCaps(to);
             const subject = isEl
-              ? "✅ Κράτηση #" + bookingNumber + " καταχωρήθηκε — " + from + " → " + to
-              : "✅ Booking #" + bookingNumber + " received — " + from + " → " + to;
+              ? "✅ Κράτηση #" + bookingNumber + " καταχωρήθηκε — " + subjFrom + " → " + subjTo
+              : "✅ Booking #" + bookingNumber + " received — " + subjFrom + " → " + subjTo;
             const logoHtml = logoUrl
               ? "<img src=\"" + logoUrl + "\" alt=\"" + businessName + "\" style=\"max-height:56px;margin-bottom:16px;\"><br>"
               : "";
@@ -4189,12 +4202,13 @@ async function finalizeSuccessfulPayment(db, pendingRef, pd, providerMeta) {
         const isEl = (pd.lang || "el") === "el";
         const waLine = whatsapp
           ? (isEl
-              ? "Από εδώ και πέρα η επικοινωνία θα γίνεται μέσω WhatsApp: <a href=\"https://wa.me/" + whatsapp + "\">+" + whatsapp + "</a>"
-              : "From now on, communication will happen via WhatsApp: <a href=\"https://wa.me/" + whatsapp + "\">+" + whatsapp + "</a>")
+              ? "Θα είμαστε σε επικοινωνία μαζί σας μέσω WhatsApp για οποιαδήποτε ενημέρωση χρειαστεί: <a href=\"https://wa.me/" + whatsapp + "\">+" + whatsapp + "</a>"
+              : "We'll be in touch with you via WhatsApp for any updates you may need: <a href=\"https://wa.me/" + whatsapp + "\">+" + whatsapp + "</a>")
           : "";
+        const subjFrom = titleCaseIfAllCaps(pd.from), subjTo = titleCaseIfAllCaps(pd.to);
         const subject = isEl
-          ? "✅ Κράτηση #" + bookingNumber + " επιβεβαιώθηκε — " + pd.from + " → " + pd.to
-          : "✅ Booking #" + bookingNumber + " confirmed — " + pd.from + " → " + pd.to;
+          ? "✅ Κράτηση #" + bookingNumber + " επιβεβαιώθηκε — " + subjFrom + " → " + subjTo
+          : "✅ Booking #" + bookingNumber + " confirmed — " + subjFrom + " → " + subjTo;
 
         const logoHtml = logoUrl
           ? "<img src=\"" + logoUrl + "\" alt=\"" + businessName + "\" style=\"max-height:56px;margin-bottom:16px;\"><br>"
@@ -4572,6 +4586,11 @@ async function upsertSecret(secretId, value) {
     parent: secretName,
     payload: { data: Buffer.from(value, "utf8") },
   });
+  // ⚠️ ΣΗΜΑΝΤΙΚΟ: χωρίς αυτό, μια ζεστή (warm) instance της function θα
+  // συνέχιζε να χρησιμοποιεί την ΠΑΛΙΑ τιμή έως 10 λεπτά μετά την αλλαγή —
+  // π.χ. tenant διορθώνει Merchant ID/API Key και δοκιμάζει αμέσως, αλλά ο
+  // server ακόμα βλέπει το λάθος παλιό κλειδί (401 Unauthorized).
+  _secretValueCache.delete(secretId);
 }
 
 // Cache 10 λεπτών ανά secret ώστε να μην χτυπάμε το Secret Manager σε κάθε
