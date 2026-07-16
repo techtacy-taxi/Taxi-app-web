@@ -115,6 +115,17 @@ class PublicBookingAlerts {
         if (_seenIds.contains(id)) continue;
         _seenIds.add(id);
         final data = change.doc.data() ?? {};
+        // ⚠️ ΑΣΦΑΛΙΣΤΙΚΗ ΔΙΚΛΕΙΔΑ: αν το priming (πάνω) έτρεξε με άδειο/μη
+        // έτοιμο αποτέλεσμα (π.χ. auth όχι ακόμα έτοιμο στο cold start), το
+        // ΠΡΑΓΜΑΤΙΚΟ snapshot που έρχεται αμέσως μετά βλέπει ΟΛΑ τα docs σαν
+        // «νέα» (docChanges πάντα 'added' σε σχέση με άδεια cache) — και ο
+        // master ξαναχτυπούσε για μια κράτηση που είχε ήδη ειδοποιηθεί/
+        // κλείσει. Αγνόησε αθόρυβα κρατήσεις με savedAt παλιότερο από 2 λεπτά.
+        final savedAt = (data['savedAt'] as Timestamp?)?.toDate();
+        if (savedAt != null &&
+            DateTime.now().difference(savedAt) > const Duration(minutes: 2)) {
+          continue;
+        }
         final from = (data['from'] ?? '').toString();
         final to   = (data['to'] ?? '').toString();
         // ΣΗΜΑΝΤΙΚΟ: περιμένουμε να ΞΕΚΙΝΗΣΕΙ πραγματικά ο ήχος πριν ανοίξει
