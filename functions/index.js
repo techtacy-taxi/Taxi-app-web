@@ -3312,7 +3312,7 @@ exports.submitPublicBooking = onRequest(
           if (!noKeyAtAll) {
             const businessName = t.businessName || (tenantId === "default" ? "TaxiAthensTransfers.com" : "Taxi Transfers");
             const whatsapp     = (t.whatsappNumber || (tenantId === "default" ? "306936123322" : "")).replace(/[^0-9]/g, "");
-            const logoUrl      = t.logoUrl || (tenantId === "default" ? "https://taxiathenstransfers.com/logo.png" : "");
+            const logoUrl      = t.logoUrl || "";
             const footerPhone  = t.contactPhone || (tenantId === "default" ? "+30 693 612 3322" : "");
             const footerEmail  = t.contactEmail || (tenantId === "default" ? "info@taxiathenstransfers.com" : "");
             const fromEmail    = tenantId === "default" ? "booking@taxiathenstransfers.com" : "info@taxiathenstransfers.com";
