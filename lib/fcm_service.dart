@@ -365,8 +365,8 @@ Future<void> _showOwnerBg(
 /// channel) με 🌐 στην αρχή του τίτλου ώστε να ξεχωρίζει αμέσως.
 Future<void> _showPublicBookingBg(
     FlutterLocalNotificationsPlugin fln, Map<String, dynamic> d) async {
-  final from = (d['from'] ?? '').toString();
-  final to   = (d['to'] ?? '').toString();
+  final from = (d['fromAddr'] ?? '').toString();
+  final to   = (d['toAddr'] ?? '').toString();
   final name = (d['clientName'] ?? '').toString();
   final when = (d['when'] ?? '').toString();
   final savedJobId = (d['savedJobId'] ?? '').toString();

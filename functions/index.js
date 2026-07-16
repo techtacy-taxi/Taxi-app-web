@@ -3288,7 +3288,10 @@ exports.submitPublicBooking = onRequest(
         await sendDataOnly(tokens, {
           type:       "public_booking",          // ← το owner_alerts το ξεχωρίζει
           savedJobId: savedRef.id,
-          from, to,
+          // ⚠️ "from"/"to" είναι RESERVED keys στο FCM data payload — η
+          // αποστολή ΑΠΟΡΡΙΠΤΟΤΑΝ ολόκληρη (messaging/invalid-argument) και
+          // η ειδοποίηση δεν έφτανε ΠΟΤΕ στη συσκευή.
+          fromAddr: from, toAddr: to,
           clientName: name,
           when:       whenStr,
           title:      "Νέα κράτηση #" + bookingNumber + " από φόρμα",
@@ -3309,7 +3312,7 @@ exports.submitPublicBooking = onRequest(
           if (!noKeyAtAll) {
             const businessName = t.businessName || (tenantId === "default" ? "TaxiAthensTransfers.com" : "Taxi Transfers");
             const whatsapp     = (t.whatsappNumber || (tenantId === "default" ? "306936123322" : "")).replace(/[^0-9]/g, "");
-            const logoUrl      = t.logoUrl || "";
+            const logoUrl      = t.logoUrl || (tenantId === "default" ? "https://taxiathenstransfers.com/logo.png" : "");
             const footerPhone  = t.contactPhone || (tenantId === "default" ? "+30 693 612 3322" : "");
             const footerEmail  = t.contactEmail || (tenantId === "default" ? "info@taxiathenstransfers.com" : "");
             const fromEmail    = tenantId === "default" ? "booking@taxiathenstransfers.com" : "info@taxiathenstransfers.com";
@@ -4101,7 +4104,7 @@ async function finalizeSuccessfulPayment(db, pendingRef, pd, providerMeta) {
     await sendDataOnly(tokens, {
       type:       "public_booking",
       savedJobId: savedRef.id,
-      from: pd.from, to: pd.to,
+      fromAddr: pd.from, toAddr: pd.to,   // "from"/"to" = reserved FCM keys
       clientName: pd.clientName,
       when:       whenStr,
       title:      "Νέα κράτηση #" + bookingNumber + " (" + (pd.fullyPaid ? "πληρωμένη πλήρως" : "πληρωμένη προκαταβολή") + ")",
