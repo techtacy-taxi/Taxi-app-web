@@ -7,6 +7,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:just_audio/just_audio.dart';
@@ -739,11 +740,32 @@ class NotificationsService {
   static final ValueNotifier<int> approvalTapTick = ValueNotifier<int>(0);
 
   static bool _initialized = false;
+  static StreamSubscription<RemoteMessage>? _fcmForegroundSub;
 
   static Future<void> init() async {
     if (_initialized) return;
     _initialized = true;
     await initLocalNotifPlugin(onForegroundTap: _onForegroundTap);
+
+    // ── Backup: FCM 'cancel_job' και στο FOREGROUND ─────────────────────────
+    // Μέχρι τώρα το foreground βασιζόταν ΜΟΝΟ στον Firestore listener
+    // (job_badge.dart _checkIfTaken) για να σταματήσει τον ήχο όταν μια
+    // δουλειά αναληφθεί από άλλον. Το background isolate (fcm_service.dart)
+    // χειρίζεται ήδη το ίδιο FCM data message 'cancel_job'. Εδώ προσθέτουμε
+    // τον ΙΔΙΟ έλεγχο και στο foreground, ως δεύτερο ανεξάρτητο μονοπάτι
+    // (FCM), ώστε να μη μείνει ο ήχος ενεργός αν καθυστερήσει/χαθεί ποτέ το
+    // Firestore update (π.χ. στιγμιαία απώλεια σύνδεσης). Δεν αντικαθιστά τον
+    // Firestore listener — απλώς προσθέτει fallback, χρησιμοποιώντας την ήδη
+    // υπάρχουσα cancelJobNotification().
+    _fcmForegroundSub?.cancel();
+    _fcmForegroundSub = FirebaseMessaging.onMessage.listen((msg) {
+      final data = msg.data;
+      if ((data['type'] ?? '') != 'cancel_job') return;
+      final jobId = (data['jobId'] ?? '').toString();
+      if (jobId.isEmpty) return;
+      // ignore: unawaited_futures
+      cancelJobNotification(jobId);
+    });
 
     // Cold start από notification tap
     final launchDetails =
