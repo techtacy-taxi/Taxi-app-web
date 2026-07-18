@@ -151,6 +151,8 @@ class PricingRoute {
   // διαδρομή (ο πελάτης παραπέμπεται σε WhatsApp).
   final double? busPrice;
   final double? busNightPrice;
+  final double? busForeign;
+  final double? busNightForeign;
   // ── Shuttle (ανά άτομο) ──
   final double? shuttlePricePerPerson;
   final double? shuttleNightPricePerPerson;
@@ -171,6 +173,8 @@ class PricingRoute {
     this.vanNightForeign,
     this.busPrice,
     this.busNightPrice,
+    this.busForeign,
+    this.busNightForeign,
     this.shuttlePricePerPerson,
     this.shuttleNightPricePerPerson,
     this.shuttleMinType = 'price',
@@ -197,6 +201,8 @@ class PricingRoute {
       vanNightForeign:   numOrNull(m['vanNightForeign']),
       busPrice:      numOrNull(m['busPrice']),
       busNightPrice: numOrNull(m['busNightPrice']),
+      busForeign:      numOrNull(m['busForeign']),
+      busNightForeign: numOrNull(m['busNightForeign']),
       shuttlePricePerPerson:      numOrNull(m['shuttlePricePerPerson']),
       shuttleNightPricePerPerson: numOrNull(m['shuttleNightPricePerPerson']),
       shuttleMinType:  (m['shuttleMinType'] as String?) ?? 'price',
@@ -1086,6 +1092,8 @@ class _RoutesTab extends StatelessWidget {
     // ── Λεωφορείο (πάνω από 8 άτομα) ──
     final busCtrl      = TextEditingController(text: existing?.busPrice?.toStringAsFixed(0) ?? '');
     final busNightCtrl = TextEditingController(text: existing?.busNightPrice?.toStringAsFixed(0) ?? '');
+    final busFCtrl      = TextEditingController(text: existing?.busForeign?.toStringAsFixed(0) ?? '');
+    final busNightFCtrl = TextEditingController(text: existing?.busNightForeign?.toStringAsFixed(0) ?? '');
 
     await showDialog<void>(
       context: context,
@@ -1245,10 +1253,21 @@ class _RoutesTab extends StatelessWidget {
                   ),
                   const SizedBox(height: 10),
                   TextField(
+                    controller: busFCtrl, keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(labelText: 'Τιμή λεωφορείου ξένου πελάτη (€) — προαιρετικό'),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
                     controller: busNightCtrl, keyboardType: TextInputType.number,
                     decoration: const InputDecoration(
                         labelText: 'Τιμή λεωφορείου νύχτας (€) — προαιρετικό',
                         helperText: 'Αν κενό, ισχύει η ίδια τιμή ημέρας και τη νύχτα'),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: busNightFCtrl, keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                        labelText: 'Τιμή λεωφορείου ξένου τη ΝΥΧΤΑ (€) — προαιρετικό'),
                   ),
                 ],
               ),
@@ -1285,6 +1304,10 @@ class _RoutesTab extends StatelessWidget {
                         ? null : double.tryParse(busCtrl.text.replaceAll(',', '.')),
                     'busNightPrice': busNightCtrl.text.trim().isEmpty
                         ? null : double.tryParse(busNightCtrl.text.replaceAll(',', '.')),
+                    'busForeign': busFCtrl.text.trim().isEmpty
+                        ? null : double.tryParse(busFCtrl.text.replaceAll(',', '.')),
+                    'busNightForeign': busNightFCtrl.text.trim().isEmpty
+                        ? null : double.tryParse(busNightFCtrl.text.replaceAll(',', '.')),
                     'tenantId': tenantId,
                   };
                   try {
@@ -1336,6 +1359,7 @@ class _PricingConfigTabState extends State<_PricingConfigTab> {
   static const _keys = [
     'base', 'perKm', 'perKmOutside', 'perKmOutsideVan', 'perMin', 'minCharge', 'minChargeNight',
     'nightPctTaxi', 'nightPctVan', 'vanPct', 'luggagePer', 'seatPrice',
+    'busPctOverTaxi', 'busNightExtraPct', 'vanPctOverTaxi', 'vanNightExtraPct',
   ];
 
   static const _defaults = {
@@ -1343,6 +1367,8 @@ class _PricingConfigTabState extends State<_PricingConfigTab> {
     'minCharge': 25.0, 'minChargeNight': 35.0,
     'nightPctTaxi': 30.0, 'nightPctVan': 25.0,
     'vanPct': 90.0, 'luggagePer': 0.0, 'seatPrice': 5.0,
+    'busPctOverTaxi': 0.0, 'busNightExtraPct': 0.0,
+    'vanPctOverTaxi': 0.0, 'vanNightExtraPct': 0.0,
   };
 
   static const _labels = {
@@ -1358,6 +1384,10 @@ class _PricingConfigTabState extends State<_PricingConfigTab> {
     'vanPct':           'Βαν = Ταξί + (%) — δυναμικός τύπος (εντός Αττικής)',
     'luggagePer':       '€ ανά βαλίτσα',
     'seatPrice':        '€ ανά παιδικό κάθισμα',
+    'busPctOverTaxi':   'Λεωφορείο = Ταξί + (%) — όταν δεν υπάρχει τιμή διαδρομής. 0 = μόνο WhatsApp',
+    'busNightExtraPct': 'Λεωφορείο ΝΥΧΤΑ = Λεωφορείο ημέρας + (%)',
+    'vanPctOverTaxi':   'Βαν = Ταξί + (%) — fallback όταν δεν υπάρχει τιμή Βαν διαδρομής. 0 = ανενεργό',
+    'vanNightExtraPct': 'Βαν ΝΥΧΤΑ (fallback) = Βαν ημέρας + (%)',
   };
 
   // Κύριες τιμές (Έλληνας/κοινή).

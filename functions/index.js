@@ -2784,30 +2784,84 @@ async function computeEstimate({
     };
   }
 
+  // ── Ποσοστιαία τιμή Λεωφορείου/Βαν πάνω από την ΚΑΝΟΝΙΚΗ (ελληνική) τιμή
+  // Ταξί της ίδιας διαδρομής (ζωνική ή δυναμική) — fallback όταν δεν υπάρχει
+  // ρητή τιμή. Το ποσοστό ξένου (…Foreign) υπολογίζεται ΚΙ ΑΥΤΟ πάνω στην
+  // κανονική τιμή ταξί — π.χ. Ταξί+120% ο Έλληνας, Ταξί+140% ο ξένος.
+  // Νύχτα: επιπλέον ποσοστό πάνω στην τιμή ΗΜΕΡΑΣ του οχήματος.
+  async function pctOverTaxiEstimate(kind /* 'bus' | 'van' */) {
+    const dayPct = Number(kind === "bus" ? cfg.busPctOverTaxi : cfg.vanPctOverTaxi) || 0;
+    if (dayPct <= 0) return null;
+    const dayPctForeign = Number(kind === "bus" ? cfg.busPctOverTaxiForeign : cfg.vanPctOverTaxiForeign) || 0;
+    const nightExtra = Number(kind === "bus" ? cfg.busNightExtraPct : cfg.vanNightExtraPct) || 0;
+    const nightExtraForeign = Number(kind === "bus" ? cfg.busNightExtraPctForeign : cfg.vanNightExtraPctForeign) || 0;
+    // Τιμή Ταξί ΗΜΕΡΑΣ Έλληνα: ίδια διαδρομή, ώρα 12:00 ώστε η βάση να μην
+    // περιέχει νυχτερινή προσαύξηση (η νύχτα μπαίνει με το δικό της ποσοστό).
+    const noonNaive = scheduledNaive
+      ? new Date(Date.UTC(scheduledNaive.getUTCFullYear(), scheduledNaive.getUTCMonth(), scheduledNaive.getUTCDate(), 12, 0, 0))
+      : null;
+    const taxiRes = await computeEstimate({
+      fromLat, fromLng, toLat, toLng, persons, luggage, childSeatCount,
+      vehicleType: "taxi", isGreek: true, scheduledNaive: noonNaive, apiKey,
+      cachedDistanceKm, cachedDurationMin, cachedRoutePolyline, needMap,
+      tenantId, clientsOnlyMode,
+    });
+    if (!taxiRes || !(taxiRes.price > 0) || taxiRes.noRouteAvailable) return null;
+    const isNightNowPct = !!scheduledNaive && isNightWindow(scheduledNaive);
+    const usePct = (!isGreek && dayPctForeign > 0) ? dayPctForeign : dayPct;
+    const useNightExtra = (!isGreek && nightExtraForeign > 0) ? nightExtraForeign : nightExtra;
+    let price = taxiRes.price * (1 + usePct / 100);
+    if (isNightNowPct && useNightExtra > 0) price = price * (1 + useNightExtra / 100);
+    price = Math.ceil(price);
+    return {
+      price, nightApplies: isNightNowPct, vehicle: kind, zoneMatch: !!taxiRes.zoneMatch,
+      minChargeApplied: false, displayOriginal: price, discountPercent: 0,
+      outsideAttica: !!taxiRes.outsideAttica, distanceKm: taxiRes.distanceKm || 0,
+      durationMin: taxiRes.durationMin || 0, routePolyline: taxiRes.routePolyline || null,
+      shuttleAvailable, noRouteAvailable: false,
+    };
+  }
+
   if (vehicleType === "bus") {
-    // ── Λεωφορείο: ΜΟΝΟ σταθερή τιμή ζώνης-σε-ζώνη (καμία δυναμική φόρμουλα
-    // ανά χιλιόμετρο — δεν βγάζει νόημα για λεωφορείο). Αν δεν υπάρχει
-    // ορισμένη τιμή για αυτό το ζεύγος ζωνών, το noRouteAvailable λέει στον
-    // client να δείξει «στείλε μήνυμα στο WhatsApp» αντί για τιμή/κράτηση.
-    const hasBusPrice = !!(zoneRoute && Number(zoneRoute.busPrice) > 0);
-    if (!hasBusPrice) {
+    // ── Λεωφορείο. Σειρά προτεραιότητας:
+    // 0) Έλεγχος θέσεων: busMaxSeats <= 0 → ΠΑΝΤΑ WhatsApp. Άτομα πάνω από
+    //    τις θέσεις → επίσης WhatsApp (noRouteAvailable, όπως πριν).
+    // 1) Ρητή ζωνική τιμή (με προαιρετικά ξένου/νύχτας).
+    // 2) Ποσοστό πάνω από Ταξί (γενική ρύθμιση busPctOverTaxi).
+    // 3) Τίποτα → noRouteAvailable → η φόρμα δείχνει «στείλε WhatsApp».
+    const busNoQuote = {
+      price: 0, nightApplies: false, vehicle: "bus", zoneMatch: false,
+      minChargeApplied: false, displayOriginal: 0, discountPercent: 0,
+      outsideAttica: false, distanceKm: 0, durationMin: 0, routePolyline: null,
+      shuttleAvailable: false, noRouteAvailable: true,
+    };
+    const busMaxSeats = cfg.busMaxSeats == null ? 20 : Number(cfg.busMaxSeats);
+    if (busMaxSeats <= 0 || persons > busMaxSeats) return busNoQuote;
+
+    const isNightNowBus = !!scheduledNaive && isNightWindow(scheduledNaive);
+    if (zoneRoute && Number(zoneRoute.busPrice) > 0) {
+      const gDay = Number(zoneRoute.busPrice);
+      const gNight = Number(zoneRoute.busNightPrice) > 0 ? Number(zoneRoute.busNightPrice) : gDay;
+      const fDay = Number(zoneRoute.busForeign) > 0 ? Number(zoneRoute.busForeign) : null;
+      const fNight = Number(zoneRoute.busNightForeign) > 0
+        ? Number(zoneRoute.busNightForeign)
+        : fDay; // ξένος χωρίς δική του νυχτερινή → η δική του ημέρας (αν έχει)
+      let busPrice;
+      if (!isGreek && (isNightNowBus ? fNight : fDay) != null) {
+        busPrice = isNightNowBus ? fNight : fDay;
+      } else {
+        busPrice = isNightNowBus ? gNight : gDay;
+      }
       return {
-        price: 0, nightApplies: false, vehicle: "bus", zoneMatch: false,
-        minChargeApplied: false, displayOriginal: 0, discountPercent: 0,
+        price: Math.ceil(busPrice), nightApplies: isNightNowBus, vehicle: "bus", zoneMatch: true,
+        minChargeApplied: false, displayOriginal: Math.ceil(busPrice), discountPercent: 0,
         outsideAttica: false, distanceKm: 0, durationMin: 0, routePolyline: null,
-        shuttleAvailable: false, noRouteAvailable: true,
+        shuttleAvailable: false, noRouteAvailable: false,
       };
     }
-    const isNightNowBus = !!scheduledNaive && isNightWindow(scheduledNaive);
-    const busPrice = (isNightNowBus && Number(zoneRoute.busNightPrice) > 0)
-      ? Number(zoneRoute.busNightPrice)
-      : Number(zoneRoute.busPrice);
-    return {
-      price: Math.ceil(busPrice), nightApplies: isNightNowBus, vehicle: "bus", zoneMatch: true,
-      minChargeApplied: false, displayOriginal: Math.ceil(busPrice), discountPercent: 0,
-      outsideAttica: false, distanceKm: 0, durationMin: 0, routePolyline: null,
-      shuttleAvailable: false, noRouteAvailable: false,
-    };
+    const viaPct = await pctOverTaxiEstimate("bus");
+    if (viaPct) return Object.assign({}, viaPct, { shuttleAvailable: false });
+    return busNoQuote;
   }
 
   const vehicle = forced ? "van" : (vehicleType === "van" ? "van" : "taxi");
@@ -2852,6 +2906,14 @@ async function computeEstimate({
       outsideAttica: false, distanceKm: 0, durationMin: 0, routePolyline: null,
       shuttleAvailable: false, noRouteAvailable: true, clientMatchedName: null,
     };
+  }
+
+  // ── Βαν με ποσοστό πάνω από Ταξί (fallback) — ΜΟΝΟ όταν δεν υπάρχει τιμή
+  // πελάτη, ούτε ρητή ζωνική τιμή Βαν για τη διαδρομή, και έχει οριστεί
+  // ποσοστό (vanPctOverTaxi) στους δυναμικούς τύπους. Αλλιώς όλα όπως πριν.
+  if (vehicle === "van" && !clientMatch && !(zoneRoute && Number(zoneRoute.van) > 0)) {
+    const vanViaPct = await pctOverTaxiEstimate("van");
+    if (vanViaPct) return vanViaPct;
   }
 
   if (clientMatch) {
