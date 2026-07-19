@@ -679,6 +679,17 @@ class _ClientEditorPageState extends State<ClientEditorPage> {
                 description: r.toName, lat: r.toLat, lng: r.toLng),
             price: r.price,
             nightPrice: r.nightPrice,
+            extras: {
+              'van': r.van, 'vanNight': r.vanNight,
+              'bus': r.bus, 'busNight': r.busNight,
+              'shuttlePP': r.shuttlePP, 'shuttleNightPP': r.shuttleNightPP,
+              'priceForeign': r.priceForeign,
+              'nightPriceForeign': r.nightPriceForeign,
+              'vanForeign': r.vanForeign, 'vanNightForeign': r.vanNightForeign,
+              'busForeign': r.busForeign, 'busNightForeign': r.busNightForeign,
+              'shuttlePPForeign': r.shuttlePPForeign,
+              'shuttleNightPPForeign': r.shuttleNightPPForeign,
+            },
             sourceId: r.sourceId,
             sourceName: r.sourceName,
           )).toList();
@@ -738,8 +749,7 @@ class _ClientEditorPageState extends State<ClientEditorPage> {
     _shuttleOrderCtrl.dispose();
     _phoneCtrl.dispose();
     for (final r in _routes) {
-      r.priceCtrl.dispose();
-      r.nightPriceCtrl.dispose();
+      r.dispose();
     }
     super.dispose();
   }
@@ -835,9 +845,23 @@ class _ClientEditorPageState extends State<ClientEditorPage> {
         price:      double.tryParse(
                 r.priceCtrl.text.trim().replaceAll(',', '.')) ??
             0,
-        nightPrice: r.nightPriceCtrl.text.trim().isEmpty
-            ? null
-            : double.tryParse(r.nightPriceCtrl.text.trim().replaceAll(',', '.')),
+        nightPrice: r.valOf(r.nightPriceCtrl),
+        van:            r.valOf(r.extra['van']!),
+        vanNight:       r.valOf(r.extra['vanNight']!),
+        bus:            r.valOf(r.extra['bus']!),
+        busNight:       r.valOf(r.extra['busNight']!),
+        shuttlePP:      r.valOf(r.extra['shuttlePP']!),
+        shuttleNightPP: r.valOf(r.extra['shuttleNightPP']!),
+        // Τιμές ξένων: αποθηκεύονται ΜΟΝΟ αν ο διακόπτης είναι ανοιχτός —
+        // κλείνοντας τον διακόπτη καθαρίζουν (ο ξένος πληρώνει τα ίδια).
+        priceForeign:          r.foreignOn ? r.valOf(r.foreign['priceForeign']!) : null,
+        nightPriceForeign:     r.foreignOn ? r.valOf(r.foreign['nightPriceForeign']!) : null,
+        vanForeign:            r.foreignOn ? r.valOf(r.foreign['vanForeign']!) : null,
+        vanNightForeign:       r.foreignOn ? r.valOf(r.foreign['vanNightForeign']!) : null,
+        busForeign:            r.foreignOn ? r.valOf(r.foreign['busForeign']!) : null,
+        busNightForeign:       r.foreignOn ? r.valOf(r.foreign['busNightForeign']!) : null,
+        shuttlePPForeign:      r.foreignOn ? r.valOf(r.foreign['shuttlePPForeign']!) : null,
+        shuttleNightPPForeign: r.foreignOn ? r.valOf(r.foreign['shuttleNightPPForeign']!) : null,
         sourceId:   r.sourceId,
         sourceName: r.sourceName,
       ));
@@ -1162,22 +1186,93 @@ class _ClientEditorPageState extends State<ClientEditorPage> {
           ),
         ]),
         const SizedBox(height: 10),
-        TextField(
-          controller: r.nightPriceCtrl,
-          keyboardType: const TextInputType.numberWithOptions(decimal: true),
-          decoration: InputDecoration(
-            labelText:  'Τιμή τη ΝΥΧΤΑ (€) — προαιρετικό',
-            helperText: 'Αν κενό, ισχύει η ίδια τιμή και τη νύχτα',
-            prefixIcon: const Icon(Icons.nightlight_round),
-            filled:     true, fillColor: Colors.grey.shade50,
-            isDense:    true,
-            border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12)),
-          ),
+        // ── Συμπαγές πλέγμα τιμών ανά όχημα (2 στήλες — δουλεύει και σε
+        // κινητό και σε web). Όλα προαιρετικά: κενό = παλιά συμπεριφορά.
+        Row(children: [
+          Expanded(child: _pf(r.nightPriceCtrl, 'Ταξί ΝΥΧΤΑ (€)', Icons.nightlight_round)),
+          const SizedBox(width: 10),
+          Expanded(child: _pf(r.extra['van']!, 'Βαν (€)', Icons.airport_shuttle_rounded)),
+        ]),
+        const SizedBox(height: 10),
+        Row(children: [
+          Expanded(child: _pf(r.extra['vanNight']!, 'Βαν ΝΥΧΤΑ (€)', Icons.nightlight_round)),
+          const SizedBox(width: 10),
+          Expanded(child: _pf(r.extra['bus']!, 'Λεωφορείο (€)', Icons.directions_bus_rounded)),
+        ]),
+        const SizedBox(height: 10),
+        Row(children: [
+          Expanded(child: _pf(r.extra['busNight']!, 'Λεωφ. ΝΥΧΤΑ (€)', Icons.nightlight_round)),
+          const SizedBox(width: 10),
+          Expanded(child: _pf(r.extra['shuttlePP']!, 'Shuttle €/άτομο', Icons.groups_rounded)),
+        ]),
+        const SizedBox(height: 10),
+        Row(children: [
+          Expanded(child: _pf(r.extra['shuttleNightPP']!, 'Shuttle ΝΥΧΤΑ €/άτομο', Icons.nightlight_round)),
+          const SizedBox(width: 10),
+          const Expanded(child: SizedBox()),
+        ]),
+        Padding(
+          padding: const EdgeInsets.only(top: 2, left: 4),
+          child: Text('Κενά πεδία: Βαν = τιμή Ταξί, νύχτα = τιμή ημέρας, '
+              'Λεωφορείο/Shuttle = δεν προσφέρονται από τον πελάτη.',
+              style: TextStyle(fontSize: 11, color: Colors.grey[600])),
         ),
+        // ── Διακόπτης τιμών ΞΕΝΩΝ πελατών — ανοίγει καθρέφτη του πλέγματος.
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          dense: true,
+          title: const Text('Τιμές ξένων πελατών',
+              style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13.5)),
+          subtitle: const Text('Αν κλειστό, οι ξένοι πληρώνουν τις ίδιες τιμές',
+              style: TextStyle(fontSize: 11)),
+          secondary: const Icon(Icons.language_rounded, size: 20),
+          value: r.foreignOn,
+          onChanged: (v) => setState(() => r.foreignOn = v),
+        ),
+        if (r.foreignOn) ...[
+          Row(children: [
+            Expanded(child: _pf(r.foreign['priceForeign']!, 'Ταξί ξένου (€)', Icons.local_taxi_rounded)),
+            const SizedBox(width: 10),
+            Expanded(child: _pf(r.foreign['nightPriceForeign']!, 'Ταξί ξένου ΝΥΧΤΑ', Icons.nightlight_round)),
+          ]),
+          const SizedBox(height: 10),
+          Row(children: [
+            Expanded(child: _pf(r.foreign['vanForeign']!, 'Βαν ξένου (€)', Icons.airport_shuttle_rounded)),
+            const SizedBox(width: 10),
+            Expanded(child: _pf(r.foreign['vanNightForeign']!, 'Βαν ξένου ΝΥΧΤΑ', Icons.nightlight_round)),
+          ]),
+          const SizedBox(height: 10),
+          Row(children: [
+            Expanded(child: _pf(r.foreign['busForeign']!, 'Λεωφ. ξένου (€)', Icons.directions_bus_rounded)),
+            const SizedBox(width: 10),
+            Expanded(child: _pf(r.foreign['busNightForeign']!, 'Λεωφ. ξένου ΝΥΧΤΑ', Icons.nightlight_round)),
+          ]),
+          const SizedBox(height: 10),
+          Row(children: [
+            Expanded(child: _pf(r.foreign['shuttlePPForeign']!, 'Shuttle ξένου €/άτομο', Icons.groups_rounded)),
+            const SizedBox(width: 10),
+            Expanded(child: _pf(r.foreign['shuttleNightPPForeign']!, 'Shuttle ξένου ΝΥΧΤΑ', Icons.nightlight_round)),
+          ]),
+        ],
       ]),
     );
   }
+
+  // Συμπαγές πεδίο τιμής — ίδιο στυλ παντού, μικρό ώστε να χωράνε 2 ανά σειρά.
+  Widget _pf(TextEditingController ctrl, String label, IconData icon) => TextField(
+        controller: ctrl,
+        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+        decoration: InputDecoration(
+          labelText: label,
+          labelStyle: const TextStyle(fontSize: 12.5),
+          prefixIcon: Icon(icon, size: 18),
+          filled: true, fillColor: Colors.grey.shade50,
+          isDense: true,
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
+          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+        ),
+      );
 
   Widget _section(String t) => Padding(
         padding: const EdgeInsets.only(bottom: 10, top: 4),
@@ -1198,18 +1293,59 @@ class _EditableRoute {
   PlacePick? to;
   final TextEditingController priceCtrl;
   final TextEditingController nightPriceCtrl;
+  // ── Ανά όχημα (προαιρετικά) — controllers σε map για συμπαγή διαχείριση.
+  static const extraKeys = [
+    'van', 'vanNight', 'bus', 'busNight', 'shuttlePP', 'shuttleNightPP',
+  ];
+  // ── Τιμές ξένων (προαιρετικές) — εμφανίζονται μόνο με ανοιχτό διακόπτη.
+  static const foreignKeys = [
+    'priceForeign', 'nightPriceForeign', 'vanForeign', 'vanNightForeign',
+    'busForeign', 'busNightForeign', 'shuttlePPForeign', 'shuttleNightPPForeign',
+  ];
+  final Map<String, TextEditingController> extra;
+  final Map<String, TextEditingController> foreign;
+  bool foreignOn;
   String? sourceId;
   String? sourceName;
+
+  static String _fmt(double? v) =>
+      (v != null && v > 0) ? v.toStringAsFixed(2) : '';
+
   _EditableRoute({
     this.to,
     double price = 0,
     double? nightPrice,
+    Map<String, double?> extras = const {},
     this.sourceId,
     this.sourceName,
   })  : priceCtrl = TextEditingController(
             text: price > 0 ? price.toStringAsFixed(2) : ''),
-        nightPriceCtrl = TextEditingController(
-            text: (nightPrice != null && nightPrice > 0) ? nightPrice.toStringAsFixed(2) : '');
+        nightPriceCtrl = TextEditingController(text: _fmt(nightPrice)),
+        extra = {
+          for (final k in extraKeys) k: TextEditingController(text: _fmt(extras[k])),
+        },
+        foreign = {
+          for (final k in foreignKeys) k: TextEditingController(text: _fmt(extras[k])),
+        },
+        foreignOn = foreignKeys.any((k) => (extras[k] ?? 0) > 0);
+
+  double? valOf(TextEditingController c) {
+    final t = c.text.trim().replaceAll(',', '.');
+    if (t.isEmpty) return null;
+    final v = double.tryParse(t);
+    return (v != null && v > 0) ? v : null;
+  }
+
+  void dispose() {
+    priceCtrl.dispose();
+    nightPriceCtrl.dispose();
+    for (final c in extra.values) {
+      c.dispose();
+    }
+    for (final c in foreign.values) {
+      c.dispose();
+    }
+  }
 }
 
 // ─── Επιλογή admin/tenant-owner για ιδιοκτήτη πελάτη (μόνο master) ─────────

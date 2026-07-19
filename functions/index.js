@@ -2422,9 +2422,18 @@ async function findClientRouteMatch(fromLat, fromLng, toLat, toLng, tenantId) {
         if (r.toLat == null || r.toLng == null) continue;
         const d = haversineKm({ lat: otherLat, lng: otherLng }, { lat: r.toLat, lng: r.toLng });
         if (d <= CLIENT_MATCH_KM) {
+          const n = (v) => (v == null ? null : Number(v));
           return {
             price: Number(r.price) || 0,
-            nightPrice: r.nightPrice != null ? Number(r.nightPrice) : null,
+            nightPrice: n(r.nightPrice),
+            priceForeign: n(r.priceForeign),
+            nightPriceForeign: n(r.nightPriceForeign),
+            van: n(r.van), vanNight: n(r.vanNight),
+            vanForeign: n(r.vanForeign), vanNightForeign: n(r.vanNightForeign),
+            bus: n(r.bus), busNight: n(r.busNight),
+            busForeign: n(r.busForeign), busNightForeign: n(r.busNightForeign),
+            shuttlePP: n(r.shuttlePP), shuttleNightPP: n(r.shuttleNightPP),
+            shuttlePPForeign: n(r.shuttlePPForeign), shuttleNightPPForeign: n(r.shuttleNightPPForeign),
             clientName: c.name || "",
           };
         }
@@ -2720,11 +2729,17 @@ async function computeEstimate({
   const toZone = toLat != null && toLng != null ? matchZone(toLat, toLng, zones) : null;
   const zoneRoute = (fromZone && toZone) ? routes[fromZone.id + ">" + toZone.id] : null;
 
-  // ── Shuttle: διαθέσιμο ΜΟΝΟ αν υπάρχει ρητά ορισμένη τιμή/άτομο για ΑΥΤΟ
-  // το ζεύγος ζωνών. Το ελέγχουμε ΠΑΝΤΑ (ανεξάρτητα από το ζητούμενο
-  // vehicleType) ώστε ο client να ξέρει αν πρέπει να δείξει/προεπιλέξει το
-  // κουμπί Shuttle, πριν καν διαλέξει ο πελάτης όχημα.
-  const shuttleAvailable = !!(zoneRoute && Number(zoneRoute.shuttlePricePerPerson) > 0);
+  // ── Τιμή πελάτη: υπολογίζεται ΝΩΡΙΣ (μία φορά) ώστε να τη βλέπουν ΟΛΟΙ οι
+  // κλάδοι — Ταξί/Βαν (όπως πριν), και πλέον Λεωφορείο & Shuttle που μπορούν
+  // να έχουν δικές τους τιμές ανά διαδρομή πελάτη.
+  const clientMatch = await findClientRouteMatch(fromLat, fromLng, toLat, toLng, tenantId);
+
+  // ── Shuttle: διαθέσιμο αν υπάρχει ζωνική τιμή/άτομο ΓΙΑ ΑΥΤΟ το ζεύγος
+  // ζωνών Ή τιμή/άτομο στη διαδρομή πελάτη που ταίριαξε.
+  const clientShuttlePP = clientMatch && Number(clientMatch.shuttlePP) > 0
+    ? Number(clientMatch.shuttlePP) : 0;
+  const shuttleAvailable =
+    !!(zoneRoute && Number(zoneRoute.shuttlePricePerPerson) > 0) || clientShuttlePP > 0;
 
   if (vehicleType === "shuttle") {
     if (!shuttleAvailable) {
@@ -2750,11 +2765,28 @@ async function computeEstimate({
     }
 
     const isNightNow = !!scheduledNaive && isNightWindow(scheduledNaive);
-    const perPerson = (isNightNow && Number(zoneRoute.shuttleNightPricePerPerson) > 0)
-      ? Number(zoneRoute.shuttleNightPricePerPerson)
-      : Number(zoneRoute.shuttlePricePerPerson);
-    const minType = zoneRoute.shuttleMinType === "persons" ? "persons" : "price";
-    const minValue = Number(zoneRoute.shuttleMinValue) || 0;
+    // ── Τιμή/άτομο: προτεραιότητα στη διαδρομή ΠΕΛΑΤΗ (αν έχει shuttle τιμή),
+    // αλλιώς η ζωνική. Νύχτα/ξένος: αντίστοιχα πεδία αν υπάρχουν.
+    let perPerson, minType, minValue;
+    if (clientShuttlePP > 0) {
+      const gDay = clientShuttlePP;
+      const gNight = Number(clientMatch.shuttleNightPP) > 0 ? Number(clientMatch.shuttleNightPP) : gDay;
+      const fDay = Number(clientMatch.shuttlePPForeign) > 0 ? Number(clientMatch.shuttlePPForeign) : null;
+      const fNight = Number(clientMatch.shuttleNightPPForeign) > 0
+        ? Number(clientMatch.shuttleNightPPForeign) : fDay;
+      if (!isGreek && (isNightNow ? fNight : fDay) != null) {
+        perPerson = isNightNow ? fNight : fDay;
+      } else {
+        perPerson = isNightNow ? gNight : gDay;
+      }
+      minType = "price"; minValue = 0; // καμία ελάχιστη χρέωση για shuttle πελάτη
+    } else {
+      perPerson = (isNightNow && Number(zoneRoute.shuttleNightPricePerPerson) > 0)
+        ? Number(zoneRoute.shuttleNightPricePerPerson)
+        : Number(zoneRoute.shuttlePricePerPerson);
+      minType = zoneRoute.shuttleMinType === "persons" ? "persons" : "price";
+      minValue = Number(zoneRoute.shuttleMinValue) || 0;
+    }
 
     let billedPersons = persons;
     let minChargeApplied = false;
@@ -2772,7 +2804,9 @@ async function computeEstimate({
     let shuttleSlotOptions = null;
     if (scheduledNaive) {
       const reqMin = scheduledNaive.getUTCHours() * 60 + scheduledNaive.getUTCMinutes();
-      shuttleSlotOptions = nearestShuttleSlots(reqMin, cfg.shuttleTimeSlots, fromZone.id, toZone.id);
+      shuttleSlotOptions = nearestShuttleSlots(
+        reqMin, cfg.shuttleTimeSlots,
+        fromZone ? fromZone.id : null, toZone ? toZone.id : null);
     }
 
     return {
@@ -2839,6 +2873,26 @@ async function computeEstimate({
     if (busMaxSeats <= 0 || persons > busMaxSeats) return busNoQuote;
 
     const isNightNowBus = !!scheduledNaive && isNightWindow(scheduledNaive);
+    // 1α) Τιμή λεωφορείου από διαδρομή ΠΕΛΑΤΗ — υπερισχύει της ζωνικής.
+    if (clientMatch && Number(clientMatch.bus) > 0) {
+      const gDay = Number(clientMatch.bus);
+      const gNight = Number(clientMatch.busNight) > 0 ? Number(clientMatch.busNight) : gDay;
+      const fDay = Number(clientMatch.busForeign) > 0 ? Number(clientMatch.busForeign) : null;
+      const fNight = Number(clientMatch.busNightForeign) > 0
+        ? Number(clientMatch.busNightForeign) : fDay;
+      let busPrice;
+      if (!isGreek && (isNightNowBus ? fNight : fDay) != null) {
+        busPrice = isNightNowBus ? fNight : fDay;
+      } else {
+        busPrice = isNightNowBus ? gNight : gDay;
+      }
+      return {
+        price: Math.ceil(busPrice), nightApplies: isNightNowBus, vehicle: "bus", zoneMatch: true,
+        minChargeApplied: false, displayOriginal: Math.ceil(busPrice), discountPercent: 0,
+        outsideAttica: false, distanceKm: 0, durationMin: 0, routePolyline: null,
+        shuttleAvailable: false, noRouteAvailable: false,
+      };
+    }
     if (zoneRoute && Number(zoneRoute.busPrice) > 0) {
       const gDay = Number(zoneRoute.busPrice);
       const gNight = Number(zoneRoute.busNightPrice) > 0 ? Number(zoneRoute.busNightPrice) : gDay;
@@ -2891,9 +2945,8 @@ async function computeEstimate({
 
   // ── Τιμή πελάτη (Αγαπημένοι προορισμοί) — αν το «Από» ή το «Προς» ταιριάζει
   // με πελάτη ΚΑΙ το άλλο άκρο με μία αποθηκευμένη διαδρομή του, η τιμή ΤΟΥ
-  // υπερισχύει ΠΑΝΤΑ ζώνης/δυναμικού τύπου. Ισχύει ΜΟΝΟ για Ταξί/Βαν (το
-  // Shuttle/Λεωφορείο έχουν δικά τους ξεχωριστά συστήματα τιμολόγησης).
-  const clientMatch = await findClientRouteMatch(fromLat, fromLng, toLat, toLng, tenantId);
+  // υπερισχύει ΠΑΝΤΑ ζώνης/δυναμικού τύπου. (Το clientMatch υπολογίστηκε ήδη
+  // νωρίτερα, μία φορά, ώστε να το βλέπουν και Λεωφορείο/Shuttle.)
 
   // ── Λειτουργία «μόνο πελάτες» (Places απενεργοποιημένο για τον tenant) —
   // χωρίς πραγματική διεύθυνση Google, ΔΕΝ έχει νόημα ζωνική/δυναμική τιμή.
@@ -2918,8 +2971,19 @@ async function computeEstimate({
 
   if (clientMatch) {
     zoneMatch = true; // ώστε να παρακαμφθεί ο δυναμικός τύπος παρακάτω
-    const useNight = isNightNow && clientMatch.nightPrice != null;
-    basePrice = useNight ? clientMatch.nightPrice : clientMatch.price;
+    // ── Ανά όχημα: το Βαν χρησιμοποιεί τα δικά του πεδία αν υπάρχουν,
+    // αλλιώς πέφτει στα (παλιά) πεδία Ταξί — ίδια συμπεριφορά με πριν.
+    // Ξένος: αντίστοιχα Foreign πεδία αν υπάρχουν, αλλιώς η κανονική τιμή.
+    const isVan = vehicle === "van";
+    const pos = (v) => (v != null && Number(v) > 0 ? Number(v) : null);
+    const dayG = isVan ? (pos(clientMatch.van) ?? clientMatch.price) : clientMatch.price;
+    const nightG = isVan ? (pos(clientMatch.vanNight) ?? pos(clientMatch.nightPrice)) : pos(clientMatch.nightPrice);
+    const dayF = isVan ? (pos(clientMatch.vanForeign) ?? pos(clientMatch.priceForeign)) : pos(clientMatch.priceForeign);
+    const nightF = isVan ? (pos(clientMatch.vanNightForeign) ?? pos(clientMatch.nightPriceForeign)) : pos(clientMatch.nightPriceForeign);
+    const day = (!isGreek && dayF != null) ? dayF : dayG;
+    const nightVal = (!isGreek && nightF != null) ? nightF : nightG;
+    const useNight = isNightNow && nightVal != null;
+    basePrice = useNight ? nightVal : day;
     usedFixedNightPrice = useNight; // η τιμή ΕΙΝΑΙ ήδη η νυχτερινή — μη ξαναπολλαπλασιάσεις
   } else if (zoneRoute) {
     zoneMatch = true;

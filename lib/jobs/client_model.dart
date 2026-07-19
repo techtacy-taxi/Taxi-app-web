@@ -18,8 +18,24 @@ class ClientRoute {
   final String  toName;     // περιγραφή προορισμού (π.χ. "Αεροδρόμιο")
   final double? toLat;
   final double? toLng;
-  final double  price;      // τιμή διαδρομής (ημέρα)
-  final double? nightPrice; // τιμή διαδρομής τη ΝΥΧΤΑ — προαιρετική, αν κενή ισχύει η ίδια με ημέρα
+  final double  price;      // τιμή διαδρομής Ταξί (ημέρα)
+  final double? nightPrice; // τιμή Ταξί τη ΝΥΧΤΑ — προαιρετική, αν κενή ισχύει η ίδια με ημέρα
+  // ── Ανά όχημα (όλα προαιρετικά — αν κενά, ισχύει η παλιά συμπεριφορά):
+  final double? van;            // Βαν ημέρα (αν κενό: ίδια με Ταξί, όπως πριν)
+  final double? vanNight;       // Βαν νύχτα
+  final double? bus;            // Λεωφορείο ημέρα
+  final double? busNight;       // Λεωφορείο νύχτα
+  final double? shuttlePP;      // Shuttle €/άτομο ημέρα
+  final double? shuttleNightPP; // Shuttle €/άτομο νύχτα
+  // ── Τιμές ξένων πελατών (προαιρετικές — αν κενές, ο ξένος πληρώνει τα ίδια):
+  final double? priceForeign;
+  final double? nightPriceForeign;
+  final double? vanForeign;
+  final double? vanNightForeign;
+  final double? busForeign;
+  final double? busNightForeign;
+  final double? shuttlePPForeign;
+  final double? shuttleNightPPForeign;
   final String? sourceId;   // πηγή (γιαούρτι) — προαιρετικό
   final String? sourceName;
 
@@ -29,6 +45,12 @@ class ClientRoute {
     this.toLng,
     this.price = 0,
     this.nightPrice,
+    this.van, this.vanNight, this.bus, this.busNight,
+    this.shuttlePP, this.shuttleNightPP,
+    this.priceForeign, this.nightPriceForeign,
+    this.vanForeign, this.vanNightForeign,
+    this.busForeign, this.busNightForeign,
+    this.shuttlePPForeign, this.shuttleNightPPForeign,
     this.sourceId,
     this.sourceName,
   });
@@ -41,6 +63,20 @@ class ClientRoute {
         toLng:      (d['toLng'] as num?)?.toDouble(),
         price:      (d['price'] as num?)?.toDouble() ?? 0,
         nightPrice: (d['nightPrice'] as num?)?.toDouble(),
+        van:            (d['van'] as num?)?.toDouble(),
+        vanNight:       (d['vanNight'] as num?)?.toDouble(),
+        bus:            (d['bus'] as num?)?.toDouble(),
+        busNight:       (d['busNight'] as num?)?.toDouble(),
+        shuttlePP:      (d['shuttlePP'] as num?)?.toDouble(),
+        shuttleNightPP: (d['shuttleNightPP'] as num?)?.toDouble(),
+        priceForeign:          (d['priceForeign'] as num?)?.toDouble(),
+        nightPriceForeign:     (d['nightPriceForeign'] as num?)?.toDouble(),
+        vanForeign:            (d['vanForeign'] as num?)?.toDouble(),
+        vanNightForeign:       (d['vanNightForeign'] as num?)?.toDouble(),
+        busForeign:            (d['busForeign'] as num?)?.toDouble(),
+        busNightForeign:       (d['busNightForeign'] as num?)?.toDouble(),
+        shuttlePPForeign:      (d['shuttlePPForeign'] as num?)?.toDouble(),
+        shuttleNightPPForeign: (d['shuttleNightPPForeign'] as num?)?.toDouble(),
         sourceId:   d['sourceId']   as String?,
         sourceName: d['sourceName'] as String?,
       );
@@ -51,6 +87,20 @@ class ClientRoute {
         if (toLng != null) 'toLng': toLng,
         'price': price,
         if (nightPrice != null) 'nightPrice': nightPrice,
+        if (van != null) 'van': van,
+        if (vanNight != null) 'vanNight': vanNight,
+        if (bus != null) 'bus': bus,
+        if (busNight != null) 'busNight': busNight,
+        if (shuttlePP != null) 'shuttlePP': shuttlePP,
+        if (shuttleNightPP != null) 'shuttleNightPP': shuttleNightPP,
+        if (priceForeign != null) 'priceForeign': priceForeign,
+        if (nightPriceForeign != null) 'nightPriceForeign': nightPriceForeign,
+        if (vanForeign != null) 'vanForeign': vanForeign,
+        if (vanNightForeign != null) 'vanNightForeign': vanNightForeign,
+        if (busForeign != null) 'busForeign': busForeign,
+        if (busNightForeign != null) 'busNightForeign': busNightForeign,
+        if (shuttlePPForeign != null) 'shuttlePPForeign': shuttlePPForeign,
+        if (shuttleNightPPForeign != null) 'shuttleNightPPForeign': shuttleNightPPForeign,
         if (sourceId   != null) 'sourceId':   sourceId,
         if (sourceName != null) 'sourceName': sourceName,
       };
