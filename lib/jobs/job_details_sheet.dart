@@ -256,24 +256,25 @@ class JobDetailsSheet extends StatelessWidget {
         ? DateFormat('dd/MM/yyyy  HH:mm').format(job.scheduledAt!)
         : null;
 
-    // ── Fix: σε ορισμένες συσκευές Android με 3-κουμπιά navigation bar,
-    // χωρίς ρητό στυλ εδώ το nav-bar εμφανιζόταν με λευκό φόντο πάνω από το
-    // πραγματικό (σκούρο) system nav-bar, κρύβοντας το τελευταίο κουμπί.
-    // Με AnnotatedRegion δηλώνουμε ρητά διάφανο nav-bar με σκούρα εικονίδια
-    // όσο είναι ανοιχτό αυτό το sheet.
+    // ── Fix: το τελευταίο κουμπί (Ολοκλήρωση Δουλειάς) έμενε μερικώς κρυμμένο
+    // πίσω από το system navigation bar σε ορισμένες συσκευές Android. Δεν
+    // αλλάζουμε το χρώμα του nav-bar (μένει σκούρο/μαύρο όπως πριν) — απλά
+    // δίνουμε στο περιεχόμενο αρκετό επιπλέον κάτω padding ώστε να ξεφεύγει
+    // πλήρως πάνω από αυτό (βλ. padding παρακάτω στο Container).
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: const SystemUiOverlayStyle(
-        systemNavigationBarColor: Colors.transparent,
-        systemNavigationBarIconBrightness: Brightness.dark,
+        systemNavigationBarColor: Colors.black,
+        systemNavigationBarIconBrightness: Brightness.light,
         systemNavigationBarDividerColor: Colors.transparent,
       ),
-      child: Container(
+      child: SafeArea(
+        top: false,
+        child: Container(
       decoration: const BoxDecoration(
         color:        Colors.white,
         borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
       ),
-      padding: EdgeInsets.fromLTRB(
-          20, 12, 20, 20 + MediaQuery.of(context).padding.bottom),
+      padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
       child: SingleChildScrollView(
         child: Column(mainAxisSize: MainAxisSize.min, children: [
 
@@ -633,6 +634,7 @@ class JobDetailsSheet extends StatelessWidget {
             ),
         ]),
       ),
+    ),
     ),
     );
   }

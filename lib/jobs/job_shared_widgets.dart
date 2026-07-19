@@ -596,6 +596,65 @@ class _BlinkingBoxState extends State<BlinkingBox>
   }
 }
 
+// ─── Pulsing wrapper — σαν το BlinkingBox (αναβοσβήνει η αδιαφάνεια) αλλά
+// ΕΠΙΠΛΕΟΝ «ανασαίνει» σε μέγεθος (μεγαλώνει/ξαναμικραίνει ρυθμικά). Για το
+// ποσό Κέρδους σε προπληρωμένη δουλειά — πιο έντονο σήμα από το απλό blink.
+class PulsingBox extends StatefulWidget {
+  final Widget child;
+  final double minOpacity;
+  final double maxScale;
+  final Duration duration;
+  const PulsingBox({
+    super.key,
+    required this.child,
+    this.minOpacity = 0.35,
+    this.maxScale = 1.08,
+    this.duration = const Duration(milliseconds: 700),
+  });
+
+  @override
+  State<PulsingBox> createState() => _PulsingBoxState();
+}
+
+class _PulsingBoxState extends State<PulsingBox>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(vsync: this, duration: widget.duration)
+      ..repeat(reverse: true);
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final reduceMotion = MediaQuery.maybeOf(context)?.disableAnimations ?? false;
+    if (reduceMotion) return widget.child;
+    return AnimatedBuilder(
+      animation: _ctrl,
+      // _ctrl.value: 0 → 1 → 0 (repeat reverse). Στο 0 είμαστε στο ΚΑΝΟΝΙΚΟ
+      // μέγεθος/πλήρη αδιαφάνεια· στο 1 στο ΜΕΓΙΣΤΟ μέγεθος/ελάχιστη αδιαφάνεια
+      // — έτσι ο αριθμός «μεγαλώνει» ενώ ταυτόχρονα ξεθωριάζει λίγο, μετά
+      // επιστρέφει στο αρχικό του μέγεθος, σε συνεχή βρόχο.
+      builder: (_, child) => Opacity(
+        opacity: 1 - (1 - widget.minOpacity) * _ctrl.value,
+        child: Transform.scale(
+          scale: 1 + (widget.maxScale - 1) * _ctrl.value,
+          child: child,
+        ),
+      ),
+      child: widget.child,
+    );
+  }
+}
+
 // ─── Shimmer skeleton ─────────────────────────────────────────────────────────
 //
 // Placeholder φόρτωσης με «λάμψη» που περνά διαγώνια — αντί για στρογγυλό

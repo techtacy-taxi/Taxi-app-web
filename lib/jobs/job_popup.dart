@@ -537,23 +537,14 @@ class _JobPopupContentState extends State<_JobPopupContent>
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
 
-                // Το απόλυτα διορθωμένο Timeline (ΧΩΡΙΣ errors)
-                _routeRow(job.from, job.to),
-                const SizedBox(height: 12),
-                // ── Χάρτης με τα 2 σημεία + αποστάσεις ──────────────────────
-                _mapSection(job),
-                const SizedBox(height: 16),
-                Divider(color: Colors.grey[200], height: 1),
-                const SizedBox(height: 12),
-
-                // ── Οικονομικά στοιχεία, συμπαγές layout ────────────────────
-                // Αριστερά (~42%): το μεγάλο ποσό προς είσπραξη (ή "Πληρώθηκε
-                // online" αν είναι προπληρωμένη). Δεξιά, σε στοίβα: γιαούρτι/
-                // προμήθεια app (αν υπάρχουν) και το Κέρδος — έτσι δεν
-                // «τρώει» ύψος σαν τρία ξεχωριστά πλατιά κελιά δίπλα-δίπλα.
+                // ── Οικονομικά στοιχεία, ΠΑΝΩ από τη διαδρομή — πρώτο πράγμα
+                // που βλέπει ο οδηγός. Αριστερά: μεγάλο ποσό προς είσπραξη
+                // (ή "Πληρώθηκε online"), σε δικό του πλαίσιο. Δεξιά: κάθε
+                // γραμμή (Γιαούρτι/Προμήθεια app/Κέρδος) στο ΔΙΚΟ ΤΗΣ μικρό
+                // πλαίσιο — ξεχωρίζουν καθαρά αντί για μία συνεχόμενη στήλη.
                 Container(
                   decoration: BoxDecoration(
-                    border: Border.all(color: Colors.grey.shade200),
+                    border: Border.all(color: Colors.green.shade300, width: 1.5),
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: IntrinsicHeight(
@@ -563,7 +554,8 @@ class _JobPopupContentState extends State<_JobPopupContent>
                         child: Container(
                           padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 10),
                           decoration: BoxDecoration(
-                            border: Border(right: BorderSide(color: Colors.grey.shade200)),
+                            color: const Color(0xFF1E8E3E).withValues(alpha: 0.06),
+                            border: Border(right: BorderSide(color: Colors.green.shade300, width: 1.5)),
                           ),
                           child: job.depositPaid
                               ? BlinkingBox(child: _bigMoneyCell(
@@ -579,29 +571,34 @@ class _JobPopupContentState extends State<_JobPopupContent>
                       Expanded(
                         flex: 58,
                         child: Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
+                          padding: const EdgeInsets.all(8),
                           child: Column(
                             mainAxisAlignment: MainAxisAlignment.center,
                             crossAxisAlignment: CrossAxisAlignment.stretch,
                             children: [
-                              if (job.commission > 0)
-                                _breakdownLine('Γιαούρτι', '-${job.commission.toStringAsFixed(2)}€'),
-                              if (job.appCommission > 0)
-                                _breakdownLine('Προμήθεια app', '-${job.appCommission.toStringAsFixed(2)}€'),
-                              Container(
-                                margin: const EdgeInsets.only(top: 4),
-                                padding: const EdgeInsets.only(top: 4),
-                                decoration: BoxDecoration(
-                                  border: Border(top: BorderSide(color: Colors.grey.shade200)),
-                                ),
-                                child: job.depositPaid
-                                    ? BlinkingBox(child: _breakdownLine(
-                                        'Κέρδος', '${job.driverEarning.toStringAsFixed(2)}€',
-                                        bold: true, valueColor: Colors.blue))
-                                    : _breakdownLine(
-                                        'Κέρδος', '${job.driverEarning.toStringAsFixed(2)}€',
-                                        bold: true, valueColor: Colors.blue),
-                              ),
+                              // Γιαούρτι: ΠΟΤΕ δεν αναβοσβήνει/ζωντανεύει —
+                              // παραμένει πάντα σταθερό.
+                              if (job.commission > 0) ...[
+                                _breakdownBox('Γιαούρτι', '-${job.commission.toStringAsFixed(2)}€',
+                                    valueColor: Colors.red.shade800),
+                                const SizedBox(height: 6),
+                              ],
+                              if (job.appCommission > 0) ...[
+                                _breakdownBox('Προμήθεια app', '-${job.appCommission.toStringAsFixed(2)}€',
+                                    valueColor: Colors.red.shade800),
+                                const SizedBox(height: 6),
+                              ],
+                              // Κέρδος: σε προπληρωμένη δουλειά «ανασαίνει»
+                              // (PulsingBox — μεγαλώνει/ξαναμικραίνει ρυθμικά
+                              // ΚΑΙ αναβοσβήνει), πιο έντονο σήμα από απλό
+                              // blink, ώστε να μη χαθεί σε καμία περίπτωση.
+                              job.depositPaid
+                                  ? PulsingBox(child: _breakdownBox(
+                                      'Κέρδος', '${job.driverEarning.toStringAsFixed(2)}€',
+                                      bold: true, valueColor: Colors.blue.shade800))
+                                  : _breakdownBox(
+                                      'Κέρδος', '${job.driverEarning.toStringAsFixed(2)}€',
+                                      bold: true, valueColor: Colors.blue.shade800),
                             ],
                           ),
                         ),
@@ -634,6 +631,16 @@ class _JobPopupContentState extends State<_JobPopupContent>
                     ]),
                   ),
                 ],
+                const SizedBox(height: 16),
+
+                // Το απόλυτα διορθωμένο Timeline (ΧΩΡΙΣ errors)
+                _routeRow(job.from, job.to),
+                const SizedBox(height: 12),
+                // ── Χάρτης με τα 2 σημεία + αποστάσεις ──────────────────────
+                _mapSection(job),
+                const SizedBox(height: 16),
+                Divider(color: Colors.grey[200], height: 1),
+                const SizedBox(height: 12),
                 const SizedBox(height: 12),
 
                 // Χαρακτηριστικά διαδρομής
@@ -1113,20 +1120,32 @@ class _JobPopupContentState extends State<_JobPopupContent>
     ]);
   }
 
-  // ── Γραμμή δεξιά στο compact οικονομικό block (γιαούρτι/προμήθεια/κέρδος).
-  Widget _breakdownLine(String label, String value,
-      {bool bold = false, Color? valueColor}) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 2),
+  // ── Ξεχωριστό μικρό πλαίσιο ανά γραμμή (Γιαούρτι/Προμήθεια app/Κέρδος) —
+  // ώστε να ξεχωρίζουν οπτικά μεταξύ τους αντί για μία συνεχόμενη στήλη.
+  // filled=true (Γιαούρτι/Προμήθεια/Κέρδος όλα filled) δίνει ελαφρύ έγχρωμο
+  // φόντο. ΣΗΜΑΝΤΙΚΟ: η ετικέτα ΠΡΕΠΕΙ να είναι σκούρα απόχρωση της ΙΔΙΑΣ
+  // οικογένειας χρώματος με την τιμή — γκρι κείμενο πάνω σε έντονο χρωματιστό
+  // φόντο (π.χ. ροζ/μπλε) σχεδόν χάνεται.
+  Widget _breakdownBox(String label, String value,
+      {bool bold = false, Color? valueColor, Color? labelColor}) {
+    final vc = valueColor ?? Colors.red.shade800;
+    final lc = labelColor ?? vc;
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 9),
+      decoration: BoxDecoration(
+        color: vc.withValues(alpha: 0.08),
+        border: Border.all(color: vc.withValues(alpha: 0.35)),
+        borderRadius: BorderRadius.circular(8),
+      ),
       child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
         Text(label, style: TextStyle(
-            fontSize: bold ? 12.5 : 12,
-            fontWeight: bold ? FontWeight.w700 : FontWeight.normal,
-            color: bold ? Colors.grey[800] : Colors.grey[600])),
+            fontSize: bold ? 12.5 : 11.5,
+            fontWeight: bold ? FontWeight.w700 : FontWeight.w600,
+            color: lc)),
         Text(value, style: TextStyle(
-            fontSize: bold ? 12.5 : 12,
+            fontSize: bold ? 13 : 12,
             fontWeight: FontWeight.bold,
-            color: valueColor ?? Colors.red.shade700)),
+            color: vc)),
       ]),
     );
   }
