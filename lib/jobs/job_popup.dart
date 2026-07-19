@@ -546,46 +546,69 @@ class _JobPopupContentState extends State<_JobPopupContent>
                 Divider(color: Colors.grey[200], height: 1),
                 const SizedBox(height: 12),
 
-                // Οικονομικά στοιχεία
-                Row(children: [
-                  Expanded(child: job.depositPaid
-                      ? BlinkingBox(child: _infoCell(
-                          icon:  Icons.euro_rounded,
-                          label: job.fullyPaid ? 'Πληρώθηκε online' : 'Να εισπράξεις',
-                          value: '${job.remainingToCollect.toStringAsFixed(2)}€',
-                          color: const Color(0xFF1E8E3E),
-                          large: true,
-                        ))
-                      : _infoCell(
-                          icon:  Icons.euro_rounded,
-                          label: 'Τιμή',
-                          value: '${job.remainingToCollect.toStringAsFixed(2)}€',
-                          color: const Color(0xFF1E8E3E),
-                          large: true,
-                        )),
-                  if (job.commission > 0)
-                    Expanded(child: _infoCell(
-                      icon:  Icons.handshake_rounded,
-                      label: 'Γιαούρτι',
-                      value: '-${job.commission.toStringAsFixed(2)}€',
-                      color: Colors.orange,
-                    )),
-                  Expanded(child: job.depositPaid
-                      ? BlinkingBox(child: _infoCell(
-                          icon:  Icons.account_balance_wallet_rounded,
-                          label: 'Κέρδος',
-                          value: '${job.driverEarning.toStringAsFixed(2)}€',
-                          color: Colors.blue,
-                          large: true,
-                        ))
-                      : _infoCell(
-                          icon:  Icons.account_balance_wallet_rounded,
-                          label: 'Κέρδος',
-                          value: '${job.driverEarning.toStringAsFixed(2)}€',
-                          color: Colors.blue,
-                          large: true,
-                        )),
-                ]),
+                // ── Οικονομικά στοιχεία, συμπαγές layout ────────────────────
+                // Αριστερά (~42%): το μεγάλο ποσό προς είσπραξη (ή "Πληρώθηκε
+                // online" αν είναι προπληρωμένη). Δεξιά, σε στοίβα: γιαούρτι/
+                // προμήθεια app (αν υπάρχουν) και το Κέρδος — έτσι δεν
+                // «τρώει» ύψος σαν τρία ξεχωριστά πλατιά κελιά δίπλα-δίπλα.
+                Container(
+                  decoration: BoxDecoration(
+                    border: Border.all(color: Colors.grey.shade200),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: IntrinsicHeight(
+                    child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                      Expanded(
+                        flex: 42,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 10),
+                          decoration: BoxDecoration(
+                            border: Border(right: BorderSide(color: Colors.grey.shade200)),
+                          ),
+                          child: job.depositPaid
+                              ? BlinkingBox(child: _bigMoneyCell(
+                                  label: job.fullyPaid ? 'Πληρώθηκε online' : 'Να εισπράξεις',
+                                  value: '${job.remainingToCollect.toStringAsFixed(2)}€',
+                                ))
+                              : _bigMoneyCell(
+                                  label: 'Να εισπράξεις',
+                                  value: '${job.remainingToCollect.toStringAsFixed(2)}€',
+                                ),
+                        ),
+                      ),
+                      Expanded(
+                        flex: 58,
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              if (job.commission > 0)
+                                _breakdownLine('Γιαούρτι', '-${job.commission.toStringAsFixed(2)}€'),
+                              if (job.appCommission > 0)
+                                _breakdownLine('Προμήθεια app', '-${job.appCommission.toStringAsFixed(2)}€'),
+                              Container(
+                                margin: const EdgeInsets.only(top: 4),
+                                padding: const EdgeInsets.only(top: 4),
+                                decoration: BoxDecoration(
+                                  border: Border(top: BorderSide(color: Colors.grey.shade200)),
+                                ),
+                                child: job.depositPaid
+                                    ? BlinkingBox(child: _breakdownLine(
+                                        'Κέρδος', '${job.driverEarning.toStringAsFixed(2)}€',
+                                        bold: true, valueColor: Colors.blue))
+                                    : _breakdownLine(
+                                        'Κέρδος', '${job.driverEarning.toStringAsFixed(2)}€',
+                                        bold: true, valueColor: Colors.blue),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ]),
+                  ),
+                ),
                 // Σημείωση προκαταβολής/πλήρους πληρωμής — ώστε ο οδηγός να
                 // καταλάβει γιατί το ποσό που θα εισπράξει διαφέρει.
                 if (job.depositPaid) ...[
@@ -1070,6 +1093,40 @@ class _JobPopupContentState extends State<_JobPopupContent>
         Text(label, style: const TextStyle(
             fontSize: 12, fontWeight: FontWeight.bold,
             color: Colors.white, letterSpacing: 0.5)),
+      ]),
+    );
+  }
+
+  // ── Μεγάλο ποσό αριστερά (πλάγιο, χωρίς πλαίσιο δικό του — το εξωτερικό
+  // Container το έχει ήδη). Χρησιμοποιείται τυλιγμένο σε BlinkingBox όταν
+  // η δουλειά είναι προπληρωμένη.
+  Widget _bigMoneyCell({required String label, required String value}) {
+    return Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+      Text(label, style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+          textAlign: TextAlign.center),
+      const SizedBox(height: 2),
+      FittedBox(
+        fit: BoxFit.scaleDown,
+        child: Text(value, style: const TextStyle(
+            fontSize: 26, fontWeight: FontWeight.bold, color: Color(0xFF1E8E3E))),
+      ),
+    ]);
+  }
+
+  // ── Γραμμή δεξιά στο compact οικονομικό block (γιαούρτι/προμήθεια/κέρδος).
+  Widget _breakdownLine(String label, String value,
+      {bool bold = false, Color? valueColor}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+        Text(label, style: TextStyle(
+            fontSize: bold ? 12.5 : 12,
+            fontWeight: bold ? FontWeight.w700 : FontWeight.normal,
+            color: bold ? Colors.grey[800] : Colors.grey[600])),
+        Text(value, style: TextStyle(
+            fontSize: bold ? 12.5 : 12,
+            fontWeight: FontWeight.bold,
+            color: valueColor ?? Colors.red.shade700)),
       ]),
     );
   }

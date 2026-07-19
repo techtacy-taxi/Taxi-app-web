@@ -256,7 +256,18 @@ class JobDetailsSheet extends StatelessWidget {
         ? DateFormat('dd/MM/yyyy  HH:mm').format(job.scheduledAt!)
         : null;
 
-    return Container(
+    // ── Fix: σε ορισμένες συσκευές Android με 3-κουμπιά navigation bar,
+    // χωρίς ρητό στυλ εδώ το nav-bar εμφανιζόταν με λευκό φόντο πάνω από το
+    // πραγματικό (σκούρο) system nav-bar, κρύβοντας το τελευταίο κουμπί.
+    // Με AnnotatedRegion δηλώνουμε ρητά διάφανο nav-bar με σκούρα εικονίδια
+    // όσο είναι ανοιχτό αυτό το sheet.
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: const SystemUiOverlayStyle(
+        systemNavigationBarColor: Colors.transparent,
+        systemNavigationBarIconBrightness: Brightness.dark,
+        systemNavigationBarDividerColor: Colors.transparent,
+      ),
+      child: Container(
       decoration: const BoxDecoration(
         color:        Colors.white,
         borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
@@ -622,6 +633,7 @@ class JobDetailsSheet extends StatelessWidget {
             ),
         ]),
       ),
+    ),
     );
   }
 
@@ -1235,8 +1247,10 @@ class _NameSignScreenState extends State<NameSignScreen> {
   @override
   void dispose() {
     _hideTimer?.cancel();
-    // Επαναφορά system bars ΚΑΙ ελεύθερου orientation όταν κλείσει η ταμπέλα.
-    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    // Επαναφορά system bars: manual (ούτε επιβάλλουμε edgeToEdge, ώστε να
+    // μην αφήνει ενδεχομένως λευκή γραμμή nav-bar σε ορισμένες συσκευές
+    // Android) ΚΑΙ ελεύθερου orientation, όταν κλείσει η ταμπέλα.
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.manual, overlays: SystemUiOverlay.values);
     SystemChrome.setPreferredOrientations(DeviceOrientation.values);
     super.dispose();
   }
