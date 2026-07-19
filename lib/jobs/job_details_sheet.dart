@@ -1,7 +1,10 @@
 // lib/jobs/job_details_sheet.dart
 // Sheet λεπτομερειών δουλειάς — ανοίγει από "Λεπτομέρειες" στο MyJobTile
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:vibration/vibration.dart';
 import 'job_shared_widgets.dart';
@@ -418,13 +421,30 @@ class JobDetailsSheet extends StatelessWidget {
               child: Column(crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   if (job.clientName != null && job.clientName!.isNotEmpty) ...[
-                    Row(children: [
-                      Icon(Icons.badge_rounded,
-                          size: 18, color: Colors.amber.shade800),
-                      const SizedBox(width: 8),
-                      Text(job.clientName!, style: const TextStyle(
-                          fontSize: 15, fontWeight: FontWeight.bold)),
-                    ]),
+                    // Πατώντας στο όνομα (ή στο εικονίδιο) ανοίγει full-screen
+                    // «ταμπέλα αεροδρομίου»: μαύρο φόντο, τεράστια άσπρα
+                    // γράμματα — αντί να τυπώνεις χαρτί.
+                    InkWell(
+                      borderRadius: BorderRadius.circular(8),
+                      onTap: () => Navigator.of(context).push(
+                        MaterialPageRoute(
+                          fullscreenDialog: true,
+                          builder: (_) => NameSignScreen(name: job.clientName!),
+                        ),
+                      ),
+                      child: Row(children: [
+                        Icon(Icons.badge_rounded,
+                            size: 18, color: Colors.amber.shade800),
+                        const SizedBox(width: 8),
+                        Flexible(
+                          child: Text(job.clientName!, style: const TextStyle(
+                              fontSize: 15, fontWeight: FontWeight.bold)),
+                        ),
+                        const SizedBox(width: 6),
+                        Icon(Icons.fullscreen_rounded,
+                            size: 20, color: Colors.amber.shade800),
+                      ]),
+                    ),
                   ],
                   if (job.clientPhone != null && job.clientPhone!.isNotEmpty) ...[
                     const SizedBox(height: 10),
@@ -1176,5 +1196,118 @@ class _GroupStopsSectionState extends State<GroupStopsSection> {
         }),
       ],
     ]);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FULL-SCREEN «ΤΑΜΠΕΛΑ ΑΕΡΟΔΡΟΜΙΟΥ» — μαύρο φόντο, τεράστια άσπρα γράμματα.
+// • Immersive: κρύβει status bar (ώρα/μπαταρία) ΚΑΙ navigation bar (πίσω/Home).
+// • Κάθε λέξη του ονόματος σε δική της γραμμή → μέγιστο δυνατό μέγεθος
+//   γραμματοσειράς, αυτόματα ανάλογα με το μήκος ονόματος/επωνύμου.
+// • Άγγιγμα οθόνης → εμφανίζεται X πάνω-δεξιά για 3 δευτερόλεπτα· μετά
+//   ξανακρύβεται μέχρι το επόμενο άγγιγμα. Το X κλείνει την οθόνη.
+// ─────────────────────────────────────────────────────────────────────────────
+
+class NameSignScreen extends StatefulWidget {
+  final String name;
+  const NameSignScreen({super.key, required this.name});
+
+  @override
+  State<NameSignScreen> createState() => _NameSignScreenState();
+}
+
+class _NameSignScreenState extends State<NameSignScreen> {
+  bool _showClose = false;
+  Timer? _hideTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    // Πλήρες immersive: ούτε ώρα/μπαταρία πάνω, ούτε πίσω/Home κάτω.
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+    // Πάντα landscape — χωράει πιο εύκολα μεγάλα ονοματεπώνυμα.
+    SystemChrome.setPreferredOrientations([
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+    ]);
+  }
+
+  @override
+  void dispose() {
+    _hideTimer?.cancel();
+    // Επαναφορά system bars ΚΑΙ ελεύθερου orientation όταν κλείσει η ταμπέλα.
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    SystemChrome.setPreferredOrientations(DeviceOrientation.values);
+    super.dispose();
+  }
+
+  void _onScreenTap() {
+    setState(() => _showClose = true);
+    _hideTimer?.cancel();
+    _hideTimer = Timer(const Duration(seconds: 3), () {
+      if (mounted) setState(() => _showClose = false);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Κάθε λέξη (όνομα/επώνυμο) σε ΔΙΚΗ ΤΗΣ γραμμή. Κάθε γραμμή μπαίνει σε
+    // FittedBox με scale-down-only και ΕΝΑ Text χωρίς αναδίπλωση (softWrap:
+    // false) — έτσι δεν κόβεται ΠΟΤΕ κανένα γράμμα: το FittedBox σμικρύνει
+    // όσο χρειάζεται ώστε ολόκληρη η λέξη να χωράει στο πλάτος της οθόνης.
+    final words = widget.name.trim().split(RegExp(r'\s+'));
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: _onScreenTap,
+        child: Stack(children: [
+          Positioned.fill(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  for (final w in words)
+                    Expanded(
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Text(
+                          w,
+                          softWrap: false,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w900,
+                            fontSize: 240, // βάση — το FittedBox τη σμικρύνει
+                            height: 1.0,
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+          if (_showClose)
+            Positioned(
+              top: 18,
+              right: 18,
+              child: GestureDetector(
+                onTap: () => Navigator.of(context).pop(),
+                child: Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: const BoxDecoration(
+                    color: Colors.white24,
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(Icons.close_rounded,
+                      color: Colors.white, size: 34),
+                ),
+              ),
+            ),
+        ]),
+      ),
+    );
   }
 }
