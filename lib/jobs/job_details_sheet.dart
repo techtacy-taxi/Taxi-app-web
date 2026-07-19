@@ -1264,7 +1264,7 @@ class _NameSignScreenState extends State<NameSignScreen> {
         child: Stack(children: [
           Positioned.fill(
             child: Padding(
-              padding: const EdgeInsets.all(24),
+              padding: const EdgeInsets.all(6),
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
