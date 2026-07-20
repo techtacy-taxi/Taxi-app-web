@@ -57,10 +57,13 @@ class _LocationTaskHandler extends TaskHandler {
 
     // Ο GPS stream στήνεται ΟΠΩΣΔΗΠΟΤΕ (ακόμη κι αν το auth αργήσει).
     // Κάθε νέα θέση: αποθήκευση στη μνήμη + έλεγχος για write.
+    // 🔋 accuracy high (όχι best) — ακρίβεια ~10μ, αρκετή για dispatch με
+    // φίλτρο 100μ, με αισθητά μικρότερη κατανάλωση GPS.
+    // distanceFilter 40μ — το φίλτρο δημοσίευσης είναι έτσι κι αλλιώς 100μ.
     _positionSub = Geolocator.getPositionStream(
       locationSettings: const LocationSettings(
-        accuracy:       LocationAccuracy.best,
-        distanceFilter: 25,
+        accuracy:       LocationAccuracy.high,
+        distanceFilter: 40,
       ),
     ).listen((pos) {
       _latestPos   = pos;
@@ -73,7 +76,7 @@ class _LocationTaskHandler extends TaskHandler {
     try {
       final first = await Geolocator.getCurrentPosition(
         locationSettings:
-            const LocationSettings(accuracy: LocationAccuracy.best),
+            const LocationSettings(accuracy: LocationAccuracy.high),
       ).timeout(const Duration(seconds: 15));
       _latestPos   = first;
       _latestPosAt = DateTime.now();
@@ -108,11 +111,18 @@ class _LocationTaskHandler extends TaskHandler {
         DateTime.now().difference(_latestPosAt!).inSeconds < 90;
 
     if (!fresh) {
+      // 🔋 ΟΙΚΟΝΟΜΙΑ ΜΠΑΤΑΡΙΑΣ: Πριν ανάψουμε το GPS για φρέσκο fix,
+      // έλεγξε αν έχει καν περάσει το interval δημοσίευσης (3′/15′).
+      // Πριν, ο ακίνητος οδηγός έπαιρνε άσκοπο GPS fix ΚΑΘΕ 1′ —
+      // δηλ. έως 15 fixes μέγιστης ακρίβειας πριν από κάθε write.
+      // Τώρα το GPS ανάβει μόνο όταν πλησιάζει η ώρα δημοσίευσης.
+      if (!await _publishIntervalElapsed()) return;
+
       // Ο stream δεν χτύπησε πρόσφατα → πάρε φρέσκο GPS fix μόνος σου.
       try {
         pos = await Geolocator.getCurrentPosition(
           locationSettings:
-              const LocationSettings(accuracy: LocationAccuracy.best),
+              const LocationSettings(accuracy: LocationAccuracy.high),
         ).timeout(const Duration(seconds: 15));
         _latestPos   = pos;
         _latestPosAt = DateTime.now();
@@ -121,6 +131,26 @@ class _LocationTaskHandler extends TaskHandler {
 
     if (pos == null) return; // δεν υπάρχει ακόμα GPS fix
     await _maybePublish(pos);
+  }
+
+  // 🔋 Επιστρέφει true ΜΟΝΟ αν έχει περάσει το interval δημοσίευσης
+  // (3′ διαθέσιμος / 15′ μη διαθέσιμος) από το τελευταίο write.
+  // Χρησιμοποιείται για να ΜΗΝ ανάβει το GPS άσκοπα σε ακίνητο οδηγό.
+  Future<bool> _publishIntervalElapsed() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.reload();
+      final lastMs = prefs.getInt(kPrefsLastPubMs);
+      if (lastMs == null) return true; // δεν έχει σταλεί ποτέ → επιτρέπεται
+      final available = prefs.getBool(kPrefsAvailableKey) ?? false;
+      final interval  = available
+          ? kPublishIntervalAvailable
+          : kPublishIntervalUnavailable;
+      final elapsed = DateTime.now().millisecondsSinceEpoch - lastMs;
+      return elapsed >= interval.inMilliseconds;
+    } catch (_) {
+      return true; // σε σφάλμα, μην μπλοκάρεις τη ροή — όπως πριν
+    }
   }
 
   // Γράφει στο Firebase ΜΟΝΟ αν ισχύουν ΚΑΙ τα δύο:
