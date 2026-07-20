@@ -2,13 +2,19 @@
 // FILE: ./lib/jobs/job_popup.dart
 // ==========================================
 //
-// ΝΕΟ ΣΤΙΛ ΚΑΡΤΑΣ ΝΕΑΣ ΔΟΥΛΕΙΑΣ (προς διεκδίκηση).
-// Ίδιο με το job_popup.dart με προσθήκη:
-//  • χάρτη με τα 2 σημεία (Από / Προς)
-//  • απόσταση διαδρομής σε χλμ
-//  • απόσταση του οδηγού από το σημείο "Από"
-// Χρησιμοποιείται μόνο όταν ο διακόπτης "Νέα Φόρμα Δουλειάς" είναι ON
-// και η δουλειά έχει συντεταγμένες.
+// REDESIGN v2 (εγκεκριμένα mockups):
+//  • Επάνω μπάρα ΡΑΝΤΕΒΟΥ (μπλε) / ΤΩΡΑ (κίτρινη) με badge οχήματος δεξιά
+//  • Μπλοκ πληρωμής: ΜΠΛΕ = προπληρωμένη (ΜΗΝ εισπράξεις, PulsingBox),
+//    ΠΡΑΣΙΝΟ = εισπράττεις (μεγάλο ποσό δεξιά)
+//  • Μεγάλος χάρτης (lite/static) με badges στις γωνίες:
+//    «Από εσένα Χ χλμ · Υ′» πάνω αριστερά, «Διαδρομή» κάτω δεξιά
+//  • Παραλαβή · ώρα ραντεβού — Προορισμός · άφιξη ~ΩΩ:ΛΛ (ραντεβού)
+//    ή ~Χ′ (άμεση)
+//  • Chips (άτομα/βαλίτσες/παιδικά καθίσματα) ΜΕΤΑ τις διευθύνσεις
+//  • Πλήρης υποστήριξη Dark mode (AppColors)
+//
+// Η ΛΟΓΙΚΗ παραμένει ίδια με πριν: timer, ήχος, δόνηση, watchJob,
+// αποδοχή/απόρριψη, banner αναμονής, fallbacks αποστάσεων.
 
 import 'dart:async';
 import 'dart:math' as math;
@@ -20,19 +26,19 @@ import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:just_audio/just_audio.dart';
-import 'job_shared_widgets.dart';
 import 'package:vibration/vibration.dart';
+import '../app_theme.dart';
+import '../notifications_service.dart';
 import 'job_model.dart';
 import 'job_service.dart';
+import 'job_shared_widgets.dart';
 import 'places_service.dart';
-import '../notifications_service.dart';
 
 class JobPopup extends StatefulWidget {
   final Job    job;
   final String uid;
   final String driverName;
   // Πλήθος επόμενων διεκδικήσεων που περιμένουν πίσω από αυτή.
-  // Ενημερώνεται ζωντανά όσο φτάνουν νέες δουλειές.
   final ValueListenable<int>? pendingCount;
 
   const JobPopup({
@@ -50,10 +56,11 @@ class JobPopup extends StatefulWidget {
 class _JobPopupState extends State<JobPopup> {
   @override
   Widget build(BuildContext context) {
+    final c = AppColors.of(context);
     return Dialog(
       shape:           RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-      backgroundColor: Colors.white,
-      insetPadding:    const EdgeInsets.symmetric(horizontal: 20, vertical: 30),
+      backgroundColor: c.scaffold,
+      insetPadding:    const EdgeInsets.symmetric(horizontal: 16, vertical: 26),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(24),
         child: _JobPopupContent(
@@ -95,15 +102,16 @@ class _JobPopupContentState extends State<_JobPopupContent>
   StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _jobSub;
   late AnimationController _shakeCtrl;
   late Animation<double>   _shakeAnim;
-  
+
   final AudioPlayer _popupAudioPlayer = AudioPlayer();
 
-  // Απόσταση του οδηγού από το σημείο "Από" (οδήγηση, χλμ)
+  // Απόσταση/χρόνος ΟΔΗΓΗΣΗΣ του οδηγού μέχρι το σημείο «Από»
   double? _driverDistanceKm;
+  int?    _driverDistanceMin;
   bool    _distanceLoading = true;
   bool    _driverDistanceIsAir = false; // true = ευθεία (fallback)
 
-  // Χρόνος διαδρομής (fallback για παλιές δουλειές χωρίς αποθηκευμένο routeMinutes)
+  // Χρόνος διαδρομής (fallback για παλιές δουλειές χωρίς routeMinutes)
   int?    _routeMinutesFallback;
 
   @override
@@ -127,8 +135,9 @@ class _JobPopupContentState extends State<_JobPopupContent>
     _ensureRouteMinutes();
   }
 
-  // Αν η δουλειά ΔΕΝ έχει αποθηκευμένο χρόνο (παλιές δουλειές), τον υπολογίζουμε
-  // μία φορά. Ραντεβού → πρόβλεψη κίνησης για την ώρα ραντεβού· άμεση → τώρα.
+  // Αν η δουλειά ΔΕΝ έχει αποθηκευμένο χρόνο (παλιές δουλειές), τον
+  // υπολογίζουμε μία φορά. Ραντεβού → πρόβλεψη κίνησης για την ώρα
+  // ραντεβού· άμεση → τώρα.
   Future<void> _ensureRouteMinutes() async {
     final job = widget.job;
     if (job.routeMinutes != null) return;
@@ -147,9 +156,7 @@ class _JobPopupContentState extends State<_JobPopupContent>
     } catch (_) {/* αγνόησε — απλώς δεν δείχνουμε χρόνο */}
   }
 
-  // Βρίσκει την τρέχουσα θέση του οδηγού και υπολογίζει την απόσταση
-  // ΟΔΗΓΗΣΗΣ μέχρι το σημείο "Από" (πού βρίσκεται ο πελάτης).
-  // Κάθε οδηγός είναι αλλού → ο καθένας βλέπει τη δική του απόσταση.
+  // Θέση οδηγού → απόσταση + χρόνος ΟΔΗΓΗΣΗΣ μέχρι το σημείο «Από».
   Future<void> _computeDriverDistance() async {
     final job = widget.job;
     if (job.fromLat == null || job.fromLng == null) {
@@ -186,6 +193,7 @@ class _JobPopupContentState extends State<_JobPopupContent>
       if (!mounted) return;
       setState(() {
         _driverDistanceKm    = km;
+        _driverDistanceMin   = route?.minutes;
         _driverDistanceIsAir = route == null;
         _distanceLoading     = false;
       });
@@ -194,8 +202,8 @@ class _JobPopupContentState extends State<_JobPopupContent>
     }
   }
 
-  // Παρακολουθεί τη δουλειά — αν ο admin πατήσει ΣΤΟΠ, ή την πάρει άλλος,
-  // ή διαγραφεί → κλείνει αυτόματα το popup & σταματά ο ήχος.
+  // Αν ο admin πατήσει ΣΤΟΠ, ή την πάρει άλλος, ή διαγραφεί →
+  // κλείνει αυτόματα το popup & σταματά ο ήχος.
   void _watchJob() {
     _jobSub = FirebaseFirestore.instance
         .collection('jobs')
@@ -220,14 +228,12 @@ class _JobPopupContentState extends State<_JobPopupContent>
   }
 
   Future<void> _startVibration() async {
-    // Δυνατή, συνεχόμενη δόνηση όσο εμφανίζεται το popup
     bool hasVibrator = false;
     try {
       hasVibrator = await Vibration.hasVibrator();
     } catch (_) {}
 
     if (hasVibrator) {
-      // Μοτίβο: 4 έντονοι παλμοί 800ms, με μέγιστη ένταση
       try {
         Vibration.vibrate(
           pattern:   const [0, 800, 400, 800, 400, 800, 400, 800],
@@ -236,7 +242,6 @@ class _JobPopupContentState extends State<_JobPopupContent>
       } catch (_) {
         HapticFeedback.heavyImpact();
       }
-      // Επανάληψη κάθε 4.5s (όσο διαρκεί το μοτίβο)
       _vibrationTimer = Timer.periodic(const Duration(milliseconds: 4500), (_) {
         try {
           Vibration.vibrate(
@@ -322,7 +327,7 @@ class _JobPopupContentState extends State<_JobPopupContent>
       name:  widget.driverName,
     );
     if (!mounted) return;
-    // ΠΡΟΣΟΧΗ: παίρνουμε το messenger ΠΡΙΝ το pop — μετά το pop το context
+    // Παίρνουμε το messenger ΠΡΙΝ το pop — μετά το pop το context
     // του popup απενεργοποιείται και το ScaffoldMessenger.of(context) σκάει.
     final messenger = ScaffoldMessenger.of(context);
     _closing = true;
@@ -352,7 +357,8 @@ class _JobPopupContentState extends State<_JobPopupContent>
         content: Row(children: [
           const Icon(Icons.check_circle_rounded, color: Colors.white),
           const SizedBox(width: 10),
-          Text('Ανέλαβες: ${widget.job.from} → ${widget.job.to}'),
+          Expanded(child: Text('Ανέλαβες: ${widget.job.from} → ${widget.job.to}',
+              maxLines: 2, overflow: TextOverflow.ellipsis)),
         ]),
         backgroundColor: const Color(0xFF1E8E3E),
         duration:        const Duration(seconds: 4),
@@ -374,18 +380,44 @@ class _JobPopupContentState extends State<_JobPopupContent>
     return Colors.red;
   }
 
+  static String _hhmm(DateTime t) =>
+      '${t.hour.toString().padLeft(2, "0")}:${t.minute.toString().padLeft(2, "0")}';
+
+  // «Αύριο, Τρ 21/07 · 14:30» — φιλική ετικέτα ραντεβού
+  String _scheduleLabel(DateTime t) {
+    const days = ['Δε', 'Τρ', 'Τε', 'Πε', 'Πα', 'Σα', 'Κυ'];
+    final now      = DateTime.now();
+    final today    = DateTime(now.year, now.month, now.day);
+    final thatDay  = DateTime(t.year, t.month, t.day);
+    final diffDays = thatDay.difference(today).inDays;
+    final dayPart  = switch (diffDays) {
+      0 => 'Σήμερα',
+      1 => 'Αύριο',
+      _ => days[t.weekday - 1],
+    };
+    final dm = '${t.day.toString().padLeft(2, "0")}/${t.month.toString().padLeft(2, "0")}';
+    return '$dayPart $dm · ${_hhmm(t)}';
+  }
+
+  IconData get _vehicleIcon => switch (widget.job.vehicleType) {
+        'van'     => Icons.airport_shuttle_rounded,
+        'bus'     => Icons.directions_bus_rounded,
+        'shuttle' => Icons.directions_bus_rounded,
+        _         => Icons.local_taxi_rounded,
+      };
+
   // ─── Build ────────────────────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
     final job = widget.job;
+    final c   = AppColors.of(context);
 
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
 
         // 0. BANNER ΑΝΑΜΟΝΗΣ — πόσες ακόμη διεκδικήσεις περιμένουν πίσω.
-        //    Εμφανίζεται μόνο όταν υπάρχουν >0 και ενημερώνεται ζωντανά.
         if (widget.pendingCount != null)
           ValueListenableBuilder<int>(
             valueListenable: widget.pendingCount!,
@@ -399,8 +431,7 @@ class _JobPopupContentState extends State<_JobPopupContent>
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    const Icon(Icons.layers_rounded,
-                        size: 16, color: Colors.amber),
+                    Icon(Icons.layers_rounded, size: 16, color: c.amber),
                     const SizedBox(width: 8),
                     Text(
                       waiting == 1
@@ -417,24 +448,27 @@ class _JobPopupContentState extends State<_JobPopupContent>
             },
           ),
 
-        // 1. ΣΤΑΘΕΡΟ HEADER
-        Container(
-          width:  double.infinity,
-          padding: const EdgeInsets.symmetric(vertical: 9),
-          decoration: const BoxDecoration(
-            color: Colors.amber,
-          ),
-          child: Column(children: [
-            const Icon(Icons.work_rounded, size: 22, color: Colors.black87),
-            const SizedBox(height: 2),
-            const Text('Νέα Διεκδίκηση!',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black87)),
-            const SizedBox(height: 5),
+        // 1. ΛΕΠΤΟ HEADER: «Νέα δουλειά» + χρονόμετρο (με shake στα <10″)
+        Padding(
+          padding: const EdgeInsets.fromLTRB(14, 12, 14, 0),
+          child: Row(children: [
+            Icon(Icons.work_rounded, size: 18, color: c.amberDeep),
+            const SizedBox(width: 8),
+            Text('Νέα δουλειά',
+                style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                    color: c.textMain)),
+            const Spacer(),
             AnimatedBuilder(
               animation: _shakeAnim,
               builder: (_, child) => Transform.translate(
                 offset: Offset(
-                  _secondsLeft <= 10 ? (_shakeCtrl.value < 0.5 ? _shakeAnim.value : -_shakeAnim.value) : 0,
+                  _secondsLeft <= 10
+                      ? (_shakeCtrl.value < 0.5
+                          ? _shakeAnim.value
+                          : -_shakeAnim.value)
+                      : 0,
                   0,
                 ),
                 child: child,
@@ -442,247 +476,59 @@ class _JobPopupContentState extends State<_JobPopupContent>
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 400),
                 curve:    Curves.easeInOut,
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 5),
                 decoration: BoxDecoration(
-                  color:        _timerColor.withValues(alpha: 0.15),
+                  color:        _timerColor.withValues(alpha: 0.14),
                   borderRadius: BorderRadius.circular(20),
                   border:       Border.all(color: _timerColor, width: 2),
                 ),
                 child: Row(mainAxisSize: MainAxisSize.min, children: [
-                  Icon(Icons.timer_rounded, size: 16, color: _timerColor),
-                  const SizedBox(width: 6),
-                  Text(_timeLabel, style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: _timerColor)),
+                  Icon(Icons.timer_rounded, size: 15, color: _timerColor),
+                  const SizedBox(width: 5),
+                  Text(_timeLabel,
+                      style: TextStyle(
+                          fontSize: 17,
+                          fontWeight: FontWeight.bold,
+                          color: _timerColor)),
                 ]),
               ),
             ),
           ]),
         ),
 
-        // 1b. ΜΠΑΡΑ ΚΑΤΑΣΤΑΣΗΣ — από άκρη σε άκρη, κάτω από το header.
-        //     Μπλε «Προγραμματισμένη» αν είναι ραντεβού, αλλιώς πράσινη «ΑΜΕΣΑ».
-        if (job.scheduledAt != null)
-          Container(
-            width: double.infinity,
-            color: const Color(0xFF185FA5),
-            padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 16),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const Icon(Icons.schedule_rounded, size: 16, color: Colors.white),
-                const SizedBox(width: 8),
-                Text(
-                  'Προγραμματισμένη: ${job.scheduledAt!.day}/${job.scheduledAt!.month} ${job.scheduledAt!.hour.toString().padLeft(2, "0")}:${job.scheduledAt!.minute.toString().padLeft(2, "0")}',
-                  style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600),
-                ),
-              ],
-            ),
-          )
-        else
-          Container(
-            width: double.infinity,
-            color: const Color(0xFF1E8E3E),
-            padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 16),
-            child: const Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(Icons.bolt_rounded, size: 18, color: Colors.white),
-                SizedBox(width: 8),
-                Text(
-                  'ΑΜΕΣΑ',
-                  style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 14,
-                      fontWeight: FontWeight.bold,
-                      letterSpacing: 0.5),
-                ),
-              ],
-            ),
-          ),
-
-        // 1c. ΜΠΑΡΑ «ΠΡΟΠΛΗΡΩΜΕΝΗ» — αμέσως κάτω από ΡΑΝΤΕΒΟΥ/ΑΜΕΣΑ, άκρη-σε-
-        // άκρη (ίδιο στυλ με τις μπάρες κατάστασης από πάνω). Μόνο για πλήρη
-        // πληρωμή (online ή χειροκίνητη).
-        if (job.fullyPaid)
-          BlinkingBox(
-            child: Container(
-            width: double.infinity,
-            color: const Color(0xFFD97757),
-            padding: const EdgeInsets.symmetric(vertical: 9, horizontal: 10),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const Icon(Icons.warning_amber_rounded, color: Colors.white, size: 17),
-                const SizedBox(width: 7),
-                Flexible(
-                  child: Text('ΠΡΟΠΛΗΡΩΜΕΝΗ — ΔΕΝ ΕΙΣΠΡΑΤΤΕΙΣ ΤΙΠΟΤΑ',
-                      textAlign: TextAlign.center,
-                      maxLines: 2,
-                      style: const TextStyle(
-                          color: Colors.white, fontSize: 12,
-                          fontWeight: FontWeight.w900)),
-                ),
-              ],
-            ),
-            ),
-          ),
-
         // 2. SCROLLABLE BODY
         Flexible(
           child: SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(20, 20, 20, 10),
+            padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
 
-                // ── Οικονομικά στοιχεία, ΠΑΝΩ από τη διαδρομή — πρώτο πράγμα
-                // που βλέπει ο οδηγός. Αριστερά: μεγάλο ποσό προς είσπραξη
-                // (ή "Πληρώθηκε online"), σε δικό του πλαίσιο. Δεξιά: κάθε
-                // γραμμή (Γιαούρτι/Προμήθεια app/Κέρδος) στο ΔΙΚΟ ΤΗΣ μικρό
-                // πλαίσιο — ξεχωρίζουν καθαρά αντί για μία συνεχόμενη στήλη.
-                Container(
-                  decoration: BoxDecoration(
-                    border: Border.all(color: Colors.green.shade300, width: 1.5),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: IntrinsicHeight(
-                    child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-                      Expanded(
-                        flex: 42,
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 10),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF1E8E3E).withValues(alpha: 0.06),
-                            border: Border(right: BorderSide(color: Colors.green.shade300, width: 1.5)),
-                          ),
-                          child: job.depositPaid
-                              ? BlinkingBox(child: _bigMoneyCell(
-                                  label: job.fullyPaid ? 'Πληρώθηκε online' : 'Να εισπράξεις',
-                                  value: '${job.remainingToCollect.toStringAsFixed(2)}€',
-                                ))
-                              : _bigMoneyCell(
-                                  label: 'Να εισπράξεις',
-                                  value: '${job.remainingToCollect.toStringAsFixed(2)}€',
-                                ),
-                        ),
-                      ),
-                      Expanded(
-                        flex: 58,
-                        child: Padding(
-                          padding: const EdgeInsets.all(8),
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              // Γιαούρτι: ΠΟΤΕ δεν αναβοσβήνει/ζωντανεύει —
-                              // παραμένει πάντα σταθερό.
-                              if (job.commission > 0) ...[
-                                _breakdownBox('Γιαούρτι', '-${job.commission.toStringAsFixed(2)}€',
-                                    valueColor: Colors.red.shade800),
-                                const SizedBox(height: 6),
-                              ],
-                              if (job.appCommission > 0) ...[
-                                _breakdownBox('Προμήθεια app', '-${job.appCommission.toStringAsFixed(2)}€',
-                                    valueColor: Colors.red.shade800),
-                                const SizedBox(height: 6),
-                              ],
-                              // Κέρδος: σε προπληρωμένη δουλειά «ανασαίνει»
-                              // (PulsingBox — μεγαλώνει/ξαναμικραίνει ρυθμικά
-                              // ΚΑΙ αναβοσβήνει), πιο έντονο σήμα από απλό
-                              // blink, ώστε να μη χαθεί σε καμία περίπτωση.
-                              job.depositPaid
-                                  ? PulsingBox(child: _breakdownBox(
-                                      'Κέρδος', '${job.driverEarning.toStringAsFixed(2)}€',
-                                      bold: true, valueColor: Colors.blue.shade800))
-                                  : _breakdownBox(
-                                      'Κέρδος', '${job.driverEarning.toStringAsFixed(2)}€',
-                                      bold: true, valueColor: Colors.blue.shade800),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ]),
-                  ),
-                ),
-                // Σημείωση προκαταβολής/πλήρους πληρωμής — ώστε ο οδηγός να
-                // καταλάβει γιατί το ποσό που θα εισπράξει διαφέρει.
-                if (job.depositPaid) ...[
-                  const SizedBox(height: 8),
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-                    decoration: BoxDecoration(
-                      color: Colors.blue.shade50,
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: Colors.blue.shade200),
-                    ),
-                    child: Row(children: [
-                      Icon(Icons.info_outline_rounded, size: 15, color: Colors.blue.shade700),
-                      const SizedBox(width: 7),
-                      Expanded(child: Text(
-                        job.fullyPaid
-                            ? 'Ο πελάτης έχει ήδη πληρώσει ΟΛΟΚΛΗΡΗ την τιμή (${job.depositAmount.toStringAsFixed(2)}€) online. Δεν χρειάζεται να εισπράξεις τίποτα!'
-                            : 'Ο πελάτης πλήρωσε προκαταβολή ${job.depositAmount.toStringAsFixed(2)}€ online στον master. '
-                              'Το ποσό ${job.price.toStringAsFixed(2)}€ πάνω είναι ήδη το ΥΠΟΛΟΙΠΟ που θα εισπράξεις — δεν αφαιρείται τίποτα άλλο.',
-                        style: TextStyle(fontSize: 11.5, color: Colors.blue.shade900),
-                      )),
-                    ]),
-                  ),
-                ],
-                const SizedBox(height: 16),
-
-                // Το απόλυτα διορθωμένο Timeline (ΧΩΡΙΣ errors)
-                _routeRow(job.from, job.to),
-                const SizedBox(height: 12),
-                // ── Χάρτης με τα 2 σημεία + αποστάσεις ──────────────────────
-                _mapSection(job),
-                const SizedBox(height: 16),
-                Divider(color: Colors.grey[200], height: 1),
-                const SizedBox(height: 12),
+                // ── Μπάρα ΡΑΝΤΕΒΟΥ / ΤΩΡΑ με badge οχήματος δεξιά ──
+                _scheduleBar(job, c),
                 const SizedBox(height: 12),
 
-                // Χαρακτηριστικά διαδρομής
-                Row(children: [
-                  Expanded(child: _infoCell(
-                    icon:  Icons.person_rounded,
-                    label: 'Άτομα',
-                    value: '${job.persons}',
-                  )),
-                  Expanded(child: _infoCell(
-                    icon:  Icons.luggage_rounded,
-                    label: 'Βαλίτσες',
-                    value: '${job.luggage}',
-                  )),
-                  Expanded(child: _infoCell(
-                    icon:  job.vehicleType == 'van' ? Icons.airport_shuttle_rounded : Icons.local_taxi_rounded,
-                    label: 'Όχημα',
-                    value: job.vehicleLabel,
-                  )),
-                  if (job.childSeat)
-                    Expanded(child: _infoCell(
-                      icon:  Icons.child_care_rounded,
-                      label: 'Παιδικά καθίσματα',
-                      value: job.childSeatCount > 0
-                          ? '${job.childSeatCount}'
-                          : 'Ναι',
-                      color: Colors.purple,
-                    )),
-                ]),
+                // ── Μπλοκ πληρωμής: μπλε = ΜΗΝ εισπράξεις,
+                //    πράσινο = εισπράττεις ──
+                _paymentBlock(job, c),
+                const SizedBox(height: 12),
 
-                // Ευδιάκριτα σήματα: επιστροφή / στάσεις
+                // ── Κάρτα: χάρτης (badges στις γωνίες) + διευθύνσεις ──
+                _routeCard(job, c),
+
+                // ── Chips: άτομα / βαλίτσες / παιδικά καθίσματα ──
+                const SizedBox(height: 12),
+                _detailChips(job, c),
+
+                // ── Σήματα: επιστροφή / στάσεις ──
                 if (job.withReturn || job.withStops) ...[
                   const SizedBox(height: 10),
-                  Row(children: [
+                  Wrap(spacing: 8, runSpacing: 8, children: [
                     if (job.withReturn)
-                      Padding(
-                        padding: const EdgeInsets.only(right: 8),
-                        child: _routeTag(
-                          icon:  Icons.swap_horiz_rounded,
-                          label: 'ΜΕ ΕΠΙΣΤΡΟΦΗ',
-                          color: const Color(0xFF1565C0),
-                        ),
+                      _routeTag(
+                        icon:  Icons.swap_horiz_rounded,
+                        label: 'ΜΕ ΕΠΙΣΤΡΟΦΗ',
+                        color: const Color(0xFF1565C0),
                       ),
                     if (job.withStops)
                       _routeTag(
@@ -693,120 +539,429 @@ class _JobPopupContentState extends State<_JobPopupContent>
                   ]),
                 ],
 
-                // Κάρτα Στοιχείων Πελάτη — ΜΟΝΟ πτήση/πλοίο φαίνεται
-                // Όνομα και τηλέφωνο κρυμμένα μέχρι να ανατεθεί η δουλειά
-                if (job.flightOrShip != null && job.flightOrShip!.isNotEmpty) ...[
-                  const SizedBox(height: 14),
+                // ── Πτήση / Πλοίο (όνομα & τηλέφωνο κρυμμένα πριν την
+                //    ανάθεση) ──
+                if (job.flightOrShip != null &&
+                    job.flightOrShip!.isNotEmpty) ...[
+                  const SizedBox(height: 12),
                   Container(
                     width: double.infinity,
-                    padding: const EdgeInsets.all(12),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 10),
                     decoration: BoxDecoration(
-                      color:        Colors.amber.shade50.withValues(alpha: 0.4),
+                      color:        c.amberSoft,
                       borderRadius: BorderRadius.circular(14),
-                      border:       Border.all(color: Colors.amber.shade200),
                     ),
-                    child: _clientInfoLine(
-                        Icons.flight_rounded,
-                        'Πτήση / Πλοίο: ${job.flightOrShip!}'),
+                    child: Row(children: [
+                      Icon(Icons.flight_rounded,
+                          size: 17, color: c.amberDeep),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text('Πτήση / Πλοίο: ${job.flightOrShip!}',
+                            style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                                color: c.isDark
+                                    ? c.amberDeep
+                                    : const Color(0xFF633806))),
+                      ),
+                    ]),
                   ),
                 ],
 
-                // (Η ένδειξη «Προγραμματισμένη / ΑΜΕΣΑ» εμφανίζεται πλέον
-                //  ως μπάρα κάτω από το header.)
-
-                // Σημειώσεις
+                // ── Σημειώσεις ──
                 if (job.note != null && job.note!.isNotEmpty) ...[
                   const SizedBox(height: 10),
                   Container(
                     width:   double.infinity,
-                    padding: const EdgeInsets.all(10),
+                    padding: const EdgeInsets.all(11),
                     decoration: BoxDecoration(
-                      color:        Colors.grey.shade50,
-                      borderRadius: BorderRadius.circular(10),
-                      border:       Border.all(color: Colors.grey.shade200),
+                      color:        c.card,
+                      borderRadius: BorderRadius.circular(14),
+                      border:       Border.all(color: c.cardBorder, width: 0.8),
                     ),
-                    child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                      Icon(Icons.notes_rounded, size: 16, color: Colors.grey[600]),
-                      const SizedBox(width: 8),
-                      Expanded(child: Text(job.note!, style: TextStyle(fontSize: 13, color: Colors.grey[700]))),
-                    ]),
+                    child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Icon(Icons.notes_rounded,
+                              size: 16, color: c.textFaint),
+                          const SizedBox(width: 8),
+                          Expanded(
+                              child: Text(job.note!,
+                                  style: TextStyle(
+                                      fontSize: 13, color: c.textMain))),
+                        ]),
                   ),
                 ],
 
                 if (job.commissionLabel.isNotEmpty) ...[
                   const SizedBox(height: 8),
-                  Text(job.commissionLabel, style: TextStyle(fontSize: 11, color: Colors.grey[500])),
+                  Text(job.commissionLabel,
+                      style: TextStyle(fontSize: 11, color: c.textFaint)),
                 ],
               ],
             ),
           ),
         ),
 
-        // 3. ΣΤΑΘΕΡΟ FOOTER BUTTONS
-        Container(
-          padding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            border: Border(top: BorderSide(color: Colors.grey.shade100, width: 1)),
+        // 3. ΣΤΑΘΕΡΑ ΚΟΥΜΠΙΑ (pill) — SafeArea για το κάτω navigation bar
+        SafeArea(
+          top: false,
+          child: Container(
+            padding: const EdgeInsets.fromLTRB(14, 8, 14, 14),
+            decoration: BoxDecoration(
+              color:  c.scaffold,
+              border: Border(top: BorderSide(color: c.divider, width: 1)),
+            ),
+            child: Row(children: [
+              Expanded(
+                flex: 2,
+                child: OutlinedButton(
+                  onPressed: _isTaking ? null : _decline,
+                  child: const Text('Απόρριψη'),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                flex: 3,
+                child: FilledButton(
+                  onPressed: _isTaking ? null : _accept,
+                  child: _isTaking
+                      ? const SizedBox(
+                          width: 20, height: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2))
+                      : const Text('Αποδοχή'),
+                ),
+              ),
+            ]),
           ),
-          child: Row(children: [
-            Expanded(
-              flex: 2,
-              child: OutlinedButton.icon(
-                onPressed: _isTaking ? null : _decline,
-                style: OutlinedButton.styleFrom(
-                  padding:       const EdgeInsets.symmetric(vertical: 14),
-                  side:          BorderSide(color: Colors.grey.shade300),
-                  shape:         RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                  foregroundColor: Colors.grey[700],
-                ),
-                icon:  const Icon(Icons.close_rounded),
-                label: const Text('Όχι', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              flex: 3,
-              child: FilledButton.icon(
-                onPressed: _isTaking ? null : _accept,
-                style: FilledButton.styleFrom(
-                  backgroundColor: const Color(0xFF1E8E3E),
-                  foregroundColor: Colors.white,
-                  padding:         const EdgeInsets.symmetric(vertical: 14),
-                  shape:           RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                ),
-                icon: _isTaking
-                    ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                    : const Icon(Icons.check_rounded, size: 22),
-                label: Text(
-                  _isTaking ? 'Αποδοχή...' : 'Αποδέχομαι',
-                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                ),
-              ),
-            ),
-          ]),
         ),
       ],
     );
   }
 
-  // ─── Shared widgets ───────────────────────────────────────────────────────
+  // ─── Τμήματα UI ───────────────────────────────────────────────────────────
 
-  // Χάρτης με τα 2 σημεία + αποστάσεις
-  Widget _mapSection(Job job) {
-    if (!job.hasRouteCoords) return const SizedBox.shrink();
+  // Μπάρα ΡΑΝΤΕΒΟΥ (μπλε) / ΤΩΡΑ (κίτρινη) με badge οχήματος δεξιά
+  Widget _scheduleBar(Job job, AppColors c) {
+    final isScheduled = job.scheduledAt != null;
 
+    final bg        = isScheduled ? c.blueSoft : c.amberSoft;
+    final iconColor = isScheduled
+        ? (c.isDark ? const Color(0xFF7FB3E8) : const Color(0xFF0C447C))
+        : c.amberDeep;
+    final textColor = isScheduled
+        ? c.blueDeep
+        : (c.isDark ? c.amberDeep : const Color(0xFF633806));
+    final badgeBg   = isScheduled
+        ? (c.isDark ? const Color(0xFF7FB3E8) : const Color(0xFF042C53))
+        : (c.isDark ? c.amberDeep : const Color(0xFF633806));
+    final badgeFg   = isScheduled
+        ? (c.isDark ? const Color(0xFF0A2540) : c.blueSoft)
+        : (c.isDark ? const Color(0xFF2A1A05) : c.amberSoft);
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 11),
+      decoration: BoxDecoration(
+        color:        bg,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Row(children: [
+        Icon(
+          isScheduled ? Icons.event_rounded : Icons.bolt_rounded,
+          size: 22, color: iconColor,
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: isScheduled
+              ? Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text('ΡΑΝΤΕΒΟΥ',
+                      style: TextStyle(
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 0.5,
+                          color: iconColor)),
+                  FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.centerLeft,
+                    child: Text(_scheduleLabel(job.scheduledAt!),
+                        style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                            color: textColor)),
+                  ),
+                ])
+              : Text('ΤΩΡΑ — Άμεση παραλαβή',
+                  style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                      color: textColor)),
+        ),
+        const SizedBox(width: 8),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
+          decoration: BoxDecoration(
+            color:        badgeBg,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            Icon(_vehicleIcon, size: 15, color: badgeFg),
+            const SizedBox(width: 5),
+            Text(job.vehicleLabel.toUpperCase(),
+                style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: badgeFg)),
+          ]),
+        ),
+      ]),
+    );
+  }
+
+  // Μπλοκ πληρωμής
+  Widget _paymentBlock(Job job, AppColors c) {
+    // Ανάλυση: Ναύλος / Γιαούρτι / Προμήθεια app — μικρή γραμμή κάτω
+    String breakdownLeft() {
+      final total = job.fullyPaid ? job.depositAmount : job.price;
+      final parts = <String>['Ναύλος ${total.toStringAsFixed(2)} €'];
+      if (job.commission > 0) {
+        parts.add('Γιαούρτι −${job.commission.toStringAsFixed(2)} €');
+      }
+      if (job.appCommission > 0) {
+        parts.add('App −${job.appCommission.toStringAsFixed(2)} €');
+      }
+      return parts.join(' · ');
+    }
+
+    final earning = 'Κέρδος ${job.driverEarning.toStringAsFixed(2)} €';
+
+    // ── ΜΠΛΕ: πλήρως προπληρωμένη → ΔΕΝ εισπράττει τίποτα ──
+    if (job.fullyPaid) {
+      final block = Container(
+        padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 12),
+        decoration: BoxDecoration(
+          color:        c.bluePale,
+          border:       Border.all(color: c.blue, width: 2),
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Column(children: [
+          Row(children: [
+            Icon(Icons.credit_card_rounded,
+                size: 24,
+                color: c.isDark ? const Color(0xFF7FB3E8) : const Color(0xFF0C447C)),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('ΠΡΟΠΛΗΡΩΜΕΝΗ — ΜΗΝ εισπράξεις',
+                        style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w700,
+                            color: c.blueDeep)),
+                    Text('Ο πελάτης έχει πληρώσει',
+                        style:
+                            TextStyle(fontSize: 12, color: c.blueFaint)),
+                  ]),
+            ),
+          ]),
+          Padding(
+            padding: const EdgeInsets.only(top: 9),
+            child: Column(children: [
+              Divider(height: 1, color: c.blueDivider),
+              const SizedBox(height: 8),
+              Row(children: [
+                Expanded(
+                  child: Text(breakdownLeft(),
+                      style: TextStyle(fontSize: 12, color: c.blueFaint)),
+                ),
+                Text(earning,
+                    style: TextStyle(
+                        fontSize: 14.5,
+                        fontWeight: FontWeight.w700,
+                        color: c.blueDeep)),
+              ]),
+            ]),
+          ),
+        ]),
+      );
+      // «Ανασαίνει» ώστε να ΜΗΝ χαθεί σε καμία περίπτωση.
+      return PulsingBox(child: block);
+    }
+
+    // ── ΠΡΑΣΙΝΟ: εισπράττει (πλήρες ποσό ή υπόλοιπο μετά προκαταβολή) ──
+    final subtitle = job.depositPaid
+        ? 'Ο πελάτης πλήρωσε προκαταβολή ${job.depositAmount.toStringAsFixed(2)} € online — εισπράττεις μόνο το υπόλοιπο'
+        : 'Πληρωμή από τον πελάτη στο ταξί';
+
+    final amountText = Text(
+      '${job.remainingToCollect.toStringAsFixed(2)} €',
+      style: TextStyle(
+          fontSize: 28,
+          fontWeight: FontWeight.w700,
+          height: 1.05,
+          color: c.greenDeep),
+    );
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 12),
+      decoration: BoxDecoration(
+        color:        c.greenPale,
+        border:       Border.all(color: c.green, width: 2),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(children: [
+        Row(children: [
+          Icon(Icons.payments_rounded, size: 24, color: c.greenDeep),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text('Εισπράττεις',
+                style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                    color: c.greenDeep)),
+          ),
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            // Με προκαταβολή το ποσό «ανασαίνει» — ο οδηγός να προσέξει
+            // ότι εισπράττει ΜΟΝΟ το υπόλοιπο.
+            child: job.depositPaid
+                ? PulsingBox(child: amountText)
+                : amountText,
+          ),
+        ]),
+        Padding(
+          padding: const EdgeInsets.only(left: 34, top: 3),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: Text(subtitle,
+                style: TextStyle(fontSize: 12, color: c.greenFaint)),
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.only(top: 8),
+          child: Column(children: [
+            Divider(height: 1, color: c.greenDivider),
+            const SizedBox(height: 8),
+            Row(children: [
+              Expanded(
+                child: Text(breakdownLeft(),
+                    style: TextStyle(fontSize: 12, color: c.greenFaint)),
+              ),
+              Text(earning,
+                  style: TextStyle(
+                      fontSize: 14.5,
+                      fontWeight: FontWeight.w700,
+                      color: c.greenDeep)),
+            ]),
+          ]),
+        ),
+      ]),
+    );
+  }
+
+  // Κάρτα: μεγάλος χάρτης (badges στις γωνίες) + διευθύνσεις από κάτω
+  Widget _routeCard(Job job, AppColors c) {
+    final routeMin = job.routeMinutes ?? _routeMinutesFallback;
+
+    // Ετικέτα προορισμού: ραντεβού → ώρα άφιξης, άμεση → λεπτά διαδρομής
+    String destLabel() {
+      if (job.scheduledAt != null && routeMin != null) {
+        final eta = job.scheduledAt!.add(Duration(minutes: routeMin));
+        return 'Προορισμός · άφιξη ~${_hhmm(eta)}';
+      }
+      if (job.scheduledAt == null && routeMin != null) {
+        return 'Προορισμός · ~${formatRouteMinutes(routeMin)}';
+      }
+      return 'Προορισμός';
+    }
+
+    return Container(
+      decoration: BoxDecoration(
+        color:        c.card,
+        borderRadius: BorderRadius.circular(16),
+        border:       Border.all(color: c.cardBorder, width: 0.8),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Column(children: [
+        if (job.hasRouteCoords) _mapWithBadges(job, c, routeMin),
+        Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(children: [
+            Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Padding(
+                padding: const EdgeInsets.only(top: 2),
+                child: Icon(Icons.trip_origin_rounded,
+                    size: 16,
+                    color: c.isDark
+                        ? const Color(0xFF5FA8F0)
+                        : const Color(0xFF185FA5)),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text.rich(TextSpan(
+                        text: 'Παραλαβή',
+                        style:
+                            TextStyle(fontSize: 11, color: c.textFaint),
+                        children: [
+                          if (job.scheduledAt != null)
+                            TextSpan(
+                              text: ' · ${_hhmm(job.scheduledAt!)}',
+                              style: TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                  color: c.isDark
+                                      ? const Color(0xFFC9E0F7)
+                                      : c.blueDeep),
+                            ),
+                        ],
+                      )),
+                      Text(job.from,
+                          style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                              color: c.textMain)),
+                    ]),
+              ),
+            ]),
+            const SizedBox(height: 10),
+            Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Padding(
+                padding: const EdgeInsets.only(top: 2),
+                child: Icon(Icons.place_rounded, size: 16, color: c.pin),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(destLabel(),
+                          style:
+                              TextStyle(fontSize: 11, color: c.textFaint)),
+                      Text(job.to,
+                          style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                              color: c.textMain)),
+                    ]),
+              ),
+            ]),
+          ]),
+        ),
+      ]),
+    );
+  }
+
+  // Χάρτης lite (static εικόνα σε Android) με 2 badges στις γωνίες
+  Widget _mapWithBadges(Job job, AppColors c, int? routeMin) {
     final from = LatLng(job.fromLat!, job.fromLng!);
     final to   = LatLng(job.toLat!,   job.toLng!);
 
-    // Απόσταση διαδρομής: αποθηκευμένη (routeKm) ή ευθεία
     final routeKm = job.routeKm ??
         haversineKm(job.fromLat!, job.fromLng!, job.toLat!, job.toLng!);
 
-    // Χρόνος διαδρομής: αποθηκευμένος ή υπολογισμένος επιτόπου (fallback)
-    final routeMin = job.routeMinutes ?? _routeMinutesFallback;
-
-    // Polyline: αποθηκευμένη διαδρομή ή ευθεία γραμμή
     final List<LatLng> linePts;
     if (job.routePolyline != null && job.routePolyline!.isNotEmpty) {
       linePts = decodePolyline(job.routePolyline!)
@@ -820,16 +975,12 @@ class _JobPopupContentState extends State<_JobPopupContent>
       Marker(
         markerId: const MarkerId('from'),
         position: from,
-        icon: BitmapDescriptor.defaultMarkerWithHue(
-            BitmapDescriptor.hueGreen),
-        infoWindow: const InfoWindow(title: 'Από'),
+        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueAzure),
       ),
       Marker(
         markerId: const MarkerId('to'),
         position: to,
-        icon: BitmapDescriptor.defaultMarkerWithHue(
-            BitmapDescriptor.hueRed),
-        infoWindow: const InfoWindow(title: 'Προς'),
+        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
       ),
     };
 
@@ -837,135 +988,179 @@ class _JobPopupContentState extends State<_JobPopupContent>
       Polyline(
         polylineId: const PolylineId('route'),
         points:     linePts,
-        color:      const Color(0xFF1565C0),
+        color:      c.blue,
         width:      4,
       ),
     };
 
-    final bounds = _boundsOf([from, to]);
+    final bounds  = _boundsOf([from, to]);
     final latSpan = (bounds.northeast.latitude - bounds.southwest.latitude).abs();
     final lngSpan = (bounds.northeast.longitude - bounds.southwest.longitude).abs();
-    // Κέντρο: γεωμετρικό μέσο, ελαφρώς μετατοπισμένο προς τα ΠΑΝΩ ώστε οι
-    // κορυφές των πινέζων (που "δείχνουν" πάνω) να μην κόβονται.
+    // Κέντρο ελαφρώς προς τα πάνω ώστε οι πινέζες να μην κόβονται.
     final center = LatLng(
       (bounds.southwest.latitude + bounds.northeast.latitude) / 2
           + latSpan * 0.12,
       (bounds.southwest.longitude + bounds.northeast.longitude) / 2,
     );
-    final zoom    = _zoomForSpan(latSpan, lngSpan);
+    final zoom = _zoomForSpan(latSpan, lngSpan);
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        ClipRRect(
-          borderRadius: BorderRadius.circular(14),
-          child: SizedBox(
-            height: 240,
-            width:  double.infinity,
-            child: Stack(
-              children: [
-                GoogleMap(
-                  liteModeEnabled:         true,
-                  initialCameraPosition:
-                      CameraPosition(target: center, zoom: zoom),
-                  markers:                 markers,
-                  polylines:               polylines,
-                  zoomControlsEnabled:     false,
-                  mapToolbarEnabled:       false,
-                  myLocationButtonEnabled: false,
-                ),
-                // Label χρόνου διαδρομής (στιλ Google Maps), πάνω δεξιά.
-                if (routeMin != null)
-                  Positioned(
-                    top:   10,
-                    right: 10,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 10, vertical: 6),
-                      decoration: BoxDecoration(
-                        color:        Colors.white,
-                        borderRadius: BorderRadius.circular(20),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.18),
-                            blurRadius: 4,
-                            offset: const Offset(0, 1),
-                          ),
-                        ],
-                      ),
-                      child: Row(mainAxisSize: MainAxisSize.min, children: [
-                        const Icon(Icons.schedule_rounded,
-                            size: 15, color: Color(0xFF6A1B9A)),
-                        const SizedBox(width: 5),
-                        Text(
-                          formatRouteMinutes(routeMin),
-                          style: const TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.bold,
-                              color: Color(0xFF6A1B9A)),
-                        ),
-                      ]),
-                    ),
-                  ),
-              ],
-            ),
+    // Badge «Από εσένα Χ χλμ · Υ′» (πάνω αριστερά, σκούρο)
+    String? driverBadge;
+    if (_distanceLoading) {
+      driverBadge = 'Από εσένα …';
+    } else if (_driverDistanceKm != null) {
+      final air = _driverDistanceIsAir ? '~' : '';
+      final min = _driverDistanceMin != null && !_driverDistanceIsAir
+          ? ' · ${_driverDistanceMin!}′'
+          : '';
+      driverBadge =
+          'Από εσένα $air${_driverDistanceKm!.toStringAsFixed(1)} χλμ$min';
+    }
+
+    // Badge «Διαδρομή» (κάτω δεξιά, ανοιχτό)
+    final routeBadge = routeMin != null
+        ? '${routeKm.toStringAsFixed(1)} χλμ · ${formatRouteMinutes(routeMin)}'
+        : '${routeKm.toStringAsFixed(1)} χλμ';
+
+    return SizedBox(
+      height: 175,
+      width:  double.infinity,
+      child: Stack(children: [
+        Positioned.fill(
+          child: GoogleMap(
+            liteModeEnabled:         true,
+            initialCameraPosition:   CameraPosition(target: center, zoom: zoom),
+            markers:                 markers,
+            polylines:               polylines,
+            zoomControlsEnabled:     false,
+            mapToolbarEnabled:       false,
+            myLocationButtonEnabled: false,
           ),
         ),
-        const SizedBox(height: 10),
-        Row(children: [
-          Expanded(
-            child: _distanceChip(
-              icon:  Icons.straighten_rounded,
-              label: 'Διαδρομή',
-              value: '${routeKm.toStringAsFixed(1)} χλμ',
-              color: const Color(0xFF1565C0),
+        if (driverBadge != null)
+          Positioned(
+            top: 8, left: 8,
+            child: _mapBadge(
+              text: driverBadge,
+              icon: Icons.navigation_rounded,
+              bg:   Colors.black.withValues(alpha: 0.78),
+              fg:   Colors.white,
             ),
           ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: _distanceChip(
-              icon:  Icons.schedule_rounded,
-              label: job.scheduledAt != null ? 'Χρόνος (ραντεβού)' : 'Χρόνος',
-              value: routeMin != null
-                  ? formatRouteMinutes(routeMin)
-                  : '—',
-              color: const Color(0xFF6A1B9A),
-            ),
+        Positioned(
+          bottom: 8, right: 8,
+          child: _mapBadge(
+            text: routeBadge,
+            icon: Icons.route_rounded,
+            bg:   c.isDark
+                ? const Color(0xFF3A3A36).withValues(alpha: 0.92)
+                : Colors.white.withValues(alpha: 0.92),
+            fg:   c.textMain,
           ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: _distanceChip(
-              icon:  Icons.directions_car_rounded,
-              label: _driverDistanceIsAir
-                  ? 'Απόσταση πελάτη (ευθεία)'
-                  : 'Απόσταση πελάτη',
-              value: _distanceLoading
-                  ? '…'
-                  : (_driverDistanceKm != null
-                      ? '${_driverDistanceKm!.toStringAsFixed(1)} χλμ'
-                      : '—'),
-              color: const Color(0xFF1E8E3E),
-            ),
-          ),
-        ]),
-      ],
+        ),
+      ]),
     );
   }
 
-  // Υπολογίζει επίπεδο zoom ώστε να φαίνονται ΚΑΙ ΟΙ 2 πινέζες με περιθώριο.
-  double _zoomForSpan(double latSpan, double lngSpan) {
-    // Στο γεωγραφικό πλάτος της Ελλάδας το μήκος "συμπιέζεται" ~0.78.
-    var span = math.max(latSpan, lngSpan * 0.78);
-    // Λίγο buffer ώστε οι πινέζες να μην κόβονται, αλλά ΟΧΙ υπερβολικό —
-    // αλλιώς ο χάρτης βγαίνει υπερβολικά zoomed-out και δεν φαίνεται η διαδρομή.
-    span = span * 1.12 + 0.003;
-    if (span <= 0.0008) return 14.5;
-    final z = math.log(360.0 / span) / math.ln2;
-    // -0.15 ώστε να μένει ελάχιστο περιθώριο γύρω-γύρω.
-    return (z - 0.15).clamp(4.0, 16.5);
+  Widget _mapBadge({
+    required String   text,
+    required IconData icon,
+    required Color    bg,
+    required Color    fg,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color:        bg,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
+        Icon(icon, size: 12, color: fg),
+        const SizedBox(width: 5),
+        Text(text,
+            style: TextStyle(
+                fontSize: 11, fontWeight: FontWeight.w600, color: fg)),
+      ]),
+    );
   }
 
-  // Όρια που περιέχουν όλα τα σημεία
+  // Chips: άτομα / βαλίτσες / παιδικά καθίσματα
+  Widget _detailChips(Job job, AppColors c) {
+    Widget chip(IconData icon, String label,
+        {Color? bg, Color? border, Color? fg, bool bold = false}) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: BoxDecoration(
+          color:        bg ?? c.card,
+          borderRadius: BorderRadius.circular(12),
+          border:       Border.all(color: border ?? c.cardBorder, width: 0.8),
+        ),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          Icon(icon, size: 16, color: fg ?? c.textFaint),
+          const SizedBox(width: 6),
+          Text(label,
+              style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: bold ? FontWeight.w600 : FontWeight.w500,
+                  color: fg ?? c.textMain)),
+        ]),
+      );
+    }
+
+    return Wrap(spacing: 8, runSpacing: 8, children: [
+      chip(Icons.person_rounded,
+          job.persons == 1 ? '1 άτομο' : '${job.persons} άτομα'),
+      chip(Icons.luggage_rounded,
+          job.luggage == 1 ? '1 βαλίτσα' : '${job.luggage} βαλίτσες'),
+      if (job.childSeat)
+        chip(
+          Icons.child_care_rounded,
+          job.childSeatCount > 1
+              ? '${job.childSeatCount} παιδικά καθίσματα'
+              : '1 παιδικό κάθισμα',
+          bg:     c.pinkSoft,
+          border: c.pinkBorder,
+          fg:     c.pinkDeep,
+          bold:   true,
+        ),
+    ]);
+  }
+
+  // Σήμα διαδρομής (επιστροφή / στάσεις)
+  Widget _routeTag({
+    required IconData icon,
+    required String   label,
+    required Color    color,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 7, horizontal: 12),
+      decoration: BoxDecoration(
+        color:        color,
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
+        Icon(icon, size: 16, color: Colors.white),
+        const SizedBox(width: 6),
+        Text(label,
+            style: const TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.bold,
+                color: Colors.white,
+                letterSpacing: 0.5)),
+      ]),
+    );
+  }
+
+  // Zoom ώστε να φαίνονται ΚΑΙ ΟΙ 2 πινέζες με περιθώριο —
+  // και οι γωνίες (badges) να μένουν ελεύθερες.
+  double _zoomForSpan(double latSpan, double lngSpan) {
+    var span = math.max(latSpan, lngSpan * 0.78);
+    span = span * 1.18 + 0.003;
+    if (span <= 0.0008) return 14.5;
+    final z = math.log(360.0 / span) / math.ln2;
+    return (z - 0.2).clamp(4.0, 16.5);
+  }
+
   LatLngBounds _boundsOf(List<LatLng> pts) {
     double minLat = pts.first.latitude,  maxLat = pts.first.latitude;
     double minLng = pts.first.longitude, maxLng = pts.first.longitude;
@@ -980,227 +1175,6 @@ class _JobPopupContentState extends State<_JobPopupContent>
       northeast: LatLng(maxLat, maxLng),
     );
   }
-
-  Widget _distanceChip({
-    required IconData icon,
-    required String   label,
-    required String   value,
-    required Color    color,
-  }) {
-    return Container(
-      padding: const EdgeInsets.symmetric(vertical: 9, horizontal: 10),
-      decoration: BoxDecoration(
-        color:        color.withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(10),
-        border:       Border.all(color: color.withValues(alpha: 0.3)),
-      ),
-      child: Row(children: [
-        Icon(icon, size: 18, color: color),
-        const SizedBox(width: 8),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                      fontSize: 10, color: Colors.grey[600])),
-              Text(value,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.bold,
-                      color: color)),
-            ],
-          ),
-        ),
-      ]),
-    );
-  }
-
-  // ΤΟ ΑΠΟΛΥΤΩΣ SAFE TIMELINE (ΧΩΡΙΣ EXPANDED ΣΕ INTRINSIC HEIGHT)
-  Widget _routeRow(String from, String to) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        IntrinsicHeight(
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // Αντί για Column με Expanded, βάζουμε Stack! Δεν краσάρει ποτέ!
-              SizedBox(
-                width: 18,
-                child: Stack(
-                  alignment: Alignment.topCenter,
-                  children: [
-                    // Γραμμή που γεμίζει από την κορυφή (κάτω από το πρώτο icon) μέχρι το τέλος
-                    Positioned(
-                      top: 18,
-                      bottom: 0,
-                      child: Container(width: 2, color: Colors.grey.shade300),
-                    ),
-                    const Icon(Icons.trip_origin_rounded, color: Colors.amber, size: 18),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.only(bottom: 16), // Κενό μέχρι τον προορισμό
-                  child: Text(
-                    from,
-                    style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const SizedBox(
-              width: 18,
-              child: Icon(Icons.place_rounded, color: Colors.red, size: 18),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                to,
-                style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
-              ),
-            ),
-          ],
-        ),
-      ],
-    );
-  }
-
-  // Ευδιάκριτο σήμα διαδρομής (επιστροφή / στάσεις)
-  Widget _routeTag({
-    required IconData icon,
-    required String   label,
-    required Color    color,
-  }) {
-    return Container(
-      padding: const EdgeInsets.symmetric(vertical: 7, horizontal: 12),
-      decoration: BoxDecoration(
-        color:        color,
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: [
-          BoxShadow(color: color.withValues(alpha: 0.4),
-              blurRadius: 6, offset: const Offset(0, 2)),
-        ],
-      ),
-      child: Row(mainAxisSize: MainAxisSize.min, children: [
-        Icon(icon, size: 16, color: Colors.white),
-        const SizedBox(width: 6),
-        Text(label, style: const TextStyle(
-            fontSize: 12, fontWeight: FontWeight.bold,
-            color: Colors.white, letterSpacing: 0.5)),
-      ]),
-    );
-  }
-
-  // ── Μεγάλο ποσό αριστερά (πλάγιο, χωρίς πλαίσιο δικό του — το εξωτερικό
-  // Container το έχει ήδη). Χρησιμοποιείται τυλιγμένο σε BlinkingBox όταν
-  // η δουλειά είναι προπληρωμένη.
-  Widget _bigMoneyCell({required String label, required String value}) {
-    return Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-      Text(label, style: TextStyle(fontSize: 11, color: Colors.grey[600]),
-          textAlign: TextAlign.center),
-      const SizedBox(height: 2),
-      FittedBox(
-        fit: BoxFit.scaleDown,
-        child: Text(value, style: const TextStyle(
-            fontSize: 26, fontWeight: FontWeight.bold, color: Color(0xFF1E8E3E))),
-      ),
-    ]);
-  }
-
-  // ── Ξεχωριστό μικρό πλαίσιο ανά γραμμή (Γιαούρτι/Προμήθεια app/Κέρδος) —
-  // ώστε να ξεχωρίζουν οπτικά μεταξύ τους αντί για μία συνεχόμενη στήλη.
-  // filled=true (Γιαούρτι/Προμήθεια/Κέρδος όλα filled) δίνει ελαφρύ έγχρωμο
-  // φόντο. ΣΗΜΑΝΤΙΚΟ: η ετικέτα ΠΡΕΠΕΙ να είναι σκούρα απόχρωση της ΙΔΙΑΣ
-  // οικογένειας χρώματος με την τιμή — γκρι κείμενο πάνω σε έντονο χρωματιστό
-  // φόντο (π.χ. ροζ/μπλε) σχεδόν χάνεται.
-  Widget _breakdownBox(String label, String value,
-      {bool bold = false, Color? valueColor, Color? labelColor}) {
-    final vc = valueColor ?? Colors.red.shade800;
-    final lc = labelColor ?? vc;
-    return Container(
-      padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 9),
-      decoration: BoxDecoration(
-        color: vc.withValues(alpha: 0.08),
-        border: Border.all(color: vc.withValues(alpha: 0.35)),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-        Text(label, style: TextStyle(
-            fontSize: bold ? 12.5 : 11.5,
-            fontWeight: bold ? FontWeight.w700 : FontWeight.w600,
-            color: lc)),
-        Text(value, style: TextStyle(
-            fontSize: bold ? 13 : 12,
-            fontWeight: FontWeight.bold,
-            color: vc)),
-      ]),
-    );
-  }
-
-  Widget _infoCell({
-    required IconData icon,
-    required String   label,
-    required String   value,
-    Color?            color,
-    bool              large = false,
-  }) {
-    final c = color ?? Colors.grey[700]!;
-    return Container(
-      margin:  const EdgeInsets.only(right: 6),
-      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
-      decoration: BoxDecoration(
-        color:        c.withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(10),
-      ),
-      child: Column(children: [
-        Icon(icon, size: 18, color: c),
-        const SizedBox(height: 4),
-        FittedBox(
-          fit: BoxFit.scaleDown,
-          child: Text(
-            value, 
-            style: TextStyle(fontSize: large ? 14 : 12, fontWeight: FontWeight.bold, color: c),
-            textAlign: TextAlign.center,
-          ),
-        ),
-        const SizedBox(height: 2),
-        Text(label, style: TextStyle(fontSize: 10, color: Colors.grey[500])),
-      ]),
-    );
-  }
-
-  Widget _clientInfoLine(IconData icon, String text, {bool isLink = false}) {
-    return Row(
-      children: [
-        Icon(icon, size: 16, color: isLink ? Colors.blue.shade700 : Colors.amber.shade900),
-        const SizedBox(width: 8),
-        Expanded(
-          child: Text(
-            text,
-            style: TextStyle(
-              fontSize: 13,
-              fontWeight: isLink ? FontWeight.bold : FontWeight.w500,
-              color: isLink ? Colors.blue.shade800 : Colors.black87,
-              decoration: isLink ? TextDecoration.underline : TextDecoration.none,
-            ),
-          ),
-        ),
-      ],
-    );
-  }
 }
 
 Future<bool> showJobPopup({
@@ -1210,7 +1184,7 @@ Future<bool> showJobPopup({
   required String       driverName,
   ValueListenable<int>? pendingCount,
 }) async {
-  // Εμφάνιση με scale + fade (280ms) — πιο «ζωντανό» χτύπημα δουλειάς.
+  // Εμφάνιση με scale + fade (280ms) — «ζωντανό» χτύπημα δουλειάς.
   final result = await showGeneralDialog<bool>(
     context:            context,
     barrierDismissible: false,

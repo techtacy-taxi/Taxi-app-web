@@ -11,6 +11,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'app_theme.dart';
 import 'auth_gateway.dart';
 import 'fcm_service.dart';
 import 'firebase_options.dart';
@@ -285,6 +286,8 @@ Future<void> main() async {
     ),
   );
 
+  // Φόρτωση αποθηκευμένης επιλογής θέματος (Φωτεινό/Σκούρο/Αυτόματο)
+  await ThemeController.load();
   runApp(const MyTaxiApp());
 }
 
@@ -293,14 +296,18 @@ class MyTaxiApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Athens Taxi Booking',
-      navigatorKey: NotificationsService.navigatorKey,
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.amber),
-        useMaterial3: true,
+    // Το MaterialApp ακούει το ThemeController.mode και αλλάζει ζωντανά
+    // Φωτεινό / Σκούρο / Αυτόματο (σύστημα) — επιλογή από τις Ρυθμίσεις.
+    return ValueListenableBuilder<ThemeMode>(
+      valueListenable: ThemeController.mode,
+      builder: (_, themeMode, _) => MaterialApp(
+        title: 'Athens Taxi Booking',
+        navigatorKey: NotificationsService.navigatorKey,
+        theme:     appThemeLight(),
+        darkTheme: appThemeDark(),
+        themeMode: themeMode,
+        home: WithForegroundTask(child: const AuthGateway()),
       ),
-      home: WithForegroundTask(child: const AuthGateway()),
     );
   }
 }
