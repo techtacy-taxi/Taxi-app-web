@@ -79,3 +79,42 @@ Future<VehicleType?> showVehicleTypeMenu({
     ]),
   );
 }
+
+Widget _subMenuItem({
+  required BuildContext ctx,
+  required IconData     icon,
+  required String       label,
+  required bool         selected,
+  required Color        activeColor,
+  required VoidCallback onTap,
+}) {
+  return InkWell(
+    onTap: onTap,
+    borderRadius: BorderRadius.circular(10),
+    child: Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: selected
+            ? BoxDecoration(
+                color: Colors.black.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: Colors.black26, width: 1.5),
+              )
+            : null,
+        child: Row(children: [
+          Icon(icon, color: selected ? activeColor : Colors.black45, size: 20),
+          const SizedBox(width: 12),
+          Text(label, style: TextStyle(
+            fontWeight: selected ? FontWeight.bold : FontWeight.w600,
+            color:      selected ? activeColor : Colors.black87,
+          )),
+          if (selected) ...[
+            const Spacer(),
+            Icon(Icons.check_circle_rounded, color: activeColor, size: 16),
+          ],
+        ]),
+      ),
+    ),
+  );
+}

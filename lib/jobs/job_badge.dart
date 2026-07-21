@@ -14,6 +14,7 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../models.dart';
 import '../masters/masters_admin_page.dart';
 import '../notifications_service.dart';
 import '../alert_gate.dart';

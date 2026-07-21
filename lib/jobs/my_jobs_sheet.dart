@@ -267,6 +267,25 @@ class _CalendarPickerDialogState extends State<_CalendarPickerDialog> {
   }
 }
 
+// Ταξινόμηση: πιο κοντινό ραντεβού πάνω-πάνω, πιο μακρινό κάτω-κάτω.
+// Οι άμεσες (χωρίς ραντεβού) = «τώρα» → μπαίνουν πρώτες.
+// Ίδια στιγμή ή και οι δύο άμεσες → με τη σειρά που φτιάχτηκαν (createdAt).
+List<Job> _sortMyJobs(List<Job> jobs) {
+  final sorted = [...jobs]..sort((a, b) {
+    final aHas = a.scheduledAt != null;
+    final bHas = b.scheduledAt != null;
+    if (aHas && bHas) {
+      final c = a.scheduledAt!.compareTo(b.scheduledAt!);
+      if (c != 0) return c;
+      return a.createdAt.compareTo(b.createdAt);
+    }
+    if (!aHas && bHas) return -1; // άμεση πριν από ραντεβού
+    if (aHas && !bHas) return 1;
+    return a.createdAt.compareTo(b.createdAt); // και οι δύο άμεσες
+  });
+  return sorted;
+}
+
 // ─── MyJobsBottomBar ─────────────────────────────────────────────────────────
 //
 // Μπάρα «Οι δουλειές μου» κολλημένη στο κάτω μέρος της οθόνης, πάνω από το
