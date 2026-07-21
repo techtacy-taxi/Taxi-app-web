@@ -20,7 +20,6 @@ import 'package:flutter/material.dart';
 import 'app_theme.dart';
 import 'masters/global_settings_page.dart';
 import 'pricing/pricing_zones_page.dart';
-import 'tenants/tenant_admin_page.dart';
 import 'viva_settings_page.dart';
 import 'voice/groups_admin.dart';
 
@@ -167,15 +166,6 @@ class SettingsPage extends StatelessWidget {
                 // Online Φόρμα (διαχείριση tenants) — ΜΟΝΟ ο πραγματικός
                 // super-admin (ίδιος έλεγχος με πριν στο popup menu).
                 if (FirebaseAuth.instance.currentUser?.email == _kSuperAdminEmail) ...[
-                  Divider(height: 1, color: c.blueSoft),
-                  _tile(context, c,
-                      icon: Icons.storefront_rounded,
-                      label: 'Online Φόρμα (tenants)',
-                      labelColor: c.blueDeep,
-                      iconColor: c.blueDeep,
-                      onTap: () => Navigator.of(context).push(MaterialPageRoute(
-                            builder: (_) => const TenantAdminPage(),
-                          ))),
                 ],
                 if (onBroadcastUpdate != null) ...[
                   Divider(height: 1, color: c.blueSoft),

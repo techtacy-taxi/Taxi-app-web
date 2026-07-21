@@ -5688,19 +5688,22 @@ exports.listTenants = onCall(
       let vivaSecretsExist = false;
       let stripeSecretsExist = false;
       let receiptSecretsExist = false;
+      let hasOwnResendKey = false;
       const invoiceProvider = ["mydata", "epsilon", "oxygen"].includes(s(t.invoiceProvider))
         ? s(t.invoiceProvider) : null;
       try {
-        const [cid, csec, ssk, invKey, epsPass, mydataKey] = await Promise.all([
+        const [cid, csec, ssk, invKey, epsPass, mydataKey, ownResend] = await Promise.all([
           readSecret(tenantSecretId(doc.id, "viva-client-id")),
           readSecret(tenantSecretId(doc.id, "viva-client-secret")),
           readSecret(tenantSecretId(doc.id, "stripe-secret-key")),
           readSecret(tenantSecretId(doc.id, "invoice-api-key")),
           readSecret(tenantSecretId(doc.id, "epsilon-password")),
           readSecret(tenantSecretId(doc.id, "mydata-subscription-key")),
+          readSecret(tenantSecretId(doc.id, "resend-api-key")),
         ]);
         vivaSecretsExist   = !!(cid && csec);
         stripeSecretsExist = !!ssk;
+        hasOwnResendKey    = !!ownResend;
         // Κλειδιά αποδείξεων ανά πάροχο:
         //   myDATA  → mydata-subscription-key
         //   Epsilon → invoice-api-key + epsilon-password
@@ -5734,6 +5737,7 @@ exports.listTenants = onCall(
         invoiceEnabled: t.invoiceEnabled === true,
         invoiceProvider: invoiceProvider,
         hasReceiptCredentials: receiptSecretsExist,
+        hasOwnResendKey: hasOwnResendKey,
       };
     }));
     return { ok: true, tenants };

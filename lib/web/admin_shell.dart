@@ -30,7 +30,7 @@ import '../voice/groups_admin.dart';
 import '../masters/masters_admin_page.dart';
 import '../pricing/pricing_zones_page.dart';
 import '../viva_settings_page.dart';
-import '../tenants/tenant_admin_page.dart';
+import '../masters/global_settings_page.dart';
 import 'auth_gateway_web.dart';
 import 'ics_upload_web.dart';
 import 'map_web_page.dart';
@@ -219,14 +219,15 @@ class _AdminShellState extends State<AdminShell> {
       ));
     }
 
-    // Online Φόρμα (πρώην «Πελάτες/Tenants») — ΜΟΝΟ ο πραγματικός super-admin
-    // (εσύ). Ο έλεγχος email είναι ΕΠΙΠΛΕΟΝ ασφαλιστική δικλείδα — η ίδια η
-    // TenantAdminPage κάνει ξανά τον ίδιο έλεγχο εσωτερικά.
+    // Η ξεχωριστή σελίδα «Online Φόρμα» (TenantAdminPage) ΚΑΤΑΡΓΗΘΗΚΕ —
+    // όλη η διαχείριση tenants ζει πλέον στις «Καθολικές ρυθμίσεις»
+    // (GlobalSettingsPage), block TENANTS + κάρτες admins.
     if (FirebaseAuth.instance.currentUser?.email == 'techtacy@gmail.com') {
-      sections.add(const _Section(
-        label: 'Online Φόρμα',
+      sections.add(_Section(
+        label: 'Καθολικές ρυθμίσεις',
         icon: Icons.storefront_rounded,
-        page: TenantAdminPage(),
+        page: GlobalSettingsPage(
+            masterUid: FirebaseAuth.instance.currentUser?.uid ?? ''),
       ));
     }
 

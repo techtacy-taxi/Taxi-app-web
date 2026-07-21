@@ -41,10 +41,10 @@ import '../jobs/job_badge.dart';
 import '../jobs/billing_page.dart';
 import '../jobs/job_service.dart';
 import '../masters/masters_admin_page.dart';
+import '../masters/global_settings_page.dart';
 import '../calendar/jobs_calendar_page.dart';
 import '../pricing/pricing_zones_page.dart';
 import '../settings_page.dart';
-import '../tenants/tenant_admin_page.dart';
 import '../viva_settings_page.dart';
 
 class HomeMapPage extends StatefulWidget {
@@ -835,9 +835,11 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
         ));
         return;
       case MenuAction.tenants:
+        // Η ξεχωριστή σελίδα tenants καταργήθηκε — όλα ζουν πλέον στις
+        // Καθολικές ρυθμίσεις.
         if (!mounted) return;
         Navigator.of(context).push(MaterialPageRoute(
-          builder: (_) => const TenantAdminPage(),
+          builder: (_) => GlobalSettingsPage(masterUid: _uid ?? ''),
         ));
         return;
       case MenuAction.vivaSettings:
