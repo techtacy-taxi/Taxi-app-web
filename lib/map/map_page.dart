@@ -38,7 +38,6 @@ import '../jobs/job_shared_widgets.dart';
 import '../jobs/job_form.dart';
 import '../jobs/places_service.dart';
 import '../jobs/job_badge.dart';
-import '../jobs/my_jobs_sheet.dart';
 import '../jobs/billing_page.dart';
 import '../jobs/job_service.dart';
 import '../masters/masters_admin_page.dart';
@@ -105,8 +104,6 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
 
   // Ύψος της κάτω μπάρας «Οι δουλειές μου» (0 όταν είναι κρυμμένη). Όταν
   // εμφανίζεται, τα πλαϊνά FAB ανεβαίνουν τόσο ώστε να μην καλύπτονται.
-  double _jobsBarHeight = 0;
-  VoidCallback? _openJobsBarFn;
 
   // ─── voice queue ─────────────────────────────────────────────────────────────
   final AudioPlayer              _autoPlayer    = AudioPlayer();
@@ -1102,62 +1099,68 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
           ]),
         ),
 
-        // ─── Δεξί FAB: μόνο «η θέση μου» — το μικρόφωνο έφυγε (κάλυψή
-        //     του: chip «Μηνύματα» + το ίδιο άνοιγμα εγγραφής μέσα από
-        //     εκεί), το μενού γωνίας έφυγε (κάλυψή του: bottom nav +
-        //     Ρυθμίσεις).
-        AnimatedPositioned(
-          duration: const Duration(milliseconds: 300),
-          curve: Curves.easeOutCubic,
-          right: 16,
-          bottom: (_jobsBarHeight > 0 ? _jobsBarHeight : _kBottomNavHeight) +
-              MediaQuery.of(context).padding.bottom + 16,
+        // ─── Recenter + floating chips (Δουλειές / Μηνύματα) + countdown ───
+        //     Πάντα πάνω από το bottom nav + Android navigation bar.
+        //     Το κουμπί «η θέση μου» κάθεται ΠΑΝΩ από τα chips (όχι πίσω),
+        //     στο νέο στυλ (λευκή στρογγυλή κάρτα).
+        Positioned(
+          left: 10, right: 10,
+          bottom: _kBottomNavHeight + MediaQuery.of(context).padding.bottom + 10,
           child: Builder(builder: (context) {
             final c = AppColors.of(context);
-            return FloatingActionButton(
-              heroTag: 'my_location',
-              onPressed: () {
-                if (_currentPosition != null && _mapController != null) {
-                  _mapController!.animateCamera(CameraUpdate.newLatLngZoom(
-                    LatLng(_currentPosition!.latitude, _currentPosition!.longitude), 12));
-                }
-              },
-              backgroundColor: c.amber,
-              foregroundColor: c.onAmber,
-              elevation: 0,
-              child: const Icon(Icons.my_location_rounded),
-            );
-          }),
-        ),
-
-        // ─── Floating chips (Δουλειές σήμερα / Μηνύματα) + countdown ───────
-        // Ανεβαίνουν αυτόματα όταν ανοίγει το «Οι δουλειές μου» από κάτω,
-        // ΚΑΙ πάντα πάνω από το bottom nav bar + Android navigation bar.
-        AnimatedPositioned(
-          duration: const Duration(milliseconds: 300),
-          curve: Curves.easeOutCubic,
-          left: 10, right: 10,
-          bottom: (_jobsBarHeight > 0 ? _jobsBarHeight : _kBottomNavHeight) +
-              MediaQuery.of(context).padding.bottom + 10,
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            HomeFloatingChips(
-              uid: _uid ?? '',
-              onTapJobs: () => _openJobsBarFn?.call(),
-              onTapMessages: () => openVoiceInboxSheet(
-                context: context, uid: _uid ?? '',
-                displayName: _displayName, lastName: _lastName,
+            return Column(mainAxisSize: MainAxisSize.min, children: [
+              Align(
+                alignment: Alignment.centerRight,
+                child: Material(
+                  color: c.card,
+                  shape: CircleBorder(
+                      side: BorderSide(color: c.cardBorder, width: 0.8)),
+                  elevation: 2,
+                  shadowColor: Colors.black26,
+                  child: InkWell(
+                    customBorder: const CircleBorder(),
+                    onTap: () {
+                      if (_currentPosition != null && _mapController != null) {
+                        _mapController!.animateCamera(CameraUpdate.newLatLngZoom(
+                          LatLng(_currentPosition!.latitude,
+                              _currentPosition!.longitude), 12));
+                      }
+                    },
+                    child: SizedBox(
+                      width: 48, height: 48,
+                      child: Icon(Icons.my_location_rounded,
+                          size: 24, color: c.amberDeep),
+                    ),
+                  ),
+                ),
               ),
-            ),
-            const SizedBox(height: 8),
-            AppointmentCountdownBar(uid: _uid ?? ''),
-          ]),
+              const SizedBox(height: 10),
+              HomeFloatingChips(
+                uid: _uid ?? '',
+                // Χωρίς το παλιό συρτάρι: το chip «Δουλειές» ανοίγει το
+                // Ημερολόγιο στη ΣΗΜΕΡΙΝΗ μέρα — βλέπεις τις σημερινές στο
+                // συρτάρι του και τις υπόλοιπες στον μήνα.
+                onTapJobs: () => Navigator.of(context).push(MaterialPageRoute(
+                  builder: (_) => JobsCalendarPage(
+                    uid:                   _uid ?? '',
+                    isAdmin:               _isAdmin,
+                    isMaster:              _isMaster,
+                    googleCalendarEnabled: _isMaster || _calendarEnabled,
+                  ),
+                )),
+                onTapMessages: () => openVoiceInboxSheet(
+                  context: context, uid: _uid ?? '',
+                  displayName: _displayName, lastName: _lastName,
+                ),
+              ),
+              const SizedBox(height: 8),
+              AppointmentCountdownBar(uid: _uid ?? ''),
+            ]);
+          }),
         ),
 
         // ─── Κάτω navigation bar (Χάρτης/Δουλειές/Ημερολόγιο/Χρεώσεις/
         //     Ρυθμίσεις) — πάντα ορατό, με σωστό SafeArea (Android nav bar).
-        //     Το «Οι δουλειές μου» (MyJobsBottomBar) ζωγραφίζεται ΠΑΝΩ του
-        //     όταν έχει ενεργές δουλειές — το καλύπτει προσωρινά, ίδιο
-        //     z-order με τα FABs.
         Positioned(
           left: 0, right: 0, bottom: 0,
           child: SafeArea(
@@ -1269,19 +1272,6 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
           ),
         ),
 
-        // ─── Κάτω μπάρα «Οι δουλειές μου» (μόνο όταν υπάρχουν αναληφθείσες) ───
-        Positioned(
-          left: 0, right: 0, bottom: 0,
-          child: MyJobsBottomBar(
-            uid: _uid ?? '',
-            onHeightChanged: (h) {
-              if (h != _jobsBarHeight && mounted) {
-                setState(() => _jobsBarHeight = h);
-              }
-            },
-            onOpenControllerReady: (openFn) => _openJobsBarFn = openFn,
-          ),
-        ),
         ]),
       ),
     );

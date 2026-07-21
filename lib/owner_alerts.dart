@@ -23,6 +23,7 @@ import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
+import 'app_theme.dart';
 import 'jobs/job_model.dart';
 import 'jobs/job_details_sheet.dart';
 import 'notifications_service.dart';
@@ -247,143 +248,153 @@ class OwnerAlerts {
       await showDialog<void>(
         context: ctx,
         barrierDismissible: false,
-        builder: (dctx) => PopScope(
-          canPop: false,
-          child: Dialog(
-          shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(22)),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(20, 22, 20, 18),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                // ── Κεφαλίδα: εικονίδιο + τίτλος + badge "+N" ──────────────
-                Row(
+        barrierColor: Colors.black.withValues(alpha: 0.35),
+        builder: (dctx) {
+          final c = AppColors.of(dctx);
+          return PopScope(
+            canPop: false,
+            child: Dialog(
+              backgroundColor: c.card,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(22),
+                  side: BorderSide(color: c.cardBorder, width: 0.8)),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(18, 20, 18, 16),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    Container(
-                      width: 46, height: 46,
-                      decoration: BoxDecoration(
-                        color: st.color.withValues(alpha: 0.13),
-                        shape: BoxShape.circle,
-                      ),
-                      child: Icon(st.icon, color: st.color, size: 28),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Text(a.title,
-                          style: const TextStyle(
-                              fontSize: 18, fontWeight: FontWeight.bold)),
-                    ),
-                    if (remaining > 0)
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 9, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: Colors.orange.shade100,
-                          borderRadius: BorderRadius.circular(12),
+                    // ── Κεφαλίδα: στρογγυλεμένο τετράγωνο εικονίδιο (νέο στυλ)
+                    Row(
+                      children: [
+                        Container(
+                          width: 44, height: 44,
+                          decoration: BoxDecoration(
+                            color: st.color.withValues(alpha: 0.14),
+                            borderRadius: BorderRadius.circular(13),
+                          ),
+                          child: Icon(st.icon, color: st.color, size: 25),
                         ),
-                        child: Text('+$remaining',
-                            style: TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.orange.shade900)),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Text(a.title,
+                              style: TextStyle(
+                                  fontSize: 17.5,
+                                  fontWeight: FontWeight.w700,
+                                  color: c.textMain)),
+                        ),
+                        if (remaining > 0)
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 9, vertical: 4),
+                            decoration: BoxDecoration(
+                              color:        c.amberSoft,
+                              borderRadius: BorderRadius.circular(11),
+                            ),
+                            child: Text('+$remaining',
+                                style: TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w700,
+                                    color: c.amberDeep)),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    Text(a.body,
+                        style: TextStyle(fontSize: 14.5, color: c.textMain)),
+                    const SizedBox(height: 12),
+
+                    // ── Κάρτα δουλειάς (νέο compact στυλ: αριστερή μπάρα
+                    //    στο χρώμα του γεγονότος, tap -> αναλυτική καρτέλα)
+                    InkWell(
+                      borderRadius: BorderRadius.circular(14),
+                      onTap: () => _openDetails(dctx, j),
+                      child: Container(
+                        padding: const EdgeInsets.fromLTRB(10, 10, 12, 10),
+                        decoration: BoxDecoration(
+                          color: c.scaffold,
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border(
+                            top:    BorderSide(color: c.cardBorder, width: 0.8),
+                            right:  BorderSide(color: c.cardBorder, width: 0.8),
+                            bottom: BorderSide(color: c.cardBorder, width: 0.8),
+                            left:   BorderSide(color: st.color, width: 4),
+                          ),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(Icons.local_taxi_rounded,
+                                color: c.amberDeep, size: 21),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  if (route.isNotEmpty)
+                                    Text(route,
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                            fontWeight: FontWeight.w600,
+                                            fontSize: 13.5,
+                                            color: c.textMain)),
+                                  const SizedBox(height: 3),
+                                  Row(children: [
+                                    if (j.price > 0)
+                                      Text('€${j.price.toStringAsFixed(2)}',
+                                          style: TextStyle(
+                                              color: c.greenDeep,
+                                              fontWeight: FontWeight.w700,
+                                              fontSize: 13.5)),
+                                    const Spacer(),
+                                    Text('Προβολή δουλειάς',
+                                        style: TextStyle(
+                                            fontSize: 12.5,
+                                            color: c.blueDeep,
+                                            fontWeight: FontWeight.w600)),
+                                  ]),
+                                ],
+                              ),
+                            ),
+                            Icon(Icons.chevron_right_rounded,
+                                color: c.textFaint),
+                          ],
+                        ),
                       ),
+                    ),
+
+                    if (remaining > 0) ...[
+                      const SizedBox(height: 10),
+                      Text(
+                        'Σε περιμένουν άλλες $remaining '
+                        '${remaining == 1 ? "ειδοποίηση" : "ειδοποιήσεις"}.',
+                        style: TextStyle(fontSize: 12.5, color: c.textFaint),
+                      ),
+                    ],
+
+                    const SizedBox(height: 14),
+                    // ── Κύριο κουμπί (νέο στυλ: amber, στρογγυλεμένο) ──────
+                    SizedBox(
+                      height: 48,
+                      child: FilledButton(
+                        style: FilledButton.styleFrom(
+                          backgroundColor: c.amber,
+                          foregroundColor: c.onAmber,
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14)),
+                          textStyle: const TextStyle(
+                              fontSize: 15.5, fontWeight: FontWeight.w700),
+                        ),
+                        onPressed: () => Navigator.of(dctx).pop(),
+                        child: Text(remaining > 0 ? 'ΟΚ — Επόμενη' : 'ΟΚ'),
+                      ),
+                    ),
                   ],
                 ),
-                const SizedBox(height: 14),
-                Text(a.body, style: const TextStyle(fontSize: 15)),
-                const SizedBox(height: 14),
-
-                // ── Κάρτα δουλειάς (tap -> αναλυτική καρτέλα) ──────────────
-                Material(
-                  color: Colors.grey.shade50,
-                  borderRadius: BorderRadius.circular(14),
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(14),
-                    onTap: () => _openDetails(dctx, j),
-                    child: Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(14),
-                        border: Border.all(color: Colors.grey.shade300),
-                      ),
-                      child: Row(
-                        children: [
-                          Icon(Icons.local_taxi_rounded,
-                              color: Colors.amber.shade800, size: 22),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                if (route.isNotEmpty)
-                                  Text(route,
-                                      maxLines: 2,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: const TextStyle(
-                                          fontWeight: FontWeight.w600,
-                                          fontSize: 14)),
-                                const SizedBox(height: 2),
-                                Row(children: [
-                                  if (j.price > 0)
-                                    Text('€${j.price.toStringAsFixed(2)}',
-                                        style: TextStyle(
-                                            color: Colors.green.shade700,
-                                            fontWeight: FontWeight.bold,
-                                            fontSize: 13.5)),
-                                  const Spacer(),
-                                  Text('Προβολή δουλειάς',
-                                      style: TextStyle(
-                                          fontSize: 12.5,
-                                          color: Colors.blue.shade700,
-                                          fontWeight: FontWeight.w600)),
-                                ]),
-                              ],
-                            ),
-                          ),
-                          Icon(Icons.chevron_right_rounded,
-                              color: Colors.grey.shade500),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-
-                if (remaining > 0) ...[
-                  const SizedBox(height: 12),
-                  Text(
-                    'Σε περιμένουν άλλες $remaining '
-                    '${remaining == 1 ? "ειδοποίηση" : "ειδοποιήσεις"}.',
-                    style: TextStyle(
-                        fontSize: 13,
-                        fontStyle: FontStyle.italic,
-                        color: Colors.grey[600]),
-                  ),
-                ],
-
-                const SizedBox(height: 16),
-                // ── Πράσινο κουμπί ΟΚ ──────────────────────────────────────
-                SizedBox(
-                  height: 48,
-                  child: ElevatedButton(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.green.shade600,
-                      foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14)),
-                      textStyle: const TextStyle(
-                          fontSize: 16, fontWeight: FontWeight.bold),
-                    ),
-                    onPressed: () => Navigator.of(dctx).pop(),
-                    child: Text(remaining > 0 ? 'ΟΚ — Επόμενη' : 'ΟΚ'),
-                  ),
-                ),
-              ],
+              ),
             ),
-          ),
-          ),
-        ),
+          );
+        },
       );
     } catch (_) {
     } finally {

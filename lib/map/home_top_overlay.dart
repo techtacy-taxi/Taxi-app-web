@@ -326,19 +326,31 @@ class _AppointmentCountdownBarState extends State<AppointmentCountdownBar>
     super.dispose();
   }
 
+  // Επόμενο ΣΗΜΕΡΙΝΟ ραντεβού μου:
+  //  • Μετράει αντίστροφα προς το πιο κοντινό σημερινό ραντεβού.
+  //  • Αν πέρασε η ώρα, δείχνει «Καθυστέρηση» + πόση ώρα πέρασε, ΜΕΧΡΙ να
+  //    ολοκληρωθεί η δουλειά (τότε φεύγει από τη λίστα ενεργών και η μπάρα
+  //    περνά αυτόματα στο επόμενο σημερινό ραντεβού).
+  //  • Αν δεν έχει άλλο ΣΗΜΕΡΑ (ακόμη κι αν έχει αύριο) → κρύβεται τελείως·
+  //    αύριο, όταν το ραντεβού γίνει «σημερινό», ξαναρχίζει να μετράει.
   Job? _nextScheduled(List<Job> jobs) {
-    final scheduled = jobs
-        .where((j) => j.scheduledAt != null && j.isTaken && j.takenBy == widget.uid)
-        .toList()
+    final now      = DateTime.now();
+    final dayStart = DateTime(now.year, now.month, now.day);
+    final dayEnd   = dayStart.add(const Duration(days: 1));
+
+    final today = jobs.where((j) =>
+        j.scheduledAt != null &&
+        (j.isTaken || j.isBoarded) &&
+        j.takenBy == widget.uid &&
+        !j.scheduledAt!.isBefore(dayStart) &&
+        j.scheduledAt!.isBefore(dayEnd)).toList()
       ..sort((a, b) => a.scheduledAt!.compareTo(b.scheduledAt!));
-    if (scheduled.isEmpty) return null;
-    final now = DateTime.now();
-    for (final j in scheduled) {
-      if (j.scheduledAt!.isAfter(now.subtract(const Duration(hours: 1)))) {
-        return j;
-      }
-    }
-    return scheduled.last;
+
+    if (today.isEmpty) return null;
+
+    // Πρώτα το πιο παλιό που ΔΕΝ έχει ολοκληρωθεί (αν έχει περάσει η ώρα
+    // του → «Καθυστέρηση»)· αλλιώς το πιο κοντινό μελλοντικό.
+    return today.first;
   }
 
   String _fmtRemaining(Duration d) {

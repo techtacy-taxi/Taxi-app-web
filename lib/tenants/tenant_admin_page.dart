@@ -555,22 +555,52 @@ class _TenantAdminPageState extends State<TenantAdminPage> {
                                               style: TextStyle(
                                                   fontSize: 11, color: Colors.grey[400])),
                                           const SizedBox(height: 6),
-                                          Row(children: [
-                                            Icon(
-                                                t['hasVivaCredentials'] == true
-                                                    ? Icons.check_circle_rounded
-                                                    : Icons.warning_amber_rounded,
-                                                size: 14,
-                                                color: t['hasVivaCredentials'] == true
-                                                    ? const Color(0xFF1E8E3E)
-                                                    : Colors.orange),
-                                            const SizedBox(width: 5),
-                                            Text(
-                                                t['hasVivaCredentials'] == true
-                                                    ? 'Viva συνδεδεμένη (${t['vivaDemo'] == true ? "demo" : "live"})'
-                                                    : 'Λείπουν Viva credentials',
-                                                style: const TextStyle(fontSize: 11.5)),
-                                          ]),
+                                          // ── Γραμμές κατάστασης (όπως στο σχέδιο):
+                                          //    Viva / Google Console / Resend email
+                                          // Πληρωμές: δείχνει ό,τι πραγματικά
+                                          // έχει ο tenant — Viva ή/και Stripe.
+                                          // Προειδοποίηση ΜΟΝΟ αν δεν έχει κανένα.
+                                          if (t['hasVivaCredentials'] == true)
+                                            _statusLine(
+                                              ok: true,
+                                              okText: 'Viva συνδεδεμένη '
+                                                  '(${t['vivaDemo'] == true ? "demo" : "live"})'
+                                                  '${t['paymentProvider'] == 'viva' ? ' · ενεργός πάροχος' : ''}',
+                                              badText: '',
+                                            ),
+                                          if (t['hasStripeCredentials'] == true) ...[
+                                            if (t['hasVivaCredentials'] == true)
+                                              const SizedBox(height: 3),
+                                            _statusLine(
+                                              ok: true,
+                                              okText: 'Stripe συνδεδεμένο'
+                                                  '${t['paymentProvider'] == 'stripe' ? ' · ενεργός πάροχος' : ''}',
+                                              badText: '',
+                                            ),
+                                          ],
+                                          if (t['hasVivaCredentials'] != true &&
+                                              t['hasStripeCredentials'] != true)
+                                            _statusLine(
+                                              ok: false,
+                                              okText: '',
+                                              badText: 'Λείπουν στοιχεία πληρωμών '
+                                                  '(Viva ή Stripe)',
+                                            ),
+                                          const SizedBox(height: 3),
+                                          _statusLine(
+                                            ok: hasMapsApiKey,
+                                            okText: 'Google Console συνδεδεμένη '
+                                                '(δικό του key)',
+                                            badText: 'Χρησιμοποιεί το δικό μας '
+                                                'Google key',
+                                            badIsNeutral: true,
+                                          ),
+                                          const SizedBox(height: 3),
+                                          _statusLine(
+                                            ok: t['resendConnected'] == true,
+                                            okText: 'Resend email συνδεδεμένο',
+                                            badText: 'Resend email μη διαθέσιμο',
+                                          ),
                                           const SizedBox(height: 8),
                                           // ── Κουμπιά αντιγραφής — webhook URL (έτοιμο για
                                           // Viva dashboard) και eformId (έτοιμο για να το
@@ -1293,6 +1323,41 @@ class _EditTenantDialogState extends State<_EditTenantDialog> {
 }
 
 // ─── Μία γραμμή οδηγιών «πού το βάζεις» — «Ετικέτα: κείμενο» ─────────────────
+// Μία γραμμή κατάστασης ενσωμάτωσης στην κάρτα tenant:
+// πράσινο ✓ όταν ΟΚ, πορτοκαλί ⚠ όταν λείπει, γκρι ⓘ όταν είναι απλή
+// πληροφορία (π.χ. «χρησιμοποιεί το δικό μας key» — δεν είναι πρόβλημα).
+Widget _statusLine({
+  required bool ok,
+  required String okText,
+  required String badText,
+  bool badIsNeutral = false,
+}) {
+  final IconData icon = ok
+      ? Icons.check_circle_rounded
+      : badIsNeutral
+          ? Icons.info_rounded
+          : Icons.warning_amber_rounded;
+  final Color color = ok
+      ? const Color(0xFF1E8E3E)
+      : badIsNeutral
+          ? Colors.grey.shade500
+          : Colors.orange;
+  return Row(children: [
+    Icon(icon, size: 14, color: color),
+    const SizedBox(width: 5),
+    Expanded(
+      child: Text(ok ? okText : badText,
+          style: TextStyle(
+              fontSize: 11.5,
+              color: ok
+                  ? Colors.black87
+                  : badIsNeutral
+                      ? Colors.grey.shade600
+                      : Colors.black87)),
+    ),
+  ]);
+}
+
 class _WhereToPutRow extends StatelessWidget {
   final Color color;
   final String label;

@@ -5661,28 +5661,65 @@ exports.setTenantActive = onCall(
 );
 
 // ── listTenants: λίστα όλων των tenants — μόνο ο super-admin ──
+// ⚠️ Το hasVivaCredentials ΔΕΝ βασίζεται πια μόνο στο flag του Firestore
+// (που μπορεί να είναι μπαγιάτικο αν ο tenant έβαλε τα credentials μόνος
+// του από παλιότερη έκδοση): ελέγχουμε ΖΩΝΤΑΝΑ το Secret Manager αν
+// υπάρχουν viva-client-id + viva-client-secret του tenant, και
+// αυτο-διορθώνουμε το flag στο Firestore ώστε να συμφωνεί.
+// Επιστρέφουμε επίσης resendConnected (υπάρχει RESEND_API_KEY;) για τη
+// γραμμή «Resend email συνδεδεμένο» στην κάρτα του tenant.
 exports.listTenants = onCall(
-  { region: "us-central1" },
+  { region: "us-central1", secrets: [RESEND_API_KEY] },
   async (request) => {
     if (!request.auth || request.auth.token.email !== "techtacy@gmail.com") {
       throw new HttpsError("permission-denied", "Μόνο ο super-admin μπορεί να τα δει.");
     }
     const db = getFirestore();
     const snap = await db.collection("tenants").orderBy("createdAt", "desc").get();
-    const tenants = snap.docs.map((doc) => {
+
+    let resendConnected = false;
+    try { resendConnected = !!(RESEND_API_KEY.value() || "").trim(); } catch (e) { /* όχι δεμένο */ }
+
+    const tenants = await Promise.all(snap.docs.map(async (doc) => {
       const t = doc.data();
+
+      // Ζωντανός έλεγχος Secret Manager (με 10λεπτο cache του readSecret —
+      // δεν χτυπάμε το API σε κάθε refresh).
+      let vivaSecretsExist = false;
+      let stripeSecretsExist = false;
+      try {
+        const [cid, csec, ssk] = await Promise.all([
+          readSecret(tenantSecretId(doc.id, "viva-client-id")),
+          readSecret(tenantSecretId(doc.id, "viva-client-secret")),
+          readSecret(tenantSecretId(doc.id, "stripe-secret-key")),
+        ]);
+        vivaSecretsExist   = !!(cid && csec);
+        stripeSecretsExist = !!ssk;
+      } catch (e) { /* αν αποτύχει, πέφτουμε στο flag */ }
+
+      const hasViva = vivaSecretsExist || t.hasVivaCredentials === true;
+
+      // Αυτο-διόρθωση μπαγιάτικου flag (secrets υπάρχουν, flag false).
+      if (vivaSecretsExist && t.hasVivaCredentials !== true) {
+        db.collection("tenants").doc(doc.id)
+          .update({ hasVivaCredentials: true }).catch(() => {});
+      }
+
       return {
         tenantId: doc.id,
         businessName: t.businessName || "",
         masterEmail: t.masterEmail || "",
         active: t.active !== false,
         vivaDemo: t.vivaDemo !== false,
-        hasVivaCredentials: t.hasVivaCredentials === true,
+        hasVivaCredentials: hasViva,
         mapEnabled: t.mapEnabled !== false,
         placesEnabled: t.placesEnabled !== false,
         hasMapsApiKey: !!(t.mapsApiKey && t.mapsApiKey.trim()),
+        resendConnected,
+        hasStripeCredentials: stripeSecretsExist,
+        paymentProvider: s(t.paymentProvider) === "stripe" ? "stripe" : "viva",
       };
-    });
+    }));
     return { ok: true, tenants };
   }
 );
