@@ -424,7 +424,18 @@ class MyJobsBottomBar extends StatefulWidget {
   // ανεβάζει τα πλαϊνά FAB και να μην τα καλύπτει. Στέλνει το ύψος της μπάρας
   // (0 όταν είναι κρυμμένη) σε pixels.
   final ValueChanged<double>? onHeightChanged;
-  const MyJobsBottomBar({super.key, required this.uid, this.onHeightChanged});
+  // Επιτρέπει σε ΕΞΩΤΕΡΙΚΟ widget (π.χ. το chip «Δουλειές» στην κύρια οθόνη)
+  // να ζητήσει το άνοιγμα του συρταριού προγραμματιστικά, χωρίς να χρειάζεται
+  // να αγγίξει ο χρήστης την πράσινη κεφαλή. Το bar καλεί αυτό το callback
+  // με μια function που, όταν κληθεί, ανοίγει το συρτάρι.
+  final void Function(VoidCallback openFn)? onOpenControllerReady;
+
+  const MyJobsBottomBar({
+    super.key,
+    required this.uid,
+    this.onHeightChanged,
+    this.onOpenControllerReady,
+  });
 
   @override
   State<MyJobsBottomBar> createState() => _MyJobsBottomBarState();
@@ -451,6 +462,12 @@ class _MyJobsBottomBarState extends State<MyJobsBottomBar> {
     super.initState();
     _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
       if (mounted) setState(() {});
+    });
+    // Δίνει στον γονέα ένα «τηλεχειριστήριο» για να ανοίξει το συρτάρι
+    // προγραμματιστικά (π.χ. tap στο εξωτερικό chip «Δουλειές»).
+    widget.onOpenControllerReady?.call(() {
+      if (!mounted) return;
+      if (!_expanded) _toggle();
     });
   }
 

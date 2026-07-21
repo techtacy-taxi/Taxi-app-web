@@ -30,6 +30,7 @@ import '../voice/voice_service.dart';
 import '../voice/groups_admin.dart' hide GroupBadge;
 import 'driver_card.dart';
 import 'map_menus.dart';
+import 'home_top_overlay.dart';
 import 'marker_builder.dart';
 import '../ics_intent.dart';
 import '../jobs/job_admin_page.dart';
@@ -100,6 +101,7 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
   // Ύψος της κάτω μπάρας «Οι δουλειές μου» (0 όταν είναι κρυμμένη). Όταν
   // εμφανίζεται, τα πλαϊνά FAB ανεβαίνουν τόσο ώστε να μην καλύπτονται.
   double _jobsBarHeight = 0;
+  VoidCallback? _openJobsBarFn;
 
   // ─── voice queue ─────────────────────────────────────────────────────────────
   final AudioPlayer              _autoPlayer    = AudioPlayer();
@@ -1039,47 +1041,32 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
           },
         ),
 
-        // ─── Top bar ─────────────────────────────────────────────────────────
+        // ─── Top bar (compact redesign) ────────────────────────────────────
         Positioned(
           top: MediaQuery.of(context).padding.top + 10,
           left: 10, right: 10,
-          child: Row(children: [
-            GestureDetector(
-              onTap: () => showMyCard(
-                context: context,
-                displayName: _displayName, lastName: _lastName,
-                phone: _phone, vehicleModel: _vehicleModel,
-                plateNumber: _plateNumber, appVersion: _appVersion,
-                vehicleType: _vehicleType,
-                isOnline: _isOnline, isAvailable: _isAvailable,
-                isMuted: _isMuted, uid: _uid,
-                allGroups: _allGroups, updateUrl: kUpdateUrl,
-              ),
-              child: Container(
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(12),
-                  boxShadow: [BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.15),
-                    blurRadius: 8, offset: const Offset(0, 2))],
-                ),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(12),
-                  child: Image.asset('assets/app_icon.png', width: 48, height: 48, fit: BoxFit.cover),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            Row(children: [
+              Expanded(
+                child: HomeStatusBar(
+                  isMaster:    _isMaster,
+                  isAdmin:     _isAdmin,
+                  displayName: _displayName,
+                  isAvailable: _isAvailable,
+                  onToggleAvailable: _toggleAvailability,
+                  onTapAvatar: () => showMyCard(
+                    context: context,
+                    displayName: _displayName, lastName: _lastName,
+                    phone: _phone, vehicleModel: _vehicleModel,
+                    plateNumber: _plateNumber, appVersion: _appVersion,
+                    vehicleType: _vehicleType,
+                    isOnline: _isOnline, isAvailable: _isAvailable,
+                    isMuted: _isMuted, uid: _uid,
+                    allGroups: _allGroups, updateUrl: kUpdateUrl,
+                  ),
                 ),
               ),
-            ),
-            const Spacer(),
-            FilledButton.icon(
-              onPressed: _toggleAvailability,
-              style: FilledButton.styleFrom(
-                backgroundColor: _isAvailable ? const Color(0xFF1E8E3E) : const Color(0xFFC5221F),
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-              ),
-              icon: Icon(_isAvailable ? Icons.check_circle_outline : Icons.cancel_outlined, size: 18),
-              label: Text(_isAvailable ? 'Διαθέσιμος' : 'Μη διαθέσιμος'),
-            ),
-            const SizedBox(width: 8),
+              const SizedBox(width: 8),
             Theme(
               data: Theme.of(context).copyWith(
                 popupMenuTheme: PopupMenuThemeData(
@@ -1372,6 +1359,11 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
                 ),
               ),
             ),
+            ]),
+            if (_isAdmin || _isMaster) ...[
+              const SizedBox(height: 8),
+              OwnJobsTodayStats(uid: _uid ?? ''),
+            ],
           ]),
         ),
 
@@ -1400,8 +1392,6 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
                 }),
                 const SizedBox(height: 12),
               ],
-              VoiceInboxButton(uid: _uid ?? ''),
-              const SizedBox(height: 12),
               VoiceRecorderButton(fromUid: _uid ?? '', fromName: _displayName, fromLastName: _lastName),
               const SizedBox(height: 12),
               FloatingActionButton(
@@ -1419,6 +1409,27 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
           ),
         ),
 
+        // ─── Floating chips (Δουλειές σήμερα / Μηνύματα) + countdown ───────
+        // Ανεβαίνουν αυτόματα όταν ανοίγει το «Οι δουλειές μου» από κάτω
+        // (ίδιο _jobsBarHeight offset με τα δεξιά FABs).
+        AnimatedPositioned(
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeOutCubic,
+          left: 10, right: 10,
+          bottom: _jobsBarHeight > 0 ? _jobsBarHeight + 12 : 14,
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            HomeFloatingChips(
+              uid: _uid ?? '',
+              onTapJobs: () => _openJobsBarFn?.call(),
+              onTapMessages: () => openVoiceInboxSheet(
+                context: context, uid: _uid ?? '',
+              ),
+            ),
+            const SizedBox(height: 8),
+            AppointmentCountdownBar(uid: _uid ?? ''),
+          ]),
+        ),
+
         // ─── Κάτω μπάρα «Οι δουλειές μου» (μόνο όταν υπάρχουν αναληφθείσες) ───
         Positioned(
           left: 0, right: 0, bottom: 0,
@@ -1429,6 +1440,7 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
                 setState(() => _jobsBarHeight = h);
               }
             },
+            onOpenControllerReady: (openFn) => _openJobsBarFn = openFn,
           ),
         ),
         ]),

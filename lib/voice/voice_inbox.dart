@@ -10,6 +10,26 @@ import 'voice_models.dart';
 import 'voice_service.dart';
 import '../jobs/job_shared_widgets.dart';
 
+/// Ανοίγει το ίδιο inbox sheet απευθείας (π.χ. από το chip «Μηνύματα» στην
+/// κύρια οθόνη) — χωρίς να χρειάζεται το FAB widget στο ίδιο σημείο.
+void openVoiceInboxSheet({
+  required BuildContext context,
+  required String       uid,
+}) {
+  showModalBottomSheet(
+    context:            context,
+    isScrollControlled: true,
+    backgroundColor:    Colors.transparent,
+    builder: (_) => StreamBuilder<List<VoiceMessage>>(
+      stream: VoiceService.messagesFor(uid),
+      builder: (context, snap) => _InboxSheet(
+        uid:      uid,
+        messages: snap.data ?? const [],
+      ),
+    ),
+  );
+}
+
 class VoiceInboxButton extends StatefulWidget {
   final String uid;
 
