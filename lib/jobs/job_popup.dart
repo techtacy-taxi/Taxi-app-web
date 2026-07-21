@@ -58,11 +58,16 @@ class _JobPopupState extends State<JobPopup> {
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
     return Dialog(
-      shape:           RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(24),
+        // Λεπτή γραμμή στο χρώμα του κουμπιού Αποδοχή γύρω-γύρω — ώστε η
+        // καρτέλα να ξεχωρίζει ακόμη κι αν το πίσω φόντο είναι σκούρο/μαύρο.
+        side: BorderSide(color: c.amber, width: 1.5),
+      ),
       backgroundColor: c.scaffold,
       insetPadding:    const EdgeInsets.symmetric(horizontal: 16, vertical: 26),
       child: ClipRRect(
-        borderRadius: BorderRadius.circular(24),
+        borderRadius: BorderRadius.circular(22.5),
         child: _JobPopupContent(
           job:          widget.job,
           uid:          widget.uid,
@@ -720,10 +725,10 @@ class _JobPopupContentState extends State<_JobPopupContent>
 
   // Μπλοκ πληρωμής
   Widget _paymentBlock(Job job, AppColors c) {
-    // Ανάλυση: Ναύλος / Γιαούρτι / Προμήθεια app — μικρή γραμμή κάτω
+    // Ανάλυση: Γιαούρτι / Προμήθεια app — μικρή γραμμή κάτω (χωρίς Ναύλος,
+    // αφού το ποσό δείχνεται ήδη μεγάλο πάνω-πάνω).
     String breakdownLeft() {
-      final total = job.fullyPaid ? job.depositAmount : job.price;
-      final parts = <String>['Ναύλος ${total.toStringAsFixed(2)} €'];
+      final parts = <String>[];
       if (job.commission > 0) {
         parts.add('Γιαούρτι −${job.commission.toStringAsFixed(2)} €');
       }
@@ -811,23 +816,23 @@ class _JobPopupContentState extends State<_JobPopupContent>
         borderRadius: BorderRadius.circular(16),
       ),
       child: Column(children: [
-        Row(children: [
+        Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Icon(Icons.payments_rounded, size: 24, color: c.greenDeep),
           const SizedBox(width: 10),
           Expanded(
-            child: Text('Εισπράττεις',
-                style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w600,
-                    color: c.greenDeep)),
-          ),
-          FittedBox(
-            fit: BoxFit.scaleDown,
-            // Με προκαταβολή το ποσό «ανασαίνει» — ο οδηγός να προσέξει
-            // ότι εισπράττει ΜΟΝΟ το υπόλοιπο.
-            child: job.depositPaid
-                ? PulsingBox(child: amountText)
-                : amountText,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Εισπράττεις',
+                    style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: c.greenFaint)),
+                job.depositPaid
+                    ? PulsingBox(child: amountText)
+                    : amountText,
+              ],
+            ),
           ),
         ]),
         Padding(
@@ -838,24 +843,40 @@ class _JobPopupContentState extends State<_JobPopupContent>
                 style: TextStyle(fontSize: 12, color: c.greenFaint)),
           ),
         ),
-        Padding(
-          padding: const EdgeInsets.only(top: 8),
-          child: Column(children: [
-            Divider(height: 1, color: c.greenDivider),
-            const SizedBox(height: 8),
-            Row(children: [
-              Expanded(
-                child: Text(breakdownLeft(),
-                    style: TextStyle(fontSize: 12, color: c.greenFaint)),
-              ),
-              Text(earning,
-                  style: TextStyle(
-                      fontSize: 14.5,
-                      fontWeight: FontWeight.w700,
-                      color: c.greenDeep)),
+        if (breakdownLeft().isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Column(children: [
+              Divider(height: 1, color: c.greenDivider),
+              const SizedBox(height: 8),
+              Row(children: [
+                Expanded(
+                  child: Text(breakdownLeft(),
+                      style: TextStyle(fontSize: 12, color: c.greenFaint)),
+                ),
+                Text(earning,
+                    style: TextStyle(
+                        fontSize: 14.5,
+                        fontWeight: FontWeight.w700,
+                        color: c.greenDeep)),
+              ]),
             ]),
-          ]),
-        ),
+          )
+        else
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Column(children: [
+              Divider(height: 1, color: c.greenDivider),
+              const SizedBox(height: 8),
+              Row(mainAxisAlignment: MainAxisAlignment.end, children: [
+                Text(earning,
+                    style: TextStyle(
+                        fontSize: 14.5,
+                        fontWeight: FontWeight.w700,
+                        color: c.greenDeep)),
+              ]),
+            ]),
+          ),
       ]),
     );
   }
@@ -1023,7 +1044,7 @@ class _JobPopupContentState extends State<_JobPopupContent>
         : '${routeKm.toStringAsFixed(1)} χλμ';
 
     return SizedBox(
-      height: 175,
+      height: 220,
       width:  double.infinity,
       child: Stack(children: [
         Positioned.fill(
@@ -1069,17 +1090,17 @@ class _JobPopupContentState extends State<_JobPopupContent>
     required Color    fg,
   }) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
       decoration: BoxDecoration(
         color:        bg,
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: BorderRadius.circular(11),
       ),
       child: Row(mainAxisSize: MainAxisSize.min, children: [
-        Icon(icon, size: 12, color: fg),
-        const SizedBox(width: 5),
+        Icon(icon, size: 15, color: fg),
+        const SizedBox(width: 6),
         Text(text,
             style: TextStyle(
-                fontSize: 11, fontWeight: FontWeight.w600, color: fg)),
+                fontSize: 13.5, fontWeight: FontWeight.w700, color: fg)),
       ]),
     );
   }
@@ -1155,10 +1176,12 @@ class _JobPopupContentState extends State<_JobPopupContent>
   // και οι γωνίες (badges) να μένουν ελεύθερες.
   double _zoomForSpan(double latSpan, double lngSpan) {
     var span = math.max(latSpan, lngSpan * 0.78);
-    span = span * 1.18 + 0.003;
-    if (span <= 0.0008) return 14.5;
+    // Μεγαλύτερο περιθώριο (was 1.18/0.003) ώστε οι 2 πινέζες να μην
+    // ακουμπάνε ποτέ στις άκρες του χάρτη — να φαίνονται καθαρά αρχή/τέλος.
+    span = span * 1.55 + 0.006;
+    if (span <= 0.0012) return 14.0;
     final z = math.log(360.0 / span) / math.ln2;
-    return (z - 0.2).clamp(4.0, 16.5);
+    return (z - 0.35).clamp(4.0, 16.0);
   }
 
   LatLngBounds _boundsOf(List<LatLng> pts) {

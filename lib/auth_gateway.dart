@@ -1,10 +1,21 @@
 // lib/auth_gateway.dart
+//
+// REDESIGN (εγκεκριμένο mockup «Καλωσόρισμα + Σύνδεση»):
+//  • Logo με στρογγυλεμένες γωνίες + κίτρινο πλαίσιο γύρω-γύρω (AppLogoBadge)
+//  • Τίτλος + υπότιτλος «Δουλειές, ραντεβού και πληρωμές — όλα σε μία εφαρμογή»
+//  • Pill κουμπί «Σύνδεση με Google»
+//  • Dark mode (AppColors)
+//
+// Η ΛΟΓΙΚΗ ΣΥΝΔΕΣΗΣ παραμένει ΙΔΙΑ: αναμονή αποκατάστασης session στο cold
+// start, καμία αυτόματη Google lightweight κλήση, serverClientId initialize.
 
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 
+import 'app_theme.dart';
 import 'map/map_page.dart';
+import 'onboarding_screens.dart';
 
 class AuthGateway extends StatefulWidget {
   const AuthGateway({super.key});
@@ -83,23 +94,21 @@ class _AuthGatewayState extends State<AuthGateway> {
 
   @override
   Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+
     if (_loading) {
       return Scaffold(
-        backgroundColor: Colors.white,
-        body: Center(
+        backgroundColor: c.scaffold,
+        body: const Center(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              ClipRRect(
-                borderRadius: BorderRadius.circular(24),
-                child: Image.asset('assets/app_icon.png',
-                    width: 120, height: 120),
-              ),
-              const SizedBox(height: 28),
-              const SizedBox(
+              AppLogoBadge(size: 116),
+              SizedBox(height: 28),
+              SizedBox(
                 width: 32, height: 32,
                 child: CircularProgressIndicator(
-                    color: Colors.amber, strokeWidth: 3),
+                    color: Color(0xFFEF9F27), strokeWidth: 3),
               ),
             ],
           ),
@@ -110,55 +119,62 @@ class _AuthGatewayState extends State<AuthGateway> {
     if (_signedIn) return const HomeMapPage();
 
     return Scaffold(
-      backgroundColor: Colors.white,
-      body: Center(
-        child: Padding(
-          padding: const EdgeInsets.all(32.0),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              ClipRRect(
-                borderRadius: BorderRadius.circular(20),
-                child: Image.asset('assets/app_icon.png', width: 100, height: 100),
-              ),
-              const SizedBox(height: 24),
-              const Text(
-                'Athens Taxi',
-                style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'Σύνδεση για οδηγούς',
-                style: TextStyle(fontSize: 16, color: Colors.grey[600]),
-              ),
-              const SizedBox(height: 48),
-              SizedBox(
-                width: double.infinity,
-                child: OutlinedButton.icon(
-                  onPressed: _signInWithGoogle,
-                  style: OutlinedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    side: BorderSide(color: Colors.grey[300]!),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                  ),
-                  icon: const Icon(Icons.login_rounded, color: Colors.red, size: 24),
-                  label: const Text(
-                    'Σύνδεση με Google',
+      backgroundColor: c.scaffold,
+      body: SafeArea(
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(28),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 380),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const AppLogoBadge(size: 104),
+                  const SizedBox(height: 20),
+                  Text(
+                    'Taxi Athens Driver',
                     style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.black87,
+                        fontSize: 21,
+                        fontWeight: FontWeight.w600,
+                        color: c.textMain),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    'Δουλειές, ραντεβού και πληρωμές —\nόλα σε μία εφαρμογή.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(fontSize: 13.5, color: c.textFaint),
+                  ),
+                  const SizedBox(height: 34),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: _signInWithGoogle,
+                      style: OutlinedButton.styleFrom(
+                        backgroundColor: c.card,
+                        foregroundColor: c.textMain,
+                        side: BorderSide(color: c.cardBorder, width: 0.8),
+                      ),
+                      icon: const Icon(Icons.login_rounded,
+                          color: Colors.red, size: 22),
+                      label: const Text('Σύνδεση με Google'),
                     ),
                   ),
-                ),
+                  const SizedBox(height: 12),
+                  Text(
+                    'Με τη σύνδεση αποδέχεσαι τους όρους χρήσης',
+                    style: TextStyle(
+                        fontSize: 11,
+                        color: c.textFaint.withValues(alpha: 0.7)),
+                  ),
+                  if (_error != null) ...[
+                    const SizedBox(height: 16),
+                    Text(_error!,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(color: Colors.red)),
+                  ],
+                ],
               ),
-              if (_error != null) ...[
-                const SizedBox(height: 16),
-                Text(_error!, style: const TextStyle(color: Colors.red)),
-              ],
-            ],
+            ),
           ),
         ),
       ),

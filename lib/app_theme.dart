@@ -24,10 +24,16 @@ class ThemeController {
   static const _prefsKey = 'theme_mode'; // 'light' | 'dark' | 'system'
 
   /// Το τρέχον mode — το MaterialApp το ακούει και ξαναχτίζεται.
+  /// ΠΡΟΣΩΡΙΝΟ: default = light (όχι system), γιατί δεν έχουν περάσει ΟΛΕΣ
+  /// οι οθόνες από το redesign ακόμα — σε dark θα φαίνονταν μισοτελειωμένες
+  /// (καρφωμένα λευκά φόντα σε παλιό κώδικα). Όταν ολοκληρωθεί όλο το
+  /// redesign, αλλάζουμε το ThemeMode.light παρακάτω σε ThemeMode.system.
   static final ValueNotifier<ThemeMode> mode =
-      ValueNotifier<ThemeMode>(ThemeMode.system);
+      ValueNotifier<ThemeMode>(ThemeMode.light);
 
   /// Φόρτωση αποθηκευμένης επιλογής (κλήση στο main() πριν το runApp).
+  /// ΠΡΟΣΩΡΙΝΟ: αν δεν υπάρχει αποθηκευμένη επιλογή, default = light
+  /// (βλ. σχόλιο πάνω στο `mode`) — όχι system.
   static Future<void> load() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -36,10 +42,12 @@ class ThemeController {
           mode.value = ThemeMode.light;
         case 'dark':
           mode.value = ThemeMode.dark;
-        default:
+        case 'system':
           mode.value = ThemeMode.system;
+        default:
+          mode.value = ThemeMode.light; // προσωρινό default
       }
-    } catch (_) {/* default: system */}
+    } catch (_) {/* default: light (ήδη ορισμένο πάνω) */}
   }
 
   /// Αλλαγή + αποθήκευση (θα καλείται από τις Ρυθμίσεις).
@@ -164,7 +172,7 @@ class AppColors {
     green:       Color(0xFF97C459),
     greenPale:   Color(0xFF1C2A10),
     greenDeep:   Color(0xFFDFF0C8),
-    greenFaint:  Color(0xFF8FB365),
+    greenFaint:  Color(0xFFA9CC85),
     greenDivider:Color(0xFF3E5A22),
     pin:         Color(0xFFE88B63),
     pinkSoft:    Color(0xFF3A1D28),

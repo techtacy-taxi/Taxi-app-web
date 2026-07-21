@@ -20,6 +20,7 @@ import '../fcm_service.dart';
 import '../owner_alerts.dart';
 import '../owner_home_page.dart';
 import '../public_booking_alert.dart';
+import '../onboarding_screens.dart';
 import '../permissions.dart';
 import '../access_guard.dart';
 import '../profile_form.dart';
@@ -926,44 +927,15 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
         _dialogShown = true;
         Future.microtask(() { if (mounted) _openProfileForm(); });
       }
-      return Scaffold(body: Center(child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-          Image.asset('assets/app_icon.png', width: 120, height: 120),
-          const SizedBox(height: 20),
-          const Text('Καλώς ήρθατε!\nΠαρακαλώ συμπληρώστε τα στοιχεία σας.',
-              textAlign: TextAlign.center, style: TextStyle(fontSize: 18)),
-          const SizedBox(height: 24),
-          FilledButton.icon(
-            style: FilledButton.styleFrom(backgroundColor: Colors.amber),
-            icon: const Icon(Icons.person_outline),
-            label: const Text('Συμπλήρωση Στοιχείων'),
-            onPressed: () { _dialogShown = false; _openProfileForm(); },
-          ),
-        ]),
-      )));
+      return WelcomeProfileScreen(
+        onFillProfile: () { _dialogShown = false; _openProfileForm(); },
+      );
     }
 
     if (!_isApproved) {
-      return Scaffold(body: Center(child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-          Image.asset('assets/app_icon.png', width: 120, height: 120),
-          const SizedBox(height: 20),
-          const Text('Το προφίλ σας δημιουργήθηκε.\nΠεριμένετε έγκριση από τον διαχειριστή...',
-              textAlign: TextAlign.center, style: TextStyle(fontSize: 18)),
-          const SizedBox(height: 30),
-          const CircularProgressIndicator(color: Colors.amber),
-          const SizedBox(height: 24),
-          AppButton(
-            label: 'Επεξεργασία Στοιχείων',
-            icon: Icons.edit_outlined,
-            color: Colors.amber,
-            fg: Colors.black,
-            onPressed: () { _dialogShown = false; _openProfileForm(); },
-          ),
-        ]),
-      )));
+      return WaitingApprovalScreen(
+        onEditProfile: () { _dialogShown = false; _openProfileForm(); },
+      );
     }
 
     // Home Owner (ιδιοκτήτης καταλύματος) — ΔΕΝ βλέπει χάρτη/κανονική
