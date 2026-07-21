@@ -277,7 +277,6 @@ class _GoogleCalendarPageState extends State<GoogleCalendarPage> {
                   outsideDaysVisible: false,
                   defaultTextStyle:   TextStyle(fontSize: 14, color: c.textMain),
                   weekendTextStyle:   const TextStyle(fontSize: 14, color: Color(0xFF993C1D)),
-                  cellAlignment: const Alignment(0, -0.4),
                   todayDecoration: BoxDecoration(color: c.amberSoft, shape: BoxShape.circle),
                   todayTextStyle: TextStyle(
                       color: c.isDark ? c.amberDeep : const Color(0xFF633806),
@@ -286,38 +285,40 @@ class _GoogleCalendarPageState extends State<GoogleCalendarPage> {
                   selectedTextStyle: TextStyle(color: c.scaffold, fontWeight: FontWeight.w600),
                 ),
                 calendarBuilders: CalendarBuilders<CalendarEvent>(
+                  // Έως 8 κουκκίδες σε ΔΥΟ σειρές (4+4), μεγαλύτερες (8px)·
+                  // «+Ν» αν υπάρχουν κι άλλες.
                   markerBuilder: (context, day, events) {
                     if (events.isEmpty) return null;
-                    final shown = events.take(4).toList();
+                    final shown = events.take(8).toList();
                     final extra = events.length - shown.length;
                     return Positioned(
-                      bottom: 6,
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          ...shown.map((e) {
-                            final converted = _convertedCache[e.id] ?? false;
-                            return Container(
-                              width: 7, height: 7,
-                              margin: const EdgeInsets.symmetric(horizontal: 1.3),
-                              decoration: BoxDecoration(
-                                color: converted
-                                    ? const Color(0xFF97C459)
-                                    : c.amber,
-                                shape: BoxShape.circle,
-                              ),
-                            );
-                          }),
-                          if (extra > 0)
-                            Padding(
-                              padding: const EdgeInsets.only(left: 1),
-                              child: Text('+$extra',
+                      bottom: 3,
+                      child: SizedBox(
+                        width: 46,
+                        child: Wrap(
+                          alignment: WrapAlignment.center,
+                          spacing: 2.5, runSpacing: 2.5,
+                          children: [
+                            ...shown.map((e) {
+                              final converted = _convertedCache[e.id] ?? false;
+                              return Container(
+                                width: 8, height: 8,
+                                decoration: BoxDecoration(
+                                  color: converted
+                                      ? const Color(0xFF97C459)
+                                      : c.amber,
+                                  shape: BoxShape.circle,
+                                ),
+                              );
+                            }),
+                            if (extra > 0)
+                              Text('+$extra',
                                   style: TextStyle(
                                       fontSize: 9,
                                       fontWeight: FontWeight.w700,
                                       color: c.textFaint)),
-                            ),
-                        ],
+                          ],
+                        ),
                       ),
                     );
                   },

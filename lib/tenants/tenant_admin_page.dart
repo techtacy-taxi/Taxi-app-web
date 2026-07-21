@@ -587,6 +587,26 @@ class _TenantAdminPageState extends State<TenantAdminPage> {
                                                   '(Viva ή Stripe)',
                                             ),
                                           const SizedBox(height: 3),
+                                          // ── Αποδείξεις (myDATA / Epsilon / Oxygen) ──
+                                          if (t['invoiceProvider'] == null)
+                                            _statusLine(
+                                              ok: false,
+                                              okText: '',
+                                              badText: 'Αποδείξεις: χωρίς πάροχο',
+                                              badIsNeutral: true,
+                                            )
+                                          else
+                                            _statusLine(
+                                              ok: t['hasReceiptCredentials'] == true,
+                                              okText: 'Αποδείξεις: '
+                                                  '${_receiptProviderName(t['invoiceProvider'])} '
+                                                  'συνδεδεμένο'
+                                                  '${t['invoiceEnabled'] == true ? '' : ' (ανενεργό)'}',
+                                              badText: 'Αποδείξεις: '
+                                                  '${_receiptProviderName(t['invoiceProvider'])} '
+                                                  '— λείπει κλειδί',
+                                            ),
+                                          const SizedBox(height: 3),
                                           _statusLine(
                                             ok: hasMapsApiKey,
                                             okText: 'Google Console συνδεδεμένη '
@@ -1323,6 +1343,16 @@ class _EditTenantDialogState extends State<_EditTenantDialog> {
 }
 
 // ─── Μία γραμμή οδηγιών «πού το βάζεις» — «Ετικέτα: κείμενο» ─────────────────
+// Εμφανίσιμο όνομα παρόχου αποδείξεων.
+String _receiptProviderName(dynamic p) {
+  switch (p) {
+    case 'mydata':  return 'myDATA';
+    case 'epsilon': return 'Epsilon Smart';
+    case 'oxygen':  return 'Oxygen';
+    default:        return '$p';
+  }
+}
+
 // Μία γραμμή κατάστασης ενσωμάτωσης στην κάρτα tenant:
 // πράσινο ✓ όταν ΟΚ, πορτοκαλί ⚠ όταν λείπει, γκρι ⓘ όταν είναι απλή
 // πληροφορία (π.χ. «χρησιμοποιεί το δικό μας key» — δεν είναι πρόβλημα).

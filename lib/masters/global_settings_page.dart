@@ -282,6 +282,9 @@ class AdminCard extends StatelessWidget {
   final Map<String, dynamic> data;
   final String masterUid;
   final bool   isSelf;
+  /// Κατάσταση συνδέσεων του tenant του (από listTenants) — null αν δεν
+  /// είναι tenant-owner ή δεν έχουν φορτώσει ακόμη οι tenants.
+  final Map<String, dynamic>? tenantStatus;
 
   const AdminCard({
     super.key,
@@ -289,6 +292,7 @@ class AdminCard extends StatelessWidget {
     required this.data,
     required this.masterUid,
     required this.isSelf,
+    this.tenantStatus,
   });
 
   Future<void> _editPrice(BuildContext context, {
@@ -486,9 +490,23 @@ class AdminCard extends StatelessWidget {
     required double formPrice,
   }) {
     final tenantId = (data['tenantId'] as String?) ?? '';
-    final vivaConnected   = data['vivaConnected']   == true;
-    final googleOwnKey    = data['googleOwnKeyConnected'] == true;
-    final resendConnected = data['resendConnected'] == true;
+    // Πραγματικές καταστάσεις από το listTenants (Secret Manager) — τα
+    // παλιά flags του presence δεν τα έγραφε ποτέ κανείς, γι' αυτό δεν
+    // έδειχνε τίποτα (π.χ. Σερέτης με live Viva). Κρατάμε τα presence
+    // flags μόνο ως fallback.
+    final ts = tenantStatus;
+    final vivaConnected   = (ts?['hasVivaCredentials'] == true) ||
+        data['vivaConnected'] == true;
+    final vivaDemo        = ts?['vivaDemo'] == true;
+    final stripeConnected = ts?['hasStripeCredentials'] == true;
+    final activeProvider  = ts?['paymentProvider'] as String?;
+    final googleOwnKey    = (ts?['hasMapsApiKey'] == true) ||
+        data['googleOwnKeyConnected'] == true;
+    final resendConnected = (ts?['resendConnected'] == true) ||
+        data['resendConnected'] == true;
+    final invoiceProvider = ts?['invoiceProvider'] as String?;
+    final invoiceEnabled  = ts?['invoiceEnabled'] == true;
+    final hasReceiptCreds = ts?['hasReceiptCredentials'] == true;
     // Auto-email: αν χρησιμοποιεί το ΔΙΚΟ ΜΑΣ Resend, ο διακόπτης είναι
     // by-default ενεργός αλλά χειροκίνητος. Αν συνδέσει ΔΙΚΟ ΤΟΥ Resend
     // key, ο διακόπτης "κλειδώνει" ενεργός (η δική του υπηρεσία στέλνει
@@ -540,11 +558,26 @@ class AdminCard extends StatelessWidget {
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               // ── Status συνδέσεων (δικές μας ή δικές του) ──
               if (vivaConnected)
-                _statusLine(c, Icons.credit_card_rounded, 'Viva συνδεδεμένη (live)'),
+                _statusLine(c, Icons.credit_card_rounded,
+                    'Viva συνδεδεμένη (${vivaDemo ? "demo" : "live"})'
+                    '${activeProvider == 'viva' && stripeConnected ? ' · ενεργός πάροχος' : ''}'),
+              if (stripeConnected)
+                _statusLine(c, Icons.credit_card_rounded,
+                    'Stripe συνδεδεμένο'
+                    '${activeProvider == 'stripe' ? ' · ενεργός πάροχος' : ''}'),
               if (googleOwnKey)
                 _statusLine(c, Icons.vpn_key_rounded, 'Google Console συνδεδεμένη'),
               if (resendConnected)
                 _statusLine(c, Icons.mail_rounded, 'Resend email συνδεδεμένο'),
+              // ── Αποδείξεις (myDATA / Epsilon / Oxygen) ──
+              if (invoiceProvider != null)
+                hasReceiptCreds
+                    ? _statusLine(c, Icons.receipt_long_rounded,
+                        'Αποδείξεις: ${_receiptName(invoiceProvider)} '
+                        'συνδεδεμένο${invoiceEnabled ? '' : ' (ανενεργό)'}')
+                    : _statusLineWarn(c, Icons.receipt_long_rounded,
+                        'Αποδείξεις: ${_receiptName(invoiceProvider)} — '
+                        'λείπει κλειδί'),
 
               if (tenantId.isNotEmpty) ...[
                 const SizedBox(height: 6),
@@ -626,6 +659,29 @@ class AdminCard extends StatelessWidget {
       ]),
     );
   }
+
+  String _receiptName(String p) => p == 'mydata'
+      ? 'myDATA'
+      : p == 'epsilon'
+          ? 'Epsilon Smart'
+          : p == 'oxygen'
+              ? 'Oxygen'
+              : p;
+
+  Widget _statusLineWarn(AppColors c, IconData icon, String text) => Padding(
+        padding: const EdgeInsets.only(bottom: 2),
+        child: Row(children: [
+          Icon(icon, size: 12, color: const Color(0xFFA66A00)),
+          const SizedBox(width: 5),
+          Expanded(
+            child: Text(text,
+                style: const TextStyle(
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.w700,
+                    color: Color(0xFFA66A00))),
+          ),
+        ]),
+      );
 
   Widget _statusLine(AppColors c, IconData icon, String text) => Padding(
         padding: const EdgeInsets.only(bottom: 2),

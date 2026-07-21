@@ -67,7 +67,9 @@ class SettingsPage extends StatelessWidget {
         elevation: 0,
       ),
       body: ListView(
-        padding: const EdgeInsets.all(14),
+        // Κάτω: +ύψος Android navigation bar να μην κρύβεται το τέλος.
+        padding: EdgeInsets.fromLTRB(
+            14, 14, 14, 14 + MediaQuery.of(context).padding.bottom + 10),
         children: [
           _sectionLabel(c, 'ΛΟΓΑΡΙΑΣΜΟΣ'),
           const SizedBox(height: 8),
@@ -145,7 +147,7 @@ class SettingsPage extends StatelessWidget {
             const SizedBox(height: 18),
             Text('ΠΛΑΤΦΟΡΜΑ · MASTER',
                 style: TextStyle(
-                    fontSize: 12, fontWeight: FontWeight.w700, color: c.blueDeep)),
+                    fontSize: 13.5, fontWeight: FontWeight.w700, color: c.blueDeep)),
             const SizedBox(height: 8),
             Container(
               decoration: BoxDecoration(
@@ -193,7 +195,7 @@ class SettingsPage extends StatelessWidget {
             child: TextButton.icon(
               onPressed: onSignOut,
               style: TextButton.styleFrom(foregroundColor: Colors.red),
-              icon: const Icon(Icons.logout_rounded, size: 17),
+              icon: const Icon(Icons.logout_rounded, size: 20),
               label: const Text('Αποσύνδεση'),
             ),
           ),
@@ -204,7 +206,7 @@ class SettingsPage extends StatelessWidget {
   }
 
   Widget _sectionLabel(AppColors c, String text) => Text(text,
-      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: c.textFaint));
+      style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700, color: c.textFaint));
 
   Widget _card(AppColors c, List<Widget> children) => Container(
         decoration: BoxDecoration(
@@ -230,17 +232,17 @@ class SettingsPage extends StatelessWidget {
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
         child: Row(children: [
-          Icon(icon, size: 17, color: iconColor ?? c.textFaint),
+          Icon(icon, size: 21, color: iconColor ?? c.textFaint),
           const SizedBox(width: 10),
           Expanded(
             child: Text(label,
-                style: TextStyle(fontSize: 13, color: labelColor ?? c.textMain)),
+                style: TextStyle(fontSize: 15.5, color: labelColor ?? c.textMain)),
           ),
           if (trailingText != null) ...[
-            Text(trailingText, style: TextStyle(fontSize: 12, color: c.textFaint)),
+            Text(trailingText, style: TextStyle(fontSize: 14, color: c.textFaint)),
             const SizedBox(width: 6),
           ],
-          Icon(Icons.chevron_right_rounded, size: 15, color: c.textFaint),
+          Icon(Icons.chevron_right_rounded, size: 18, color: c.textFaint),
         ]),
       ),
     );
@@ -255,10 +257,10 @@ class SettingsPage extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       child: Row(children: [
-        Icon(icon, size: 17, color: c.textFaint),
+        Icon(icon, size: 21, color: c.textFaint),
         const SizedBox(width: 10),
         Expanded(
-          child: Text(label, style: TextStyle(fontSize: 13, color: c.textMain)),
+          child: Text(label, style: TextStyle(fontSize: 15.5, color: c.textMain)),
         ),
         Switch(
           value: value,
@@ -307,14 +309,14 @@ class _AppearanceTile extends StatelessWidget {
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
           child: Row(children: [
-            Icon(icon, size: 17, color: c.textFaint),
+            Icon(icon, size: 21, color: c.textFaint),
             const SizedBox(width: 10),
             Expanded(
-              child: Text(label, style: TextStyle(fontSize: 13, color: c.textMain)),
+              child: Text(label, style: TextStyle(fontSize: 15.5, color: c.textMain)),
             ),
-            Text(_modeLabel(mode), style: TextStyle(fontSize: 12, color: c.textFaint)),
+            Text(_modeLabel(mode), style: TextStyle(fontSize: 14, color: c.textFaint)),
             const SizedBox(width: 6),
-            Icon(Icons.chevron_right_rounded, size: 15, color: c.textFaint),
+            Icon(Icons.chevron_right_rounded, size: 18, color: c.textFaint),
           ]),
         ),
       ),
@@ -366,16 +368,16 @@ class _AppearanceTile extends StatelessWidget {
           ),
         ),
         child: Row(children: [
-          Icon(icon, size: 18, color: selected ? c.amberDeep : c.textFaint),
+          Icon(icon, size: 21, color: selected ? c.amberDeep : c.textFaint),
           const SizedBox(width: 10),
           Expanded(
             child: Text(label,
                 style: TextStyle(
-                    fontSize: 13,
+                    fontSize: 15,
                     fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
                     color: selected ? c.amberDeep : c.textMain)),
           ),
-          if (selected) Icon(Icons.check_rounded, size: 17, color: c.amberDeep),
+          if (selected) Icon(Icons.check_rounded, size: 20, color: c.amberDeep),
         ]),
       ),
     );
