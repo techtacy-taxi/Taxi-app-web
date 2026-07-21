@@ -1090,7 +1090,7 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
           onMapCreated: (c) async {
             _mapController = c;
             // Σκούρος χάρτης όταν το θέμα (auto ή χειροκίνητο) είναι dark.
-            if (AppColors.isDarkNow(context)) {
+            if (MapThemeController.isDarkNow(context)) {
               await c.setMapStyle(_darkMapStyle);
             }
             final z = await c.getZoomLevel();
