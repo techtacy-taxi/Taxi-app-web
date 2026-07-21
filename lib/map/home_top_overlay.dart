@@ -72,40 +72,40 @@ class HomeStatusBar extends StatelessWidget {
           onTap: onTapAvatar,
           child: isMaster || isAdmin
               ? Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                   decoration: BoxDecoration(
                     color: isMaster ? c.textMain : c.blue,
                     borderRadius: BorderRadius.circular(9),
                   ),
                   child: Text(isMaster ? 'MASTER' : 'ADMIN',
                       style: const TextStyle(
-                          fontSize: 10,
+                          fontSize: 13,
                           fontWeight: FontWeight.w700,
                           color: Colors.white)),
                 )
               : Container(
-                  width: 28, height: 28,
+                  width: 34, height: 34,
                   decoration: BoxDecoration(color: c.amberSoft, shape: BoxShape.circle),
-                  child: Icon(Icons.local_taxi_rounded, size: 14, color: c.amberDeep),
+                  child: Icon(Icons.local_taxi_rounded, size: 18, color: c.amberDeep),
                 ),
         ),
         const SizedBox(width: 8),
         Expanded(
           child: Text(displayName,
               overflow: TextOverflow.ellipsis,
-              style: TextStyle(fontSize: 12.5, color: c.textMain)),
+              style: TextStyle(fontSize: 15.5, fontWeight: FontWeight.w600, color: c.textMain)),
         ),
         Text(isAvailable ? 'Διαθέσιμος' : 'Μη διαθέσιμος',
             style: TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.w500,
+                fontSize: 13.5,
+                fontWeight: FontWeight.w600,
                 color: isAvailable ? const Color(0xFF3B6D11) : c.textFaint)),
         const SizedBox(width: 6),
         GestureDetector(
           onTap: onToggleAvailable,
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 200),
-            width: 32, height: 19,
+            width: 42, height: 24,
             padding: const EdgeInsets.all(3),
             decoration: BoxDecoration(
               color: isAvailable ? c.green : c.cardBorder,
@@ -115,7 +115,7 @@ class HomeStatusBar extends StatelessWidget {
               duration: const Duration(milliseconds: 200),
               alignment: isAvailable ? Alignment.centerRight : Alignment.centerLeft,
               child: Container(
-                width: 13, height: 13,
+                width: 18, height: 18,
                 decoration: const BoxDecoration(color: Colors.white, shape: BoxShape.circle),
               ),
             ),
@@ -163,7 +163,7 @@ class OwnJobsTodayStats extends StatelessWidget {
           ),
           child: Column(children: [
             Text('ΟΙ ΔΙΚΕΣ ΜΟΥ ΔΟΥΛΕΙΕΣ · ΣΗΜΕΡΑ',
-                style: TextStyle(fontSize: 9, color: c.textFaint, letterSpacing: 0.3)),
+                style: TextStyle(fontSize: 11, color: c.textFaint, letterSpacing: 0.3)),
             const SizedBox(height: 5),
             Row(children: [
               _stat(c, '$openCount', 'Ανοιχτές', c.textMain),
@@ -179,14 +179,14 @@ class OwnJobsTodayStats extends StatelessWidget {
     );
   }
 
-  Widget _divider(AppColors c) => Container(width: 0.8, height: 26, color: c.divider);
+  Widget _divider(AppColors c) => Container(width: 0.8, height: 34, color: c.divider);
 
   Widget _stat(AppColors c, String value, String label, Color valueColor) {
     return Expanded(
       child: Column(children: [
         Text(value,
-            style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: valueColor)),
-        Text(label, style: TextStyle(fontSize: 8.5, color: c.textFaint)),
+            style: TextStyle(fontSize: 19, fontWeight: FontWeight.w700, color: valueColor)),
+        Text(label, style: TextStyle(fontSize: 11, color: c.textFaint)),
       ]),
     );
   }
@@ -268,19 +268,19 @@ class HomeFloatingChips extends StatelessWidget {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
         decoration: BoxDecoration(
           color:        c.card.withValues(alpha: 0.95),
           borderRadius: BorderRadius.circular(14),
           border:       Border.all(color: c.cardBorder, width: 0.8),
         ),
         child: Row(mainAxisSize: MainAxisSize.min, children: [
-          Icon(icon, size: 15, color: iconColor),
-          const SizedBox(width: 6),
+          Icon(icon, size: 19, color: iconColor),
+          const SizedBox(width: 7),
           Flexible(
             child: Text(label,
                 overflow: TextOverflow.ellipsis,
-                style: TextStyle(fontSize: 11.5, color: c.textMain)),
+                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: c.textMain)),
           ),
         ]),
       ),
@@ -393,17 +393,17 @@ class _AppointmentCountdownBarState extends State<AppointmentCountdownBar>
         }
 
         final content = Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
           decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(12)),
           child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-            Icon(icon, size: 15, color: Colors.white),
-            const SizedBox(width: 7),
+            Icon(icon, size: 18, color: Colors.white),
+            const SizedBox(width: 8),
             Text(label,
-                style: TextStyle(fontSize: 11.5, color: Colors.white.withValues(alpha: 0.9))),
+                style: TextStyle(fontSize: 14, color: Colors.white.withValues(alpha: 0.9))),
             const SizedBox(width: 6),
             Text(_fmtRemaining(remaining),
                 style: const TextStyle(
-                    fontSize: 13.5, fontWeight: FontWeight.w700, color: Colors.white)),
+                    fontSize: 17, fontWeight: FontWeight.w700, color: Colors.white)),
           ]),
         );
 

@@ -1,7 +1,8 @@
 // lib/jobs/job_badge.dart
 //
-// FABs χάρτη (admin + driver) + JobListener.
-// JobListener: ακούει νέες δουλειές. Εμφανίζει popup όταν app=foreground,
+// JobListener: ακούει νέες δουλειές.
+// (Τα παλιά FABs JobAdminFab/DriverJobsFab αφαιρέθηκαν — το νέο UI τα
+//  κάλυψε με το bottom nav, τα chips και το MyJobsBottomBar.) Εμφανίζει popup όταν app=foreground,
 // notification όταν app=background. Όταν λήγει ο χρόνος ενός σταδίου μιας
 // δουλειάς, προχωράει στο επόμενο στάδιο κλιμάκωσης (autoAdvanceStageIfNeeded).
 
@@ -13,156 +14,20 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-import '../models.dart';
 import '../masters/masters_admin_page.dart';
 import '../notifications_service.dart';
 import '../alert_gate.dart';
-import 'job_admin_page.dart';
 import 'job_details_sheet.dart';
 import 'job_model.dart';
 import 'job_popup.dart';
 import 'job_service.dart';
 import 'job_shared_widgets.dart';
-import 'my_jobs_sheet.dart';
 import 'batch_accept_sheet.dart';
 
 // Prefs key: ποιους εκκρεμείς προς έγκριση έχει ήδη ειδοποιηθεί ο master.
 const String kPrefsNotifiedPending = 'notified_pending_approvals_v1';
 // Prefs key: ποιες επιβιβάσεις έχει ήδη ειδοποιηθεί ο admin που τις έβγαλε.
 const String kPrefsNotifiedBoarded = 'notified_boarded_jobs_v1';
-
-// ─── Admin FAB ────────────────────────────────────────────────────────────────
-
-class JobAdminFab extends StatelessWidget {
-  final String       adminUid;
-  final String       adminName;
-  final bool         isMaster;
-  final List<String> managedGroupIds;
-
-  const JobAdminFab({
-    super.key,
-    required this.adminUid,
-    this.adminName       = '',
-    this.isMaster        = false,
-    this.managedGroupIds = const [],
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return StreamBuilder<List<Job>>(
-      stream: JobService.allJobs(limit: 100),
-      builder: (context, snap) {
-        // Φιλτράρισμα ανοιχτών δουλειών:
-        //   • Master (managedGroupIds == []) → όλες
-        //   • Admin με συγκεκριμένες ομάδες → μόνο αυτές
-        final allOpen = snap.data?.where((j) => j.isOpen) ?? <Job>[];
-        final openCount = (isMaster || managedGroupIds.isEmpty)
-            ? allOpen.length
-            : allOpen.where((j) =>
-                j.groupId != null &&
-                managedGroupIds.contains(j.groupId)).length;
-        return Stack(
-          clipBehavior: Clip.none,
-          children: [
-            FloatingActionButton(
-              heroTag:         'jobs_admin',
-              backgroundColor: Colors.black87,
-              foregroundColor: Colors.white,
-              onPressed: () => Navigator.of(context).push(MaterialPageRoute(
-                builder: (_) => JobAdminPage(
-                  adminUid:        adminUid,
-                  adminName:       adminName,
-                  isAdmin:         true,
-                  isMaster:        isMaster,
-                  managedGroupIds: managedGroupIds,
-                ),
-              )),
-              child: const Icon(Icons.work_rounded),
-            ),
-            // Badge μετρητή — εμφανίζεται/κρύβεται με «αναπήδηση» και ο
-            // αριθμός αλλάζει με scale animation (one-shot, μηδενικό κόστος).
-            Positioned(
-              top: -4, right: -4,
-              child: AnimatedScale(
-                scale:    openCount > 0 ? 1 : 0,
-                duration: const Duration(milliseconds: 250),
-                curve:    Curves.easeOutBack,
-                child: Container(
-                  padding: const EdgeInsets.all(5),
-                  decoration: const BoxDecoration(
-                      color: Colors.red, shape: BoxShape.circle),
-                  child: AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 200),
-                    transitionBuilder: (child, anim) =>
-                        ScaleTransition(scale: anim, child: child),
-                    child: Text(
-                      openCount > 9 ? '9+' : '$openCount',
-                      key: ValueKey<int>(openCount),
-                      style: const TextStyle(color: Colors.white,
-                          fontSize: 10, fontWeight: FontWeight.bold),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ],
-        );
-      },
-    );
-  }
-}
-
-// ─── Driver Jobs FAB ──────────────────────────────────────────────────────────
-
-class DriverJobsFab extends StatelessWidget {
-  final String uid;
-  const DriverJobsFab({super.key, required this.uid});
-
-  @override
-  Widget build(BuildContext context) {
-    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-      stream: FirebaseFirestore.instance
-          .collection('jobs')
-          .where('takenBy', isEqualTo: uid)
-          .where('status',  whereIn: [JobStatus.taken.name, JobStatus.boarded.name])
-          .snapshots(),
-      builder: (context, snap) {
-        final takenJobs = snap.data?.docs
-            .map((d) => Job.fromDoc(d)).toList() ?? [];
-
-        if (takenJobs.isEmpty) return const SizedBox.shrink();
-
-        return Stack(
-          clipBehavior: Clip.none,
-          children: [
-            FloatingActionButton(
-              heroTag:         'driver_jobs',
-              backgroundColor: const Color(0xFF1E8E3E),
-              foregroundColor: Colors.white,
-              onPressed: () => showMyJobsSheet(context, takenJobs, uid),
-              child: const Icon(Icons.work_rounded),
-            ),
-            Positioned(
-              top: -4, right: -4,
-              child: Container(
-                padding: const EdgeInsets.all(5),
-                decoration: const BoxDecoration(
-                    color: Colors.amber, shape: BoxShape.circle),
-                child: Text(
-                  '${takenJobs.length}',
-                  style: const TextStyle(color: Colors.black,
-                      fontSize: 10, fontWeight: FontWeight.bold),
-                ),
-              ),
-            ),
-          ],
-        );
-      },
-    );
-  }
-}
-
-// ─── Job Listener ─────────────────────────────────────────────────────────────
 
 class JobListener extends StatefulWidget {
   final String       uid;

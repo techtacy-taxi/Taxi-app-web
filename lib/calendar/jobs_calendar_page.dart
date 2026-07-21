@@ -1,26 +1,21 @@
 // lib/calendar/jobs_calendar_page.dart
 //
-// ΝΕΟ ενιαίο «Ημερολόγιο δουλειών» — ορατό ΣΕ ΟΛΟΥΣ (οδηγούς, admin, master),
-// σύμφωνα με το εγκεκριμένο mockup:
-//   • Μήνας με κουκκίδες ανά ημέρα (μέχρι 3, μετά «+Ν»)
-//   • Λίστα δουλειών της επιλεγμένης ημέρας, σύνολο € πάνω δεξιά
-//   • Χρωματικός κώδικας (αριστερή μπάρα + κουκκίδα μήνα):
-//       - Γαλάζιο  = ΡΑΝΤΕΒΟΥ (scheduledAt != null, δεν έχει ξεκινήσει)
-//       - Κίτρινο  = ΑΜΕΣΗ (χωρίς ραντεβού)
-//       - Πορτοκαλί = έχει αναλάβει κάποιος να την εκτελέσει (taken/boarded)
-//         — ΜΟΝΟ ορατό σε admin/master (σύνολο "όλων" των δουλειών τους)
-//       - Κόκκινο  = Αποθηκευμένη (draft, ΔΕΝ έχει δοθεί ακόμη σε οδηγό)
-//         — ΜΟΝΟ admin/master
-//   • Περίγραμμα κύκλου/μπάρας ανά όχημα: πράσινο = Ταξί, μοβ = Βαν
-//     (εφαρμόζεται πάνω στο βασικό χρώμα κατάστασης — «χρώμα κατάστασης
-//     γέμισμα» + «χρώμα οχήματος περίγραμμα»)
-//   • Κάτω κουμπιά: «Αποθήκευση ημερολογίου» (πρώην «Εξαγωγή .ics») πάντα
-//     ορατό· «Google Calendar» ΜΟΝΟ σε όσους έχουν ενεργό sync
-//     (calendarEnabled == true ή master == true)
+// Ενιαίο «Ημερολόγιο δουλειών» — ορατό ΣΕ ΟΛΟΥΣ (οδηγοί, admin, master).
+// ΝΕΑ διάταξη:
+//   • Το ημερολόγιο του μήνα πιάνει σχεδόν ΟΛΗ την οθόνη (shouldFillViewport)
+//   • Οι δουλειές της ημέρας ζουν σε ΣΥΡΤΑΡΙ (DraggableScrollableSheet) κάτω:
+//     κλειστό δείχνει τίτλο + πρώτες κάρτες, τραβιέται σχεδόν μέχρι πάνω
+//     αφήνοντας ορατό μικρό κομμάτι του ημερολογίου
+//   • Κουκκίδες: μέχρι 4, μεγαλύτερες (7px) + «+Ν» όταν υπάρχουν περισσότερες
+//   • Safe-area κάτω για το Android navigation bar
+//
+// Χρωματικός κώδικας (ίδιος με πριν):
+//   Γαλάζιο = ΡΑΝΤΕΒΟΥ · Κίτρινο = ΑΜΕΣΗ · Πορτοκαλί = ανατεθειμένη
+//   (admin/master) · Κόκκινο = Αποθηκευμένη (admin/master)
+//   Περίγραμμα οχήματος: πράσινο = Ταξί, μοβ = Βαν.
 //
 // Data: οδηγός βλέπει μόνο τις ΔΙΚΕΣ ΤΟΥ δουλειές (takenBy == uid).
-// admin/master βλέπουν όλες τις δουλειές τους (taken/boarded — πορτοκαλί)
-// ΚΑΙ τις saved_jobs (αποθηκευμένες/αδιάθετες — κόκκινο).
+// admin/master βλέπουν όλες τις δουλειές τους ΚΑΙ τις saved_jobs.
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
@@ -75,6 +70,10 @@ class _JobsCalendarPageState extends State<JobsCalendarPage> {
   DateTime _selectedDay  = DateTime.now();
 
   bool get _seesAllOrgJobs => widget.isAdmin || widget.isMaster;
+
+  // Μεγέθη συρταριού (ποσοστά ύψους οθόνης).
+  static const double _sheetMin = 0.30;
+  static const double _sheetMax = 0.92;
 
   // ── Firestore streams ──────────────────────────────────────────────────
 
@@ -227,59 +226,107 @@ class _JobsCalendarPageState extends State<JobsCalendarPage> {
           final dayTotal =
               dayEntries.fold<double>(0, (sum, e) => sum + e.job.price);
 
-          return SingleChildScrollView(
-            padding: const EdgeInsets.all(14),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _monthCalendar(c, byDay),
-                const SizedBox(height: 14),
-                Row(children: [
-                  Expanded(
-                    child: Text(
-                      '${_weekdayDate(_selectedDay)} · ${dayEntries.length} '
-                      '${dayEntries.length == 1 ? "δουλειά" : "δουλειές"}',
-                      style: TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.w600,
-                          color: c.textMain),
-                    ),
-                  ),
-                  if (dayTotal > 0)
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 12, vertical: 5),
-                      decoration: BoxDecoration(
-                        color: c.blueSoft,
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Text('${dayTotal.toStringAsFixed(0)} €',
-                          style: TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w600,
-                              color: c.blueDeep)),
-                    ),
-                ]),
-                const SizedBox(height: 10),
+          return LayoutBuilder(builder: (context, constraints) {
+            final h = constraints.maxHeight;
+            return Stack(children: [
+              // Ημερολόγιο: γεμίζει τον χώρο ΠΑΝΩ από το κλειστό συρτάρι.
+              Positioned(
+                left: 0, right: 0, top: 0,
+                height: h * (1 - _sheetMin) + 8,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(10, 0, 10, 12),
+                  child: _monthCalendar(c, byDay),
+                ),
+              ),
 
-                if (dayEntries.isEmpty)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 24),
-                    child: Center(
-                      child: Text('Καμία δουλειά αυτή την ημέρα',
-                          style:
-                              TextStyle(fontSize: 13, color: c.textFaint)),
+              // Συρτάρι δουλειών — τραβιέται μέχρι σχεδόν την κορυφή.
+              DraggableScrollableSheet(
+                minChildSize:     _sheetMin,
+                initialChildSize: _sheetMin,
+                maxChildSize:     _sheetMax,
+                snap: true,
+                snapSizes: const [_sheetMin, _sheetMax],
+                builder: (context, scrollCtrl) {
+                  final safeBottom = MediaQuery.of(context).padding.bottom;
+                  return Container(
+                    decoration: BoxDecoration(
+                      color: c.card,
+                      borderRadius: const BorderRadius.vertical(
+                          top: Radius.circular(22)),
+                      border: Border.all(color: c.cardBorder, width: 0.8),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.10),
+                          blurRadius: 14,
+                          offset: const Offset(0, -3),
+                        ),
+                      ],
                     ),
-                  )
-                else
-                  ...dayEntries.map((e) => _entryCard(c, e)),
+                    child: ListView(
+                      controller: scrollCtrl,
+                      padding: EdgeInsets.fromLTRB(
+                          14, 8, 14, 16 + (safeBottom > 0 ? safeBottom : 10)),
+                      children: [
+                        // Χερούλι
+                        Center(
+                          child: Container(
+                            width: 42, height: 5,
+                            margin: const EdgeInsets.only(bottom: 10),
+                            decoration: BoxDecoration(
+                              color: c.textFaint.withValues(alpha: 0.45),
+                              borderRadius: BorderRadius.circular(3),
+                            ),
+                          ),
+                        ),
+                        Row(children: [
+                          Expanded(
+                            child: Text(
+                              '${_weekdayDate(_selectedDay)} · ${dayEntries.length} '
+                              '${dayEntries.length == 1 ? "δουλειά" : "δουλειές"}',
+                              style: TextStyle(
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w600,
+                                  color: c.textMain),
+                            ),
+                          ),
+                          if (dayTotal > 0)
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 12, vertical: 5),
+                              decoration: BoxDecoration(
+                                color: c.blueSoft,
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: Text('${dayTotal.toStringAsFixed(0)} €',
+                                  style: TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w600,
+                                      color: c.blueDeep)),
+                            ),
+                        ]),
+                        const SizedBox(height: 10),
 
-                const SizedBox(height: 16),
-                _bottomButtons(c, dayEntries),
-                const SizedBox(height: 8),
-              ],
-            ),
-          );
+                        if (dayEntries.isEmpty)
+                          Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 24),
+                            child: Center(
+                              child: Text('Καμία δουλειά αυτή την ημέρα',
+                                  style: TextStyle(
+                                      fontSize: 13, color: c.textFaint)),
+                            ),
+                          )
+                        else
+                          ...dayEntries.map((e) => _entryCard(c, e)),
+
+                        const SizedBox(height: 16),
+                        _bottomButtons(c, dayEntries),
+                      ],
+                    ),
+                  );
+                },
+              ),
+            ]);
+          });
         },
       ),
     );
@@ -298,12 +345,13 @@ class _JobsCalendarPageState extends State<JobsCalendarPage> {
         borderRadius: BorderRadius.circular(16),
         border:       Border.all(color: c.cardBorder, width: 0.8),
       ),
-      padding: const EdgeInsets.symmetric(vertical: 6),
+      padding: const EdgeInsets.symmetric(vertical: 4),
       child: TableCalendar<_CalEntry>(
         firstDay:       DateTime.utc(2023, 1, 1),
         lastDay:        DateTime.utc(2035, 12, 31),
         focusedDay:     _focusedMonth,
         currentDay:     DateTime.now(),
+        shouldFillViewport: true, // γεμίζει όλο το διαθέσιμο ύψος
         selectedDayPredicate: (d) => isSameDay(d, _selectedDay),
         eventLoader: (day) {
           final key = DateTime(day.year, day.month, day.day);
@@ -328,8 +376,9 @@ class _JobsCalendarPageState extends State<JobsCalendarPage> {
         ),
         calendarStyle: CalendarStyle(
           outsideDaysVisible: false,
-          defaultTextStyle:   TextStyle(fontSize: 13, color: c.textMain),
-          weekendTextStyle:   const TextStyle(fontSize: 13, color: Color(0xFF993C1D)),
+          defaultTextStyle:   TextStyle(fontSize: 14, color: c.textMain),
+          weekendTextStyle:   const TextStyle(fontSize: 14, color: Color(0xFF993C1D)),
+          cellAlignment: const Alignment(0, -0.4),
           todayDecoration: BoxDecoration(
             color:  c.amberSoft,
             shape:  BoxShape.circle,
@@ -343,28 +392,41 @@ class _JobsCalendarPageState extends State<JobsCalendarPage> {
           ),
           selectedTextStyle: TextStyle(
               color: c.scaffold, fontWeight: FontWeight.w600),
-          markersMaxCount: 3,
-          markerSize: 5,
-          markersAnchor: 0.9,
         ),
         calendarBuilders: CalendarBuilders<_CalEntry>(
           markerBuilder: (context, day, dayEntries) {
             if (dayEntries.isEmpty) return null;
-            final shown = dayEntries.take(3).toList();
+            final shown = dayEntries.take(4).toList();
+            final extra = dayEntries.length - shown.length;
             return Positioned(
-              bottom: 3,
+              bottom: 6,
               child: Row(
                 mainAxisSize: MainAxisSize.min,
-                children: shown
-                    .map((e) => Container(
-                          width:  5, height: 5,
-                          margin: const EdgeInsets.symmetric(horizontal: 1),
-                          decoration: BoxDecoration(
-                            color: _statusColor(c, e.kind),
-                            shape: BoxShape.circle,
-                          ),
-                        ))
-                    .toList(),
+                children: [
+                  ...shown.map((e) {
+                    final border = _vehicleBorderColor(e.vehicleType);
+                    return Container(
+                      width:  7, height: 7,
+                      margin: const EdgeInsets.symmetric(horizontal: 1.3),
+                      decoration: BoxDecoration(
+                        color: _statusColor(c, e.kind),
+                        shape: BoxShape.circle,
+                        border: border != null
+                            ? Border.all(color: border, width: 1)
+                            : null,
+                      ),
+                    );
+                  }),
+                  if (extra > 0)
+                    Padding(
+                      padding: const EdgeInsets.only(left: 1),
+                      child: Text('+$extra',
+                          style: TextStyle(
+                              fontSize: 9,
+                              fontWeight: FontWeight.w700,
+                              color: c.textFaint)),
+                    ),
+                ],
               ),
             );
           },
@@ -411,7 +473,7 @@ class _JobsCalendarPageState extends State<JobsCalendarPage> {
         },
         child: Container(
           decoration: BoxDecoration(
-            color: c.card,
+            color: c.scaffold,
             borderRadius: BorderRadius.circular(14),
             border: Border(
               top:    BorderSide(color: c.cardBorder, width: 0.8),

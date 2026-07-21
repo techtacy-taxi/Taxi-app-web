@@ -1,5 +1,7 @@
 // lib/jobs/my_jobs_sheet.dart
-// Bottom sheet "Οι δουλειές μου" + MyJobTile
+// «Οι δουλειές μου»: MyJobsBottomBar (συρτάρι χάρτη) + MyJobTile (compact κάρτα)
+// + picker εξαγωγής στο ημερολόγιο. Το παλιό modal sheet (showMyJobsSheet)
+// αφαιρέθηκε — το κάλυψε πλήρως το MyJobsBottomBar.
 
 import 'dart:async';
 
@@ -265,142 +267,6 @@ class _CalendarPickerDialogState extends State<_CalendarPickerDialog> {
   }
 }
 
-// ─── Εμφάνιση bottom sheet "Οι δουλειές μου" ─────────────────────────────────
-
-// Ταξινόμηση: πιο κοντινό ραντεβού πάνω-πάνω, πιο μακρινό κάτω-κάτω.
-// Οι άμεσες (χωρίς ραντεβού) = «τώρα» → μπαίνουν πρώτες.
-// Ίδια στιγμή ή και οι δύο άμεσες → με τη σειρά που φτιάχτηκαν (createdAt).
-List<Job> _sortMyJobs(List<Job> jobs) {
-  final sorted = [...jobs]..sort((a, b) {
-    final aHas = a.scheduledAt != null;
-    final bHas = b.scheduledAt != null;
-    if (aHas && bHas) {
-      final c = a.scheduledAt!.compareTo(b.scheduledAt!);
-      if (c != 0) return c;
-      return a.createdAt.compareTo(b.createdAt);
-    }
-    if (!aHas && bHas) return -1; // άμεση πριν από ραντεβού
-    if (aHas && !bHas) return 1;
-    return a.createdAt.compareTo(b.createdAt); // και οι δύο άμεσες
-  });
-  return sorted;
-}
-
-void showMyJobsSheet(BuildContext context, List<Job> jobs, String uid) {
-  FlutterForegroundTask.sendDataToTask({'action': 'stopSound'});
-
-  showModalBottomSheet(
-    context:            context,
-    isScrollControlled: true,
-    backgroundColor:    Colors.transparent,
-    builder: (_) => _MyJobsSheetBody(initialJobs: jobs, uid: uid),
-  );
-}
-
-// Σώμα του sheet — LIVE: ακούει τις δουλειές που έχει αναλάβει ο οδηγός, ώστε
-// αν ο admin σβήσει/αλλάξει δουλειά ενώ είναι ανοιχτή η λίστα, να ανανεώνεται
-// αμέσως (χωρίς να χρειάζεται κλείσιμο/άνοιγμα).
-class _MyJobsSheetBody extends StatelessWidget {
-  final List<Job> initialJobs;
-  final String    uid;
-  const _MyJobsSheetBody({required this.initialJobs, required this.uid});
-
-  @override
-  Widget build(BuildContext context) {
-    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-      stream: FirebaseFirestore.instance
-          .collection('jobs')
-          .where('takenBy', isEqualTo: uid)
-          .where('status',
-              whereIn: [JobStatus.taken.name, JobStatus.boarded.name])
-          .snapshots(),
-      builder: (context, snap) {
-        // Πριν έρθει το πρώτο live snapshot, δείξε την αρχική λίστα.
-        final jobs = snap.hasData
-            ? snap.data!.docs.map((d) => Job.fromDoc(d)).toList()
-            : initialJobs;
-        final sorted = _sortMyJobs(jobs);
-
-        // Αν αδειάσει η λίστα (π.χ. ο admin έσβησε τις δουλειές), κλείσε το sheet.
-        if (snap.hasData && sorted.isEmpty) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (Navigator.of(context).canPop()) Navigator.of(context).pop();
-          });
-        }
-
-        return Container(
-          decoration: const BoxDecoration(
-            color:        Colors.white,
-            borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-          ),
-          padding: EdgeInsets.fromLTRB(
-              20, 12, 20, 20 + MediaQuery.of(context).padding.bottom),
-          constraints: BoxConstraints(
-              maxHeight: MediaQuery.of(context).size.height * 0.85),
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            // Drag handle
-            const SheetHandle(bottomMargin: 16),
-            // Header
-            Row(children: [
-              const Icon(Icons.work_rounded, color: Color(0xFF1E8E3E)),
-              const SizedBox(width: 10),
-              const Text('Οι δουλειές μου',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-              const Spacer(),
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF1E8E3E),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Text(
-                  '${sorted.length} δουλειέ${sorted.length == 1 ? "α" : "ς"}',
-                  style: const TextStyle(color: Colors.white,
-                      fontSize: 12, fontWeight: FontWeight.bold),
-                ),
-              ),
-            ]),
-            const SizedBox(height: 12),
-            if (sorted.isEmpty)
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 30),
-                child: Text('Δεν έχεις ενεργές δουλειές',
-                    style: TextStyle(color: Colors.grey[600], fontSize: 15)),
-              )
-            else
-              Flexible(
-                child: ListView.separated(
-                  shrinkWrap:       true,
-                  itemCount:        sorted.length,
-                  separatorBuilder: (_, _) => Container(
-                    height: 6, color: Colors.grey.shade100,
-                    margin: const EdgeInsets.symmetric(vertical: 4),
-                  ),
-                  itemBuilder: (ctx, i) => FadeSlideIn(
-                    index: i,
-                    child: MyJobTile(
-                      job:   sorted[i],
-                      uid:   uid,
-                      index: i + 1,
-                      total: sorted.length,
-                    ),
-                  ),
-                ),
-              ),
-            // Κουμπί «Όλες στο ημερολόγιο» — κάτω-κάτω, μόνο αν υπάρχουν δουλειές
-            if (sorted.isNotEmpty) ...[
-              const Divider(height: 1),
-              const SizedBox(height: 12),
-              _AllToCalendarButton(jobs: sorted),
-            ],
-          ]),
-        );
-      },
-    );
-  }
-}
-
 // ─── MyJobsBottomBar ─────────────────────────────────────────────────────────
 //
 // Μπάρα «Οι δουλειές μου» κολλημένη στο κάτω μέρος της οθόνης, πάνω από το
@@ -491,7 +357,8 @@ class _MyJobsBottomBarState extends State<MyJobsBottomBar> {
     // πιθανή μπάρα «ΠΡΟΠΛΗΡΩΜΕΝΗ», γραμμές από/προς, ποσά/κέρδος, chip
     // WhatsApp/όνομα πελάτη και 3 κουμπιά δράσης — χρειάζεται αρκετό ύψος
     // ώστε να φαίνεται ΟΛΟΚΛΗΡΗ (μαζί με το «Τέλος Διαδρομής»).
-    final est = 18.0 + count * 300.0 + 66.0; // +66 για το κουμπί «Όλες στο ημερολόγιο»
+    // Compact κάρτες (~88px κλειστές) + περιθώριο για 1-2 ανοιγμένες.
+    final est = 18.0 + count * 96.0 + 160.0 + 66.0; // +66 για το κουμπί «Όλες στο ημερολόγιο»
     final h = est < cap ? est : cap;
     return h < 0 ? 0 : h;
   }
@@ -880,8 +747,18 @@ class _PulseState extends State<_Pulse>
 }
 
 // ─── MyJobTile ────────────────────────────────────────────────────────────────
+//
+// ΝΕΑ compact σχεδίαση (εγκεκριμένο mockup «Οι δουλειές μου»):
+//   • Κάρτα με αριστερή χρωματιστή μπάρα:
+//       πορτοκαλί = ΤΩΡΑ (άμεση) · μπλε = ραντεβού · μοβ = επιστροφή
+//   • Γραμμή 1: chip ώρας (ΤΩΡΑ / HH:mm / Αύριο HH:mm / dd/MM HH:mm),
+//     διαδρομή, τιμή δεξιά
+//   • Γραμμή 2: όχημα, άτομα, βαλίτσες, παιδικό κάθισμα · δεξιά τρόπος
+//     πληρωμής (Μετρητά πράσινο / Προπληρωμένη μπλε — παλλόμενη)
+//   • Tap → η κάρτα ΑΝΟΙΓΕΙ επί τόπου και δείχνει chips (είσπραξη, κέρδος,
+//     πελάτης, WhatsApp, πτήση) + κουμπιά Λεπτομέρειες / Παρέλαβα / Τέλος.
 
-class MyJobTile extends StatelessWidget {
+class MyJobTile extends StatefulWidget {
   final Job    job;
   final String uid;
   final int    index;
@@ -894,6 +771,15 @@ class MyJobTile extends StatelessWidget {
     this.index = 1,
     this.total = 1,
   });
+
+  @override
+  State<MyJobTile> createState() => _MyJobTileState();
+}
+
+class _MyJobTileState extends State<MyJobTile> {
+  bool _open = false;
+
+  Job get job => widget.job;
 
   Future<void> _confirmComplete(BuildContext context) async {
     final result = await runCompleteRouteFlow(context, job);
@@ -923,278 +809,287 @@ class MyJobTile extends StatelessWidget {
     );
   }
 
+  // Ετικέτα ώρας: ΤΩΡΑ / HH:mm (σήμερα) / Αύριο HH:mm / dd/MM HH:mm.
+  String _timeLabel() {
+    final s = job.scheduledAt;
+    if (s == null) return 'ΤΩΡΑ';
+    final now      = DateTime.now();
+    final today    = DateTime(now.year, now.month, now.day);
+    final thatDay  = DateTime(s.year, s.month, s.day);
+    final hm       = DateFormat('HH:mm').format(s);
+    if (thatDay == today) return hm;
+    if (thatDay == today.add(const Duration(days: 1))) return 'Αύριο $hm';
+    return '${DateFormat('dd/MM').format(s)} $hm';
+  }
+
+  // Χρώμα κατάστασης: μοβ επιστροφή, πορτοκαλί άμεση, μπλε ραντεβού.
+  Color _statusColor() {
+    if (job.isReturn) return const Color(0xFF7B1FA2);
+    if (job.scheduledAt == null) return const Color(0xFFE8930C);
+    return const Color(0xFF1A73E8);
+  }
+
+  IconData _vehicleIcon() => job.vehicleType == 'van'
+      ? Icons.airport_shuttle_rounded
+      : job.vehicleType == 'bus'
+          ? Icons.directions_bus_rounded
+          : Icons.local_taxi_rounded;
+
   @override
   Widget build(BuildContext context) {
-    final isImmediate = job.scheduledAt == null;
+    final status = _statusColor();
+    final prepaid = job.fullyPaid;
+    final payColor = prepaid ? const Color(0xFF1A73E8) : const Color(0xFF1E8E3E);
+
+    final payLabel = Row(mainAxisSize: MainAxisSize.min, children: [
+      Icon(prepaid ? Icons.credit_card_rounded : Icons.payments_rounded,
+          size: 14, color: payColor),
+      const SizedBox(width: 4),
+      Text(prepaid ? 'Προπληρωμένη' : 'Μετρητά',
+          style: TextStyle(fontSize: 12,
+              fontWeight: FontWeight.w700, color: payColor)),
+    ]);
 
     return InkWell(
-      onTap: () => _showDetails(context),
-      borderRadius: BorderRadius.circular(12),
+      onTap: () => setState(() => _open = !_open),
+      borderRadius: BorderRadius.circular(14),
       child: Container(
-        // Μοβ φόντο για δουλειές-ΕΠΙΣΤΡΟΦΗ ώστε να ξεχωρίζουν.
-        decoration: job.isReturn
-            ? BoxDecoration(
-                color: const Color(0xFFF3E5F5),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: const Color(0xFF7B1FA2), width: 1.5),
-              )
-            : null,
-        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
+        decoration: BoxDecoration(
+          color: job.isReturn ? const Color(0xFFF7EFFA) : Colors.white,
+          borderRadius: BorderRadius.circular(14),
+          border: Border(
+            top:    BorderSide(color: Colors.grey.shade200, width: 0.8),
+            right:  BorderSide(color: Colors.grey.shade200, width: 0.8),
+            bottom: BorderSide(color: Colors.grey.shade200, width: 0.8),
+            left:   BorderSide(color: status, width: 4),
+          ),
+        ),
+        padding: const EdgeInsets.fromLTRB(10, 10, 12, 10),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-
-          // ── Μπάρα «ΠΡΟΠΛΗΡΩΜΕΝΗ» (παλλόμενη) — μόνο όταν πληρώθηκε
-          // ΟΛΟΚΛΗΡΗ η τιμή online (fullyPaid). Ίδιο χρώμα με το αντίστοιχο
-          // badge στον master, ώστε ο οδηγός να ξέρει αμέσως ότι δεν
-          // χρειάζεται να εισπράξει τίποτα από τον πελάτη.
-          if (job.fullyPaid)
-            _Pulse(
-              active: true,
-              child: Container(
-                width: double.infinity,
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                margin: const EdgeInsets.only(bottom: 6),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFD97757),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: const Row(mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                  Icon(Icons.warning_amber_rounded, color: Colors.white, size: 18),
-                  SizedBox(width: 8),
-                  Text('ΠΡΟΠΛΗΡΩΜΕΝΗ — ΔΕΝ ΕΙΣΠΡΑΤΤΕΙΣ ΤΙΠΟΤΑ', style: TextStyle(
-                      color: Colors.white, fontSize: 12.5,
-                      fontWeight: FontWeight.w900, letterSpacing: .5)),
-                ]),
-              ),
-            ),
-
-          // ── Banner ΕΠΙΣΤΡΟΦΗ (πάνω-πάνω) ───────────────────────────────
-          if (job.isReturn)
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-              margin: const EdgeInsets.only(bottom: 6),
-              decoration: BoxDecoration(
-                color: const Color(0xFF7B1FA2),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: const Row(mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                Icon(Icons.u_turn_left_rounded, color: Colors.white, size: 18),
-                SizedBox(width: 8),
-                Text('ΕΠΙΣΤΡΟΦΗ', style: TextStyle(
-                    color: Colors.white, fontSize: 14,
-                    fontWeight: FontWeight.w900, letterSpacing: 2)),
-              ]),
-            ),
-
-          // ── Header banner (ΑΜΕΣΗ ή ΡΑΝΤΕΒΟΥ) ───────────────────────────
-          if (isImmediate)
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-              margin: const EdgeInsets.only(bottom: 4),
-              decoration: BoxDecoration(
-                color: const Color(0xFF1E8E3E),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Row(children: [
-                _indexCircle(index),
-                const SizedBox(width: 10),
-                const Icon(Icons.flash_on_rounded, color: Colors.white, size: 18),
-                const SizedBox(width: 6),
-                const Text('ΑΜΕΣΗ', style: TextStyle(
-                    color: Colors.white, fontSize: 13,
-                    fontWeight: FontWeight.w900, letterSpacing: 1.2)),
-              ]),
-            )
-          else
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-              margin: const EdgeInsets.only(bottom: 4),
-              decoration: BoxDecoration(
-                color: Colors.blue.shade700,
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Row(children: [
-                _indexCircle(index),
-                const SizedBox(width: 10),
-                const Icon(Icons.alarm_rounded, color: Colors.white, size: 18),
-                const SizedBox(width: 6),
-                const Text('ΡΑΝΤΕΒΟΥ', style: TextStyle(
-                    color: Colors.white, fontSize: 13,
-                    fontWeight: FontWeight.w900, letterSpacing: 1.2)),
-                const SizedBox(width: 10),
-                Text(DateFormat('dd/MM  HH:mm').format(job.scheduledAt!),
-                    style: const TextStyle(color: Colors.white,
-                        fontSize: 15, fontWeight: FontWeight.bold)),
-              ]),
-            ),
-          const SizedBox(height: 8),
-
-          // ── Διαδρομή + chips + κουμπιά ──────────────────────────────────
+          // ── Γραμμή 1: ώρα · διαδρομή · τιμή ──────────────────────────────
           Row(children: [
-            Expanded(child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _routeRow(Icons.trip_origin_rounded, Colors.amber, job.from),
-                const SizedBox(height: 4),
-                _routeRow(Icons.place_rounded, Colors.red, job.to),
-                const SizedBox(height: 6),
-                Wrap(spacing: 6, runSpacing: 4, children: [
-                  job.depositPaid
-                      ? _Pulse(active: true, child: _chip(Icons.euro_rounded,
-                          job.fullyPaid
-                              ? 'Πληρώθηκε online — 0,00€'
-                              : 'Είσπραξη ${job.remainingToCollect.toStringAsFixed(2)}€',
-                          const Color(0xFF1E8E3E)))
-                      : _chip(Icons.euro_rounded,
-                          '${job.price.toStringAsFixed(2)}€',
-                          const Color(0xFF1E8E3E)),
-                  if (job.depositPaid)
-                    _chip(Icons.verified_rounded,
-                        job.fullyPaid
-                            ? 'Πλήρης πληρωμή ${job.depositAmount.toStringAsFixed(2)}€'
-                            : 'Προπληρώθηκε ${job.depositAmount.toStringAsFixed(2)}€',
-                        Colors.blue.shade700),
-                  if (job.commission > 0)
-                    _chip(Icons.handshake_rounded,
-                        '-${job.commission.toStringAsFixed(2)}€'
-                        '${job.sourceName != null && job.sourceName!.isNotEmpty ? " ${job.sourceName}" : ""}',
-                        Colors.red.shade700),
-                  if (job.appCommission > 0)
-                    _chip(Icons.phone_iphone_rounded,
-                        'App -${job.appCommission.toStringAsFixed(2)}€',
-                        Colors.indigo.shade700),
-                  job.depositPaid
-                      ? _Pulse(active: true, child: _chip(Icons.account_balance_wallet_rounded,
-                          'Κέρδος ${job.driverEarning.toStringAsFixed(2)}€',
-                          Colors.green.shade800))
-                      : _chip(Icons.account_balance_wallet_rounded,
-                          'Κέρδος ${job.driverEarning.toStringAsFixed(2)}€',
-                          Colors.green.shade800),
-                  _chip(Icons.person_rounded, '${job.persons}', Colors.blue),
-                  if (job.luggage > 0)
-                    _chip(Icons.luggage_rounded, '${job.luggage}', Colors.grey),
-                  if (job.childSeatCount > 0)
-                    _chip(Icons.child_care_rounded,
-                        '${job.childSeatCount} παιδικό${job.childSeatCount > 1 ? "ά" : ""}',
-                        Colors.purple),
-                  if (job.clientName != null && job.clientName!.isNotEmpty)
-                    _chip(Icons.badge_rounded, job.clientName!, Colors.teal),
-                  if (job.clientPhone != null && job.clientPhone!.isNotEmpty)
-                    GestureDetector(
-                      onTap: () {
-                        final digits = job.clientPhone!.replaceAll(RegExp(r'[^0-9]'), '');
-                        launchUrl(Uri.parse('https://wa.me/$digits'),
-                            mode: LaunchMode.externalApplication);
-                      },
-                      child: _chip(Icons.chat_rounded, 'WhatsApp', const Color(0xFF25D366),
-                          iconOverride: const FaIcon(FontAwesomeIcons.whatsapp, size: 10, color: Color(0xFF25D366))),
-                    ),
-                  if (job.flightOrShip != null && job.flightOrShip!.isNotEmpty)
-                    _chip(Icons.flight_rounded, job.flightOrShip!, Colors.indigo),
-                ]),
-              ],
-            )),
-            const SizedBox(width: 12),
-
-            // Κουμπιά: ΟΛΑ ίδιου πλάτους (116) & ύψους (36) — συμμετρικά
-            SizedBox(
-              width: 116,
-              child: Column(mainAxisSize: MainAxisSize.min, children: [
-                SizedBox(
-                  width: double.infinity, height: 36,
-                  child: OutlinedButton.icon(
-                    onPressed: () => _showDetails(context),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: Colors.blue.shade700,
-                      side: BorderSide(color: Colors.blue.shade300),
-                      padding:
-                          const EdgeInsets.symmetric(horizontal: 6),
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(10)),
-                      minimumSize: Size.zero,
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    ),
-                    icon: Icon(Icons.info_rounded,
-                        size: 14, color: Colors.blue.shade700),
-                    label: FittedBox(
-                      fit: BoxFit.scaleDown,
-                      child: Text('Λεπτομέρειες',
-                          maxLines: 1,
-                          style: TextStyle(fontSize: 11,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.blue.shade700)),
-                    ),
-                  ),
-                ),
-                if (job.isTaken) _BoardButton(jobId: job.id),
-                const SizedBox(height: 6),
-                SizedBox(
-                  width: double.infinity, height: 36,
-                  child: FilledButton(
-                    onPressed: () => _confirmComplete(context),
-                    style: FilledButton.styleFrom(
-                      backgroundColor: const Color(0xFF1E8E3E),
-                      padding:
-                          const EdgeInsets.symmetric(horizontal: 6),
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(10)),
-                      minimumSize: Size.zero,
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    ),
-                    child: const FittedBox(
-                      fit: BoxFit.scaleDown,
-                      child: Text('Τέλος Διαδρομής',
-                          maxLines: 1,
-                          style: TextStyle(fontSize: 11,
-                              fontWeight: FontWeight.bold)),
-                    ),
-                  ),
-                ),
-              ]),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+              decoration: BoxDecoration(
+                color:        status.withValues(alpha: 0.14),
+                borderRadius: BorderRadius.circular(9),
+              ),
+              child: Text(_timeLabel(),
+                  style: TextStyle(fontSize: 12.5,
+                      fontWeight: FontWeight.w800, color: status)),
             ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text('${job.from} → ${job.to}',
+                  maxLines: 2, overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 13.5,
+                      fontWeight: FontWeight.w600, color: Colors.black87)),
+            ),
+            const SizedBox(width: 6),
+            Text('${job.price.toStringAsFixed(0)} €',
+                style: const TextStyle(fontSize: 15,
+                    fontWeight: FontWeight.w800, color: Colors.black87)),
           ]),
+          const SizedBox(height: 7),
+
+          // ── Γραμμή 2: όχημα · άτομα · βαλίτσες · παιδικό · πληρωμή ──────
+          Row(children: [
+            Icon(_vehicleIcon(), size: 15, color: Colors.grey.shade600),
+            const SizedBox(width: 3),
+            Text(job.vehicleLabel,
+                style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
+            const SizedBox(width: 10),
+            Icon(Icons.group_rounded, size: 15, color: Colors.grey.shade600),
+            const SizedBox(width: 3),
+            Text('${job.persons}',
+                style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
+            if (job.luggage > 0) ...[
+              const SizedBox(width: 10),
+              Icon(Icons.luggage_rounded, size: 15, color: Colors.grey.shade600),
+              const SizedBox(width: 3),
+              Text('${job.luggage}',
+                  style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
+            ],
+            if (job.childSeatCount > 0) ...[
+              const SizedBox(width: 10),
+              const Icon(Icons.child_care_rounded,
+                  size: 15, color: Color(0xFFD4537E)),
+            ],
+            if (job.isReturn) ...[
+              const SizedBox(width: 10),
+              const Icon(Icons.u_turn_left_rounded,
+                  size: 15, color: Color(0xFF7B1FA2)),
+            ],
+            const Spacer(),
+            prepaid ? _Pulse(active: true, child: payLabel) : payLabel,
+          ]),
+
+          // ── Ανοιγμένο τμήμα: chips + κουμπιά δράσης ─────────────────────
+          AnimatedSize(
+            duration: const Duration(milliseconds: 220),
+            curve: Curves.easeInOut,
+            alignment: Alignment.topCenter,
+            child: !_open
+                ? const SizedBox(width: double.infinity)
+                : Padding(
+                    padding: const EdgeInsets.only(top: 10),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (prepaid)
+                          _Pulse(
+                            active: true,
+                            child: Container(
+                              width: double.infinity,
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 12, vertical: 7),
+                              margin: const EdgeInsets.only(bottom: 8),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFD97757),
+                                borderRadius: BorderRadius.circular(9),
+                              ),
+                              child: const Text(
+                                  'ΠΡΟΠΛΗΡΩΜΕΝΗ — ΔΕΝ ΕΙΣΠΡΑΤΤΕΙΣ ΤΙΠΟΤΑ',
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(color: Colors.white,
+                                      fontSize: 11.5,
+                                      fontWeight: FontWeight.w900,
+                                      letterSpacing: .4)),
+                            ),
+                          ),
+                        Wrap(spacing: 6, runSpacing: 4, children: [
+                          job.depositPaid
+                              ? _chip(Icons.euro_rounded,
+                                  prepaid
+                                      ? 'Πληρώθηκε online — 0,00€'
+                                      : 'Είσπραξη ${job.remainingToCollect.toStringAsFixed(2)}€',
+                                  const Color(0xFF1E8E3E))
+                              : _chip(Icons.euro_rounded,
+                                  '${job.price.toStringAsFixed(2)}€',
+                                  const Color(0xFF1E8E3E)),
+                          if (job.commission > 0)
+                            _chip(Icons.handshake_rounded,
+                                '-${job.commission.toStringAsFixed(2)}€'
+                                '${job.sourceName != null && job.sourceName!.isNotEmpty ? " ${job.sourceName}" : ""}',
+                                Colors.red.shade700),
+                          if (job.appCommission > 0)
+                            _chip(Icons.phone_iphone_rounded,
+                                'App -${job.appCommission.toStringAsFixed(2)}€',
+                                Colors.indigo.shade700),
+                          _chip(Icons.account_balance_wallet_rounded,
+                              'Κέρδος ${job.driverEarning.toStringAsFixed(2)}€',
+                              Colors.green.shade800),
+                          if (job.clientName != null &&
+                              job.clientName!.isNotEmpty)
+                            _chip(Icons.badge_rounded, job.clientName!,
+                                Colors.teal),
+                          if (job.clientPhone != null &&
+                              job.clientPhone!.isNotEmpty)
+                            GestureDetector(
+                              onTap: () {
+                                final digits = job.clientPhone!
+                                    .replaceAll(RegExp(r'[^0-9]'), '');
+                                launchUrl(Uri.parse('https://wa.me/$digits'),
+                                    mode: LaunchMode.externalApplication);
+                              },
+                              child: _chip(Icons.chat_rounded, 'WhatsApp',
+                                  const Color(0xFF25D366),
+                                  iconOverride: const FaIcon(
+                                      FontAwesomeIcons.whatsapp,
+                                      size: 10, color: Color(0xFF25D366))),
+                            ),
+                          if (job.flightOrShip != null &&
+                              job.flightOrShip!.isNotEmpty)
+                            _chip(Icons.flight_rounded, job.flightOrShip!,
+                                Colors.indigo),
+                        ]),
+                        const SizedBox(height: 10),
+                        Row(children: [
+                          Expanded(
+                            child: SizedBox(
+                              height: 36,
+                              child: OutlinedButton(
+                                onPressed: () => _showDetails(context),
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor: Colors.blue.shade700,
+                                  side: BorderSide(
+                                      color: Colors.blue.shade300),
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 6),
+                                  shape: RoundedRectangleBorder(
+                                      borderRadius:
+                                          BorderRadius.circular(10)),
+                                  minimumSize: Size.zero,
+                                  tapTargetSize:
+                                      MaterialTapTargetSize.shrinkWrap,
+                                ),
+                                child: const FittedBox(
+                                  fit: BoxFit.scaleDown,
+                                  child: Text('Λεπτομέρειες',
+                                      maxLines: 1,
+                                      style: TextStyle(fontSize: 11.5,
+                                          fontWeight: FontWeight.bold)),
+                                ),
+                              ),
+                            ),
+                          ),
+                          if (job.isTaken) ...[
+                            const SizedBox(width: 8),
+                            Expanded(child: _BoardButton(jobId: job.id)),
+                          ],
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: SizedBox(
+                              height: 36,
+                              child: FilledButton(
+                                onPressed: () => _confirmComplete(context),
+                                style: FilledButton.styleFrom(
+                                  backgroundColor: const Color(0xFF1E8E3E),
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 6),
+                                  shape: RoundedRectangleBorder(
+                                      borderRadius:
+                                          BorderRadius.circular(10)),
+                                  minimumSize: Size.zero,
+                                  tapTargetSize:
+                                      MaterialTapTargetSize.shrinkWrap,
+                                ),
+                                child: const FittedBox(
+                                  fit: BoxFit.scaleDown,
+                                  child: Text('Τέλος Διαδρομής',
+                                      maxLines: 1,
+                                      style: TextStyle(fontSize: 11.5,
+                                          fontWeight: FontWeight.bold)),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ]),
+                      ],
+                    ),
+                  ),
+          ),
         ]),
       ),
     );
   }
 
-  Widget _indexCircle(int n) => Container(
-    width: 22, height: 22,
-    decoration: BoxDecoration(
-      color: Colors.white.withValues(alpha: 0.25),
-      shape: BoxShape.circle,
-    ),
-    alignment: Alignment.center,
-    child: Text('$n', style: const TextStyle(
-        color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
-  );
-
-  Widget _routeRow(IconData icon, Color color, String text) => Row(children: [
-    Icon(icon, size: 12, color: color),
-    const SizedBox(width: 6),
-    Expanded(child: Text(text,
-        style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
-        maxLines: 1, overflow: TextOverflow.ellipsis)),
-  ]);
-
-  Widget _chip(IconData icon, String label, Color color, {Widget? iconOverride}) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-    decoration: BoxDecoration(
-      color:        color.withValues(alpha: 0.1),
-      borderRadius: BorderRadius.circular(6),
-    ),
-    child: Row(mainAxisSize: MainAxisSize.min, children: [
-      iconOverride ?? Icon(icon, size: 10, color: color),
-      const SizedBox(width: 3),
-      Flexible(child: Text(label,
-          style: TextStyle(fontSize: 10, color: color,
-              fontWeight: FontWeight.w600))),
-    ]),
-  );
+  Widget _chip(IconData icon, String label, Color color,
+          {Widget? iconOverride}) =>
+      Container(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+        decoration: BoxDecoration(
+          color:        color.withValues(alpha: 0.1),
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          iconOverride ?? Icon(icon, size: 10, color: color),
+          const SizedBox(width: 3),
+          Flexible(child: Text(label,
+              style: TextStyle(fontSize: 10, color: color,
+                  fontWeight: FontWeight.w600))),
+        ]),
+      );
 }
 
 
@@ -1211,9 +1106,7 @@ class _BoardButtonState extends State<_BoardButton> {
   @override
   Widget build(BuildContext context) {
     if (_done) return const SizedBox.shrink();
-    return Padding(
-      padding: const EdgeInsets.only(top: 6),
-      child: SizedBox(
+    return SizedBox(
         width: double.infinity, height: 36,
         child: FilledButton(
           onPressed: () {
@@ -1238,7 +1131,6 @@ class _BoardButtonState extends State<_BoardButton> {
                     fontSize: 11, fontWeight: FontWeight.bold)),
           ),
         ),
-      ),
     );
   }
 }

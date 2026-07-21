@@ -1,18 +1,18 @@
 // lib/calendar/google_calendar_page.dart
 //
-// Οθόνη Google Calendar (εγκεκριμένο mockup «Φωτο 2»):
-//  • Header: λογαριασμός συνδεδεμένος + refresh
-//  • Μήνας με κουκκίδες: κίτρινη = event ΔΕΝ έχει μετατραπεί ακόμη,
-//    πράσινη = έχει ήδη μετατραπεί
-//  • Λίστα events της επιλεγμένης ημέρας:
-//      - Μη μετατραπέν + μοιάζει με μεταφορά → κίτρινο κουμπί «Μετατροπή σε δουλειά»
-//      - Ήδη μετατραπέν → αχνό, πράσινο ✓ «Έχει μετατραπεί σε δουλειά»
-//      - Δεν μοιάζει με μεταφορά → αχνό κείμενο + «Μετατροπή ούτως ή άλλως»
+// Οθόνη Google Calendar — ΝΕΑ διάταξη:
+//  • Το ημερολόγιο του μήνα πιάνει σχεδόν ΟΛΗ την οθόνη (shouldFillViewport)
+//  • Τα events της ημέρας ζουν σε ΣΥΡΤΑΡΙ (DraggableScrollableSheet) κάτω:
+//      - κλειστό: φαίνεται μικρό (τίτλος ημέρας + πρώτα events)
+//      - τραβάς πάνω: ανεβαίνει σχεδόν μέχρι την κορυφή, αφήνοντας ορατό
+//        ένα μικρό κομμάτι του ημερολογίου
+//  • Κουκκίδες: μέχρι 4, μεγαλύτερες (7px), με «+Ν» όταν υπάρχουν περισσότερα
+//    (κίτρινη = ΔΕΝ έχει μετατραπεί, πράσινη = έχει μετατραπεί)
+//  • Safe-area κάτω: η λίστα αφήνει χώρο για το navigation bar του Android
 //
-// Read-only προς το Google Calendar (καμία εγγραφή). Χρησιμοποιεί το
-// υπάρχον GoogleCalendarService (server-side refresh token) και
-// ConvertedEventsStore (τοπικό tracking, 4μηνο auto-cleanup) — καμία αλλαγή
-// στη λογική τους.
+// Read-only προς το Google Calendar (καμία εγγραφή). Χρησιμοποιεί τα
+// υπάρχοντα GoogleCalendarService και ConvertedEventsStore — καμία αλλαγή
+// στη λογική τους. Δουλεύει ίδια σε Android και Web.
 
 import 'package:flutter/material.dart';
 import 'package:table_calendar/table_calendar.dart';
@@ -48,6 +48,10 @@ class _GoogleCalendarPageState extends State<GoogleCalendarPage> {
   String? _error;
   List<CalendarEvent> _monthEvents = [];
   final Map<String, bool> _convertedCache = {};
+
+  // Μεγέθη συρταριού (ποσοστά ύψους οθόνης).
+  static const double _sheetMin = 0.30;
+  static const double _sheetMax = 0.92;
 
   @override
   void initState() {
@@ -117,12 +121,8 @@ class _GoogleCalendarPageState extends State<GoogleCalendarPage> {
       title: e.title, description: e.description, location: e.location,
     );
 
-    // Σημείωση: το from/to του parser είναι ελεύθερο κείμενο (διεύθυνση),
-    // ενώ η φόρμα περιμένει PlacePick (με συντεταγμένες Google Places) —
-    // γι' αυτό αφήνουμε τον χρήστη να τα επιλέξει μέσα στη φόρμα με
-    // αυτόματη συμπλήρωση διεύθυνσης, βάζοντάς τα ως αρχικό κείμενο
-    // αναζήτησης. Όλα τα υπόλοιπα (τηλέφωνο, τιμή, πτήση, άτομα κ.λπ.)
-    // προσυμπληρώνονται κανονικά.
+    // Το from/to του parser είναι ελεύθερο κείμενο — μπαίνει στη σημείωση
+    // και ο χρήστης επιλέγει διευθύνσεις με autocomplete μέσα στη φόρμα.
     final created = await Navigator.of(context).push<bool>(MaterialPageRoute(
       builder: (_) => JobFormPage(
         adminUid:  widget.adminUid,
@@ -164,6 +164,14 @@ class _GoogleCalendarPageState extends State<GoogleCalendarPage> {
         backgroundColor: c.scaffold,
         foregroundColor: c.textMain,
         elevation: 0,
+        actions: [
+          if (_connected)
+            IconButton(
+              onPressed: _load,
+              icon: Icon(Icons.refresh_rounded, color: c.textFaint),
+              tooltip: 'Ανανέωση',
+            ),
+        ],
       ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
@@ -206,6 +214,8 @@ class _GoogleCalendarPageState extends State<GoogleCalendarPage> {
     );
   }
 
+  // ── Νέα διάταξη: full-screen ημερολόγιο + συρτάρι events ─────────────────
+
   Widget _content(AppColors c) {
     final byDay = <DateTime, List<CalendarEvent>>{};
     for (final e in _monthEvents) {
@@ -214,133 +224,181 @@ class _GoogleCalendarPageState extends State<GoogleCalendarPage> {
     final selKey = DateTime(_selectedDay.year, _selectedDay.month, _selectedDay.day);
     final dayEvents = byDay[selKey] ?? const <CalendarEvent>[];
 
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(14),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(children: [
-            Icon(Icons.badge_rounded, size: 20, color: c.textFaint),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Text('Λογαριασμός συνδεδεμένος',
-                  style: TextStyle(fontSize: 13, color: c.textFaint)),
-            ),
-            IconButton(
-              onPressed: _load,
-              icon: Icon(Icons.refresh_rounded, color: c.textFaint),
-              tooltip: 'Ανανέωση',
-            ),
-          ]),
-          const SizedBox(height: 6),
-
-          Container(
-            decoration: BoxDecoration(
-              color:        c.card,
-              borderRadius: BorderRadius.circular(16),
-              border:       Border.all(color: c.cardBorder, width: 0.8),
-            ),
-            padding: const EdgeInsets.symmetric(vertical: 6),
-            child: TableCalendar<CalendarEvent>(
-              firstDay:   DateTime.utc(2023, 1, 1),
-              lastDay:    DateTime.utc(2035, 12, 31),
-              focusedDay: _focusedMonth,
-              currentDay: DateTime.now(),
-              selectedDayPredicate: (d) => isSameDay(d, _selectedDay),
-              eventLoader: (day) {
-                final key = DateTime(day.year, day.month, day.day);
-                return byDay[key] ?? const [];
-              },
-              onDaySelected: (selected, focused) => setState(() {
-                _selectedDay  = selected;
-                _focusedMonth = focused;
-              }),
-              onPageChanged: (focused) {
-                setState(() => _focusedMonth = focused);
-                _load();
-              },
-              headerStyle: HeaderStyle(
-                formatButtonVisible: false,
-                titleCentered:       true,
-                titleTextStyle: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                    color: c.textMain),
-                leftChevronIcon:  Icon(Icons.chevron_left_rounded,  color: c.textFaint, size: 20),
-                rightChevronIcon: Icon(Icons.chevron_right_rounded, color: c.textFaint, size: 20),
+    return LayoutBuilder(builder: (context, constraints) {
+      final h = constraints.maxHeight;
+      return Stack(children: [
+        // Ημερολόγιο: πιάνει τον χώρο ΠΑΝΩ από το κλειστό συρτάρι.
+        Positioned(
+          left: 0, right: 0, top: 0,
+          height: h * (1 - _sheetMin) + 8,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(10, 0, 10, 12),
+            child: Container(
+              decoration: BoxDecoration(
+                color:        c.card,
+                borderRadius: BorderRadius.circular(16),
+                border:       Border.all(color: c.cardBorder, width: 0.8),
               ),
-              daysOfWeekStyle: DaysOfWeekStyle(
-                weekdayStyle: TextStyle(fontSize: 11, color: c.textFaint),
-                weekendStyle: TextStyle(fontSize: 11, color: c.textFaint),
-              ),
-              calendarStyle: CalendarStyle(
-                outsideDaysVisible: false,
-                defaultTextStyle:   TextStyle(fontSize: 13, color: c.textMain),
-                weekendTextStyle:   const TextStyle(fontSize: 13, color: Color(0xFF993C1D)),
-                todayDecoration: BoxDecoration(color: c.amberSoft, shape: BoxShape.circle),
-                todayTextStyle: TextStyle(
-                    color: c.isDark ? c.amberDeep : const Color(0xFF633806),
-                    fontWeight: FontWeight.w600),
-                selectedDecoration: BoxDecoration(color: c.textMain, shape: BoxShape.circle),
-                selectedTextStyle: TextStyle(color: c.scaffold, fontWeight: FontWeight.w600),
-                markersMaxCount: 3,
-                markerSize: 5,
-              ),
-              calendarBuilders: CalendarBuilders<CalendarEvent>(
-                markerBuilder: (context, day, events) {
-                  if (events.isEmpty) return null;
-                  return Positioned(
-                    bottom: 3,
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: events.take(3).map((e) {
-                        final converted = _convertedCache[e.id] ?? false;
-                        return Container(
-                          width: 5, height: 5,
-                          margin: const EdgeInsets.symmetric(horizontal: 1),
-                          decoration: BoxDecoration(
-                            color: converted
-                                ? const Color(0xFF97C459)
-                                : c.amber,
-                            shape: BoxShape.circle,
-                          ),
-                        );
-                      }).toList(),
-                    ),
-                  );
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: TableCalendar<CalendarEvent>(
+                firstDay:   DateTime.utc(2023, 1, 1),
+                lastDay:    DateTime.utc(2035, 12, 31),
+                focusedDay: _focusedMonth,
+                currentDay: DateTime.now(),
+                shouldFillViewport: true, // γεμίζει όλο το διαθέσιμο ύψος
+                selectedDayPredicate: (d) => isSameDay(d, _selectedDay),
+                eventLoader: (day) {
+                  final key = DateTime(day.year, day.month, day.day);
+                  return byDay[key] ?? const [];
                 },
+                onDaySelected: (selected, focused) => setState(() {
+                  _selectedDay  = selected;
+                  _focusedMonth = focused;
+                }),
+                onPageChanged: (focused) {
+                  setState(() => _focusedMonth = focused);
+                  _load();
+                },
+                headerStyle: HeaderStyle(
+                  formatButtonVisible: false,
+                  titleCentered:       true,
+                  titleTextStyle: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                      color: c.textMain),
+                  leftChevronIcon:  Icon(Icons.chevron_left_rounded,  color: c.textFaint, size: 22),
+                  rightChevronIcon: Icon(Icons.chevron_right_rounded, color: c.textFaint, size: 22),
+                ),
+                daysOfWeekStyle: DaysOfWeekStyle(
+                  weekdayStyle: TextStyle(fontSize: 11, color: c.textFaint),
+                  weekendStyle: TextStyle(fontSize: 11, color: c.textFaint),
+                ),
+                calendarStyle: CalendarStyle(
+                  outsideDaysVisible: false,
+                  defaultTextStyle:   TextStyle(fontSize: 14, color: c.textMain),
+                  weekendTextStyle:   const TextStyle(fontSize: 14, color: Color(0xFF993C1D)),
+                  cellAlignment: const Alignment(0, -0.4),
+                  todayDecoration: BoxDecoration(color: c.amberSoft, shape: BoxShape.circle),
+                  todayTextStyle: TextStyle(
+                      color: c.isDark ? c.amberDeep : const Color(0xFF633806),
+                      fontWeight: FontWeight.w600),
+                  selectedDecoration: BoxDecoration(color: c.textMain, shape: BoxShape.circle),
+                  selectedTextStyle: TextStyle(color: c.scaffold, fontWeight: FontWeight.w600),
+                ),
+                calendarBuilders: CalendarBuilders<CalendarEvent>(
+                  markerBuilder: (context, day, events) {
+                    if (events.isEmpty) return null;
+                    final shown = events.take(4).toList();
+                    final extra = events.length - shown.length;
+                    return Positioned(
+                      bottom: 6,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          ...shown.map((e) {
+                            final converted = _convertedCache[e.id] ?? false;
+                            return Container(
+                              width: 7, height: 7,
+                              margin: const EdgeInsets.symmetric(horizontal: 1.3),
+                              decoration: BoxDecoration(
+                                color: converted
+                                    ? const Color(0xFF97C459)
+                                    : c.amber,
+                                shape: BoxShape.circle,
+                              ),
+                            );
+                          }),
+                          if (extra > 0)
+                            Padding(
+                              padding: const EdgeInsets.only(left: 1),
+                              child: Text('+$extra',
+                                  style: TextStyle(
+                                      fontSize: 9,
+                                      fontWeight: FontWeight.w700,
+                                      color: c.textFaint)),
+                            ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
               ),
             ),
           ),
+        ),
 
-          const SizedBox(height: 14),
-          Text(
-            '${_weekdayDate(_selectedDay)} · ${dayEvents.length} '
-            '${dayEvents.length == 1 ? "event" : "events"}',
-            style: TextStyle(
-                fontSize: 14, fontWeight: FontWeight.w600, color: c.textMain),
-          ),
-          const SizedBox(height: 10),
-
-          if (_error != null)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 10),
-              child: Text(_error!, style: const TextStyle(color: Colors.red)),
-            ),
-
-          if (dayEvents.isEmpty)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 20),
-              child: Center(
-                child: Text('Κανένα event αυτή την ημέρα',
-                    style: TextStyle(fontSize: 13, color: c.textFaint)),
+        // Συρτάρι events — τραβιέται μέχρι σχεδόν την κορυφή.
+        DraggableScrollableSheet(
+          minChildSize:     _sheetMin,
+          initialChildSize: _sheetMin,
+          maxChildSize:     _sheetMax,
+          snap: true,
+          snapSizes: const [_sheetMin, _sheetMax],
+          builder: (context, scrollCtrl) {
+            final safeBottom = MediaQuery.of(context).padding.bottom;
+            return Container(
+              decoration: BoxDecoration(
+                color: c.card,
+                borderRadius:
+                    const BorderRadius.vertical(top: Radius.circular(22)),
+                border: Border.all(color: c.cardBorder, width: 0.8),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.10),
+                    blurRadius: 14,
+                    offset: const Offset(0, -3),
+                  ),
+                ],
               ),
-            )
-          else
-            ...dayEvents.map((e) => _eventCard(c, e)),
-        ],
-      ),
-    );
+              child: ListView(
+                controller: scrollCtrl,
+                padding: EdgeInsets.fromLTRB(
+                    14, 8, 14, 16 + (safeBottom > 0 ? safeBottom : 10)),
+                children: [
+                  // Χερούλι
+                  Center(
+                    child: Container(
+                      width: 42, height: 5,
+                      margin: const EdgeInsets.only(bottom: 10),
+                      decoration: BoxDecoration(
+                        color: c.textFaint.withValues(alpha: 0.45),
+                        borderRadius: BorderRadius.circular(3),
+                      ),
+                    ),
+                  ),
+                  Text(
+                    '${_weekdayDate(_selectedDay)} · ${dayEvents.length} '
+                    '${dayEvents.length == 1 ? "event" : "events"}',
+                    style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: c.textMain),
+                  ),
+                  const SizedBox(height: 10),
+                  if (_error != null)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 10),
+                      child: Text(_error!,
+                          style: const TextStyle(color: Colors.red)),
+                    ),
+                  if (dayEvents.isEmpty)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 20),
+                      child: Center(
+                        child: Text('Κανένα event αυτή την ημέρα',
+                            style:
+                                TextStyle(fontSize: 13, color: c.textFaint)),
+                      ),
+                    )
+                  else
+                    ...dayEvents.map((e) => _eventCard(c, e)),
+                ],
+              ),
+            );
+          },
+        ),
+      ]);
+    });
   }
 
   String _weekdayDate(DateTime d) {
@@ -362,7 +420,7 @@ class _GoogleCalendarPageState extends State<GoogleCalendarPage> {
         child: Container(
           padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(
-            color: c.card,
+            color: c.scaffold,
             borderRadius: BorderRadius.circular(16),
             border: Border.all(color: c.cardBorder, width: 0.8),
           ),
