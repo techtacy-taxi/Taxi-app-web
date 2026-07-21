@@ -14,13 +14,17 @@
 // χάρτης). Οι μικροί χάρτες σε popup/ειδοποιήσεις ΠΑΝΤΑ ακολουθούν το γενικό
 // θέμα εφαρμογής — ΔΕΝ έχουν δική τους επιλογή.
 
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import 'app_theme.dart';
 import 'masters/global_settings_page.dart';
 import 'pricing/pricing_zones_page.dart';
+import 'tenants/tenant_admin_page.dart';
 import 'viva_settings_page.dart';
 import 'voice/groups_admin.dart';
+
+const String _kSuperAdminEmail = 'techtacy@gmail.com';
 
 class SettingsPage extends StatelessWidget {
   final String uid;
@@ -31,6 +35,11 @@ class SettingsPage extends StatelessWidget {
   final VoidCallback onSignOut;
   final bool   muted;
   final ValueChanged<bool> onMuteChanged;
+  /// Άνοιγμα του επιλογέα οχήματος (Ταξί/Van/Bus) — ίδιος διάλογος με πριν,
+  /// απλά καλείται από εδώ αντί από το παλιό popup menu.
+  final VoidCallback onOpenVehiclePicker;
+  /// Μόνο master: στέλνει ειδοποίηση αναβάθμισης σε όλους τους οδηγούς.
+  final VoidCallback? onBroadcastUpdate;
 
   const SettingsPage({
     super.key,
@@ -42,6 +51,8 @@ class SettingsPage extends StatelessWidget {
     required this.onSignOut,
     required this.muted,
     required this.onMuteChanged,
+    required this.onOpenVehiclePicker,
+    this.onBroadcastUpdate,
   });
 
   @override
@@ -65,6 +76,11 @@ class SettingsPage extends StatelessWidget {
                 icon: Icons.person_outline_rounded,
                 label: 'Στοιχεία οδηγού',
                 onTap: onEditProfile),
+            _divider(c),
+            _tile(context, c,
+                icon: Icons.local_taxi_rounded,
+                label: 'Όχημα',
+                onTap: onOpenVehiclePicker),
             _divider(c),
             _switchTile(context, c,
                 icon: Icons.notifications_off_rounded,
@@ -137,14 +153,38 @@ class SettingsPage extends StatelessWidget {
                 border:       Border.all(color: c.blueSoft, width: 0.8),
                 borderRadius: BorderRadius.circular(14),
               ),
-              child: _tile(context, c,
-                  icon: Icons.admin_panel_settings_rounded,
-                  label: 'Καθολικές ρυθμίσεις',
-                  labelColor: c.blueDeep,
-                  iconColor: c.blueDeep,
-                  onTap: () => Navigator.of(context).push(MaterialPageRoute(
-                        builder: (_) => GlobalSettingsPage(masterUid: uid),
-                      ))),
+              child: Column(children: [
+                _tile(context, c,
+                    icon: Icons.admin_panel_settings_rounded,
+                    label: 'Καθολικές ρυθμίσεις',
+                    labelColor: c.blueDeep,
+                    iconColor: c.blueDeep,
+                    onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                          builder: (_) => GlobalSettingsPage(masterUid: uid),
+                        ))),
+                // Online Φόρμα (διαχείριση tenants) — ΜΟΝΟ ο πραγματικός
+                // super-admin (ίδιος έλεγχος με πριν στο popup menu).
+                if (FirebaseAuth.instance.currentUser?.email == _kSuperAdminEmail) ...[
+                  Divider(height: 1, color: c.blueSoft),
+                  _tile(context, c,
+                      icon: Icons.storefront_rounded,
+                      label: 'Online Φόρμα (tenants)',
+                      labelColor: c.blueDeep,
+                      iconColor: c.blueDeep,
+                      onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                            builder: (_) => const TenantAdminPage(),
+                          ))),
+                ],
+                if (onBroadcastUpdate != null) ...[
+                  Divider(height: 1, color: c.blueSoft),
+                  _tile(context, c,
+                      icon: Icons.campaign_rounded,
+                      label: 'Ειδοποίηση αναβάθμισης σε όλους',
+                      labelColor: c.blueDeep,
+                      iconColor: c.blueDeep,
+                      onTap: onBroadcastUpdate!),
+                ],
+              ]),
             ),
           ],
 

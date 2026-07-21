@@ -7,6 +7,7 @@ import 'package:audio_session/audio_session.dart';
 import 'package:just_audio/just_audio.dart';
 
 import 'voice_models.dart';
+import 'voice_recorder.dart';
 import 'voice_service.dart';
 import '../jobs/job_shared_widgets.dart';
 
@@ -15,6 +16,8 @@ import '../jobs/job_shared_widgets.dart';
 void openVoiceInboxSheet({
   required BuildContext context,
   required String       uid,
+  String displayName = '',
+  String lastName    = '',
 }) {
   showModalBottomSheet(
     context:            context,
@@ -25,6 +28,8 @@ void openVoiceInboxSheet({
       builder: (context, snap) => _InboxSheet(
         uid:      uid,
         messages: snap.data ?? const [],
+        displayName: displayName,
+        lastName:    lastName,
       ),
     ),
   );
@@ -123,8 +128,15 @@ class _VoiceInboxButtonState extends State<VoiceInboxButton> {
 class _InboxSheet extends StatefulWidget {
   final String             uid;
   final List<VoiceMessage> messages;
+  final String             displayName;
+  final String             lastName;
 
-  const _InboxSheet({required this.uid, required this.messages});
+  const _InboxSheet({
+    required this.uid,
+    required this.messages,
+    this.displayName = '',
+    this.lastName    = '',
+  });
 
   @override
   State<_InboxSheet> createState() => _InboxSheetState();
@@ -178,7 +190,24 @@ class _InboxSheetState extends State<_InboxSheet>
         mainAxisSize: MainAxisSize.min,
         children: [
           // Handle
-          const SheetHandle(bottomMargin: 16),
+          const SheetHandle(bottomMargin: 12),
+
+          // Header: τίτλος + «Νέο μήνυμα» (εγγραφή) — έτσι η εγγραφή μένει
+          // προσβάσιμη από το ίδιο σημείο με τα μηνύματα, χωρίς ξεχωριστό
+          // floating κουμπί μικροφώνου πάνω στον χάρτη.
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 0, 16, 12),
+            child: Row(children: [
+              const Text('Μηνύματα',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+              const Spacer(),
+              _NewMessageButton(
+                uid: widget.uid,
+                displayName: widget.displayName,
+                lastName: widget.lastName,
+              ),
+            ]),
+          ),
 
           // Tabs
           Padding(
@@ -539,6 +568,76 @@ class _EmptyState extends StatelessWidget {
               style: TextStyle(color: Colors.grey[400], fontSize: 16)),
         ],
       ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────
+// «Νέο μήνυμα» — κουμπί μέσα στο header του inbox sheet. Ανοίγει ένα
+// μικρό bottom sheet με το ΙΔΙΟ VoiceRecorderButton (hold-to-record,
+// recipient picker με αναζήτηση) — έτσι η εγγραφή μένει προσβάσιμη από
+// το ίδιο μέρος με τα μηνύματα, χωρίς ξεχωριστό floating κουμπί πάνω
+// στον χάρτη.
+// ─────────────────────────────────────────────────────────────────
+class _NewMessageButton extends StatelessWidget {
+  final String uid;
+  final String displayName;
+  final String lastName;
+
+  const _NewMessageButton({
+    required this.uid,
+    required this.displayName,
+    required this.lastName,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return TextButton.icon(
+      onPressed: () => showModalBottomSheet(
+        context: context,
+        backgroundColor: Colors.transparent,
+        builder: (_) => Padding(
+          padding: const EdgeInsets.all(24),
+          child: Container(
+            padding: const EdgeInsets.all(24),
+            decoration: const BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.all(Radius.circular(24)),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                const Text('Νέο μήνυμα φωνής',
+                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+                const SizedBox(height: 16),
+                // Χρησιμοποιεί το ΙΔΙΟ VoiceRecorderButton — δεν αγγίζουμε
+                // καθόλου τη λογική εγγραφής/αποστολής/recipient picker.
+                _VoiceRecorderInline(uid: uid, displayName: displayName, lastName: lastName),
+              ],
+            ),
+          ),
+        ),
+      ),
+      icon: const Icon(Icons.mic_none_rounded, size: 18, color: Colors.amber),
+      label: const Text('Νέο μήνυμα',
+          style: TextStyle(color: Colors.amber, fontWeight: FontWeight.w600)),
+    );
+  }
+}
+
+class _VoiceRecorderInline extends StatelessWidget {
+  final String uid;
+  final String displayName;
+  final String lastName;
+  const _VoiceRecorderInline({
+    required this.uid, required this.displayName, required this.lastName,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return VoiceRecorderButton(
+      fromUid: uid, fromName: displayName, fromLastName: lastName,
     );
   }
 }
