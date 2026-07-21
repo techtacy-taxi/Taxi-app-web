@@ -1,4 +1,8 @@
 // lib/voice/recipient_picker.dart
+//
+// REDESIGN: ίδια ΑΚΡΙΒΩΣ λογική επιλογής (αναζήτηση, ομάδες, πολλαπλή
+// επιλογή, αποθήκευση τελευταίας επιλογής) — μόνο νέο οπτικό στυλ
+// (AppColors, pill κάρτες, dark mode).
 
 import 'dart:convert';
 
@@ -6,10 +10,10 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'voice_models.dart';
+import '../app_theme.dart';
 import '../jobs/job_shared_widgets.dart';
+import 'voice_models.dart';
 
-// Key για SharedPreferences — αποθήκευση τελευταίας επιλογής αποδεκτών
 const String _kLastRecipientKey = 'voice_last_recipient_v1';
 
 class RecipientSelection {
@@ -171,8 +175,13 @@ class _RecipientPickerSheetState extends State<_RecipientPickerSheet> {
     ));
   }
 
+  String _initialsOf(String name) => name.trim().isEmpty
+      ? '?'
+      : name.trim().split(RegExp(r'\s+')).take(2).map((w) => w[0]).join().toUpperCase();
+
   @override
   Widget build(BuildContext context) {
+    final c = AppColors.of(context);
     final query = _searchQuery.toLowerCase().trim();
     final filteredDrivers = _drivers.where((d) {
       final name = '${d['displayName'] ?? ''} ${d['lastName'] ?? ''}'.toLowerCase();
@@ -185,9 +194,9 @@ class _RecipientPickerSheetState extends State<_RecipientPickerSheet> {
       maxChildSize:     0.95,
       builder: (context, scrollController) {
         return Container(
-          decoration: const BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+          decoration: BoxDecoration(
+            color: c.scaffold,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
           ),
           child: Column(
             children: [
@@ -195,201 +204,192 @@ class _RecipientPickerSheetState extends State<_RecipientPickerSheet> {
                 padding: EdgeInsets.fromLTRB(20, 8, 20, 0),
                 child: SheetHandle(bottomMargin: 0),
               ),
-              const Padding(
-                padding: EdgeInsets.all(16.0),
-                child: Text('Επιλογή Παραληπτών', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Row(children: [
+                  Text('Νέο μήνυμα',
+                      style: TextStyle(
+                          fontSize: 16, fontWeight: FontWeight.w600, color: c.textMain)),
+                ]),
               ),
 
               Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 4.0),
+                padding: const EdgeInsets.symmetric(horizontal: 16.0),
                 child: TextField(
                   controller: _searchController,
+                  style: TextStyle(fontSize: 13, color: c.textMain),
                   decoration: InputDecoration(
-                    hintText: 'Αναζήτηση οδηγού...',
-                    prefixIcon: const Icon(Icons.search_rounded, color: Colors.grey),
+                    hintText: 'Αναζήτηση ονόματος...',
+                    hintStyle: TextStyle(fontSize: 13, color: c.textFaint),
+                    prefixIcon: Icon(Icons.search_rounded, color: c.textFaint, size: 19),
                     suffixIcon: _searchQuery.isNotEmpty
                         ? IconButton(
-                      icon: const Icon(Icons.clear_rounded, color: Colors.grey),
-                      onPressed: () {
-                        _searchController.clear();
-                        setState(() => _searchQuery = '');
-                      },
-                    )
+                            icon: Icon(Icons.clear_rounded, color: c.textFaint, size: 18),
+                            onPressed: () {
+                              _searchController.clear();
+                              setState(() => _searchQuery = '');
+                            },
+                          )
                         : null,
                     filled: true,
-                    fillColor: Colors.grey[100],
-                    contentPadding: const EdgeInsets.symmetric(vertical: 0),
+                    fillColor: c.card,
+                    contentPadding: const EdgeInsets.symmetric(vertical: 0, horizontal: 4),
                     border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide.none,
+                      borderRadius: BorderRadius.circular(14),
+                      borderSide: BorderSide(color: c.cardBorder, width: 0.8),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(14),
+                      borderSide: BorderSide(color: c.cardBorder, width: 0.8),
                     ),
                   ),
-                  onChanged: (val) {
-                    setState(() {
-                      _searchQuery = val;
-                    });
-                  },
+                  onChanged: (val) => setState(() => _searchQuery = val),
                 ),
               ),
-              const SizedBox(height: 8),
-              const Divider(height: 1),
+              const SizedBox(height: 10),
 
               Expanded(
                 child: _isLoading
-                    ? const Center(child: CircularProgressIndicator(color: Colors.amber))
+                    ? const Center(child: CircularProgressIndicator())
                     : ListView(
-                  controller: scrollController,
-                  children: [
-                    if (_searchQuery.isEmpty) ...[
-                      CheckboxListTile(
-                        title: const Text('Όλοι (Γενική Εκπομπή)', style: TextStyle(fontWeight: FontWeight.bold)),
-                        secondary: const Icon(Icons.public_rounded, color: Colors.blue),
-                        activeColor: Colors.amber,
-                        value: _sendToAll,
-                        onChanged: (val) {
-                          setState(() {
-                            _sendToAll = val ?? false;
-                            if (_sendToAll) _selectedUids.clear();
-                          });
-                        },
-                      ),
-                      const Divider(),
-                    ],
+                        controller: scrollController,
+                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                        children: [
+                          if (_searchQuery.isEmpty) ...[
+                            _recipientRow(c,
+                                selected: _sendToAll,
+                                leadingBg: c.amberSoft,
+                                leadingFg: c.amberDeep,
+                                initials: 'ΟΛ',
+                                title: 'Όλοι οι οδηγοί',
+                                bold: true,
+                                onTap: () => setState(() {
+                                  _sendToAll = !_sendToAll;
+                                  if (_sendToAll) _selectedUids.clear();
+                                })),
+                            const SizedBox(height: 10),
+                          ],
 
-                    if (!_sendToAll) ...[
-                      if (_searchQuery.isEmpty)
-                        const Padding(
-                          padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                          child: Text('ΟΜΑΔΕΣ ΦΑΚΕΛΟΙ', style: TextStyle(fontSize: 12, color: Colors.grey, fontWeight: FontWeight.bold)),
-                        ),
+                          if (!_sendToAll) ...[
+                            if (_searchQuery.isEmpty) ...[
+                              ..._groups.map((group) {
+                                final groupMembers = filteredDrivers
+                                    .where((d) => group.memberUids.contains(d['uid']))
+                                    .toList();
+                                if (groupMembers.isEmpty) return const SizedBox.shrink();
+                                final allSelected = groupMembers
+                                    .every((d) => _selectedUids.contains(d['uid']));
 
-                      ..._groups.map((group) {
-                        final groupMembers = filteredDrivers.where((d) => group.memberUids.contains(d['uid'])).toList();
-
-                        if (groupMembers.isEmpty) return const SizedBox.shrink();
-
-                        final allSelected = groupMembers.every((d) => _selectedUids.contains(d['uid']));
-
-                        return ExpansionTile(
-                          initiallyExpanded: _searchQuery.isNotEmpty,
-                          leading: Checkbox(
-                            value: allSelected,
-                            activeColor: Colors.amber,
-                            onChanged: (val) {
-                              setState(() {
-                                if (val == true) {
-                                  _selectedUids.addAll(groupMembers.map((d) => d['uid'] as String));
-                                } else {
-                                  _selectedUids.removeAll(groupMembers.map((d) => d['uid'] as String));
-                                }
-                              });
-                            },
-                          ),
-                          title: Row(
-                            children: [
-                              Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                                decoration: BoxDecoration(
-                                  color: group.color,
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                child: Text(
-                                    group.name,
-                                    style: TextStyle(
-                                      // Έξυπνο χρώμα γραμματοσειράς:
-                                        color: group.color.computeLuminance() > 0.5 ? Colors.black : Colors.white,
-                                        fontWeight: FontWeight.bold
-                                    )
-                                ),
-                              ),
+                                return Padding(
+                                  padding: const EdgeInsets.only(bottom: 10),
+                                  child: Theme(
+                                    data: Theme.of(context).copyWith(
+                                        dividerColor: Colors.transparent),
+                                    child: ExpansionTile(
+                                      tilePadding: EdgeInsets.zero,
+                                      childrenPadding: const EdgeInsets.only(left: 14),
+                                      shape: const Border(),
+                                      initiallyExpanded: _searchQuery.isNotEmpty,
+                                      leading: Checkbox(
+                                        value: allSelected,
+                                        activeColor: c.amber,
+                                        onChanged: (val) => setState(() {
+                                          if (val == true) {
+                                            _selectedUids.addAll(
+                                                groupMembers.map((d) => d['uid'] as String));
+                                          } else {
+                                            _selectedUids.removeAll(
+                                                groupMembers.map((d) => d['uid'] as String));
+                                          }
+                                        }),
+                                      ),
+                                      title: Container(
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 10, vertical: 4),
+                                        decoration: BoxDecoration(
+                                          color: group.color,
+                                          borderRadius: BorderRadius.circular(9),
+                                        ),
+                                        child: Text(group.name,
+                                            style: TextStyle(
+                                                fontSize: 12,
+                                                fontWeight: FontWeight.w600,
+                                                color: group.color.computeLuminance() > 0.5
+                                                    ? Colors.black
+                                                    : Colors.white)),
+                                      ),
+                                      children: groupMembers.map((driver) {
+                                        final uid  = driver['uid'] as String;
+                                        final name =
+                                            '${driver['displayName'] ?? ''} ${driver['lastName'] ?? ''}'.trim();
+                                        return _recipientRow(c,
+                                            selected: _selectedUids.contains(uid),
+                                            leadingBg: c.bluePale,
+                                            leadingFg: c.blueDeep,
+                                            initials: _initialsOf(name),
+                                            title: name,
+                                            onTap: () => setState(() {
+                                              if (_selectedUids.contains(uid)) {
+                                                _selectedUids.remove(uid);
+                                              } else {
+                                                _selectedUids.add(uid);
+                                              }
+                                            }));
+                                      }).toList(),
+                                    ),
+                                  ),
+                                );
+                              }),
                             ],
-                          ),
-                          children: groupMembers.map((driver) {
-                            final uid = driver['uid'] as String;
-                            final name = '${driver['displayName'] ?? ''} ${driver['lastName'] ?? ''}'.trim();
-                            final plate = driver['plateNumber'] ?? '';
 
-                            return Padding(
-                              padding: const EdgeInsets.only(left: 32.0),
-                              child: CheckboxListTile(
-                                title: Text(name, style: const TextStyle(fontSize: 14)),
-                                subtitle: plate.isNotEmpty ? Text(plate, style: const TextStyle(fontSize: 12, color: Colors.grey)) : null,
-                                activeColor: Colors.amber,
-                                value: _selectedUids.contains(uid),
-                                onChanged: (val) {
-                                  setState(() {
-                                    if (val == true) {
-                                      _selectedUids.add(uid);
-                                    } else {
-                                      _selectedUids.remove(uid);
-                                    }
-                                  });
-                                },
+                            if (filteredDrivers.isEmpty && _searchQuery.isNotEmpty)
+                              Padding(
+                                padding: const EdgeInsets.all(28.0),
+                                child: Center(
+                                  child: Text('Δεν βρέθηκε οδηγός με αυτό το όνομα.',
+                                      style: TextStyle(fontSize: 12.5, color: c.textFaint)),
+                                ),
                               ),
-                            );
-                          }).toList(),
-                        );
-                      }),
 
-                      if (filteredDrivers.isNotEmpty) ...[
-                        const Divider(),
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                          child: Text(_searchQuery.isEmpty ? 'ΟΛΟΙ ΟΙ ΣΥΝΑΔΕΛΦΟΙ' : 'ΑΠΟΤΕΛΕΣΜΑΤΑ ΑΝΑΖΗΤΗΣΗΣ',
-                              style: const TextStyle(fontSize: 12, color: Colors.grey, fontWeight: FontWeight.bold)),
-                        ),
-                      ] else if (_searchQuery.isNotEmpty) ...[
-                        const Padding(
-                          padding: EdgeInsets.all(32.0),
-                          child: Center(
-                            child: Text('Δεν βρέθηκε οδηγός με αυτό το όνομα.', style: TextStyle(color: Colors.grey)),
-                          ),
-                        ),
-                      ],
-
-                      ...filteredDrivers.map((driver) {
-                        final uid = driver['uid'] as String;
-                        final name = '${driver['displayName'] ?? ''} ${driver['lastName'] ?? ''}'.trim();
-
-                        return CheckboxListTile(
-                          title: Text(name),
-                          activeColor: Colors.amber,
-                          value: _selectedUids.contains(uid),
-                          onChanged: (val) {
-                            setState(() {
-                              if (val == true) {
-                                _selectedUids.add(uid);
-                              } else {
-                                _selectedUids.remove(uid);
-                              }
-                            });
-                          },
-                        );
-                      }),
-                    ]
-                  ],
-                ),
+                            ...filteredDrivers.map((driver) {
+                              final uid  = driver['uid'] as String;
+                              final name =
+                                  '${driver['displayName'] ?? ''} ${driver['lastName'] ?? ''}'.trim();
+                              return Padding(
+                                padding: const EdgeInsets.only(bottom: 6),
+                                child: _recipientRow(c,
+                                    selected: _selectedUids.contains(uid),
+                                    leadingBg: c.bluePale,
+                                    leadingFg: c.blueDeep,
+                                    initials: _initialsOf(name),
+                                    title: name,
+                                    onTap: () => setState(() {
+                                      if (_selectedUids.contains(uid)) {
+                                        _selectedUids.remove(uid);
+                                      } else {
+                                        _selectedUids.add(uid);
+                                      }
+                                    })),
+                              );
+                            }),
+                          ],
+                        ],
+                      ),
               ),
 
               SafeArea(
+                top: false,
                 child: Padding(
                   padding: const EdgeInsets.all(16.0),
                   child: SizedBox(
                     width: double.infinity,
-                    height: 50,
                     child: FilledButton.icon(
-                      style: FilledButton.styleFrom(
-                        backgroundColor: (_selectedUids.isNotEmpty || _sendToAll) ? Colors.amber : Colors.grey[300],
-                        foregroundColor: (_selectedUids.isNotEmpty || _sendToAll) ? Colors.black : Colors.grey[600],
-                      ),
-                      icon: const Icon(Icons.send_rounded),
-                      label: Text(
-                        _sendToAll
-                            ? 'Εκπομπή σε Όλους'
-                            : 'Επιλογή (${_selectedUids.length}) οδηγών',
-                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-                      ),
-                      onPressed: (_selectedUids.isNotEmpty || _sendToAll) ? _confirmSelection : null,
+                      icon: const Icon(Icons.arrow_forward_rounded, size: 18),
+                      label: Text(_sendToAll
+                          ? 'Συνέχεια — Όλοι οι οδηγοί'
+                          : 'Συνέχεια (${_selectedUids.length})'),
+                      onPressed:
+                          (_selectedUids.isNotEmpty || _sendToAll) ? _confirmSelection : null,
                     ),
                   ),
                 ),
@@ -398,6 +398,54 @@ class _RecipientPickerSheetState extends State<_RecipientPickerSheet> {
           ),
         );
       },
+    );
+  }
+
+  Widget _recipientRow(AppColors c, {
+    required bool   selected,
+    required Color  leadingBg,
+    required Color  leadingFg,
+    required String initials,
+    required String title,
+    bool bold = false,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(14),
+      onTap: onTap,
+      child: Container(
+        decoration: BoxDecoration(
+          color: selected ? c.amberSoft : c.card,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: selected ? c.amber : c.cardBorder,
+            width: selected ? 1.5 : 0.8,
+          ),
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+        child: Row(children: [
+          Container(
+            width: 30, height: 30,
+            decoration: BoxDecoration(color: leadingBg, shape: BoxShape.circle),
+            alignment: Alignment.center,
+            child: Text(initials,
+                style: TextStyle(
+                    fontSize: 11, fontWeight: FontWeight.w700, color: leadingFg)),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(title,
+                style: TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: bold || selected ? FontWeight.w600 : FontWeight.w400,
+                    color: selected
+                        ? (c.isDark ? c.amberDeep : const Color(0xFF633806))
+                        : c.textMain)),
+          ),
+          if (selected)
+            Icon(Icons.check_rounded, size: 17, color: c.amberDeep),
+        ]),
+      ),
     );
   }
 }

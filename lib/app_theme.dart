@@ -65,6 +65,63 @@ class ThemeController {
 }
 
 // ─────────────────────────────────────────────────────────────────
+// Θέμα ΜΟΝΟ του κύριου χάρτη (κεντρική οθόνη) — ΑΝΕΞΑΡΤΗΤΟ από το
+// γενικό θέμα εφαρμογής. Ο χρήστης μπορεί π.χ. να έχει σκούρα την
+// εφαρμογή αλλά ανοιχτόχρωμο χάρτη (πιο ευανάγνωστος στο φως της μέρας).
+// ΔΕΝ επηρεάζει τους μικρούς χάρτες σε popup/ειδοποιήσεις δουλειάς —
+// εκείνοι ακολουθούν πάντα το γενικό θέμα εφαρμογής (βλ. ThemeController).
+// ─────────────────────────────────────────────────────────────────
+class MapThemeController {
+  MapThemeController._();
+
+  static const _prefsKey = 'main_map_theme'; // 'light' | 'dark' | 'system'
+
+  static final ValueNotifier<ThemeMode> mode =
+      ValueNotifier<ThemeMode>(ThemeMode.system);
+
+  static Future<void> load() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      switch (prefs.getString(_prefsKey)) {
+        case 'light':
+          mode.value = ThemeMode.light;
+        case 'dark':
+          mode.value = ThemeMode.dark;
+        default:
+          mode.value = ThemeMode.system;
+      }
+    } catch (_) {}
+  }
+
+  static Future<void> setMode(ThemeMode m) async {
+    mode.value = m;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_prefsKey, switch (m) {
+        ThemeMode.light => 'light',
+        ThemeMode.dark  => 'dark',
+        _               => 'system',
+      });
+    } catch (_) {}
+  }
+
+  /// Επιστρέφει true αν ο ΚΥΡΙΟΣ χάρτης πρέπει να είναι σκούρος αυτή τη
+  /// στιγμή — συνδυάζοντας την επιλογή του χρήστη με το system brightness
+  /// όταν είναι σε "Αυτόματο". Χρησιμοποιείται στο GoogleMap(style: ...)
+  /// της κεντρικής οθόνης.
+  static bool isDarkNow(BuildContext context) {
+    switch (mode.value) {
+      case ThemeMode.light:
+        return false;
+      case ThemeMode.dark:
+        return true;
+      case ThemeMode.system:
+        return MediaQuery.platformBrightnessOf(context) == Brightness.dark;
+    }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────
 // Χρωματική παλέτα redesign — light & dark
 // ─────────────────────────────────────────────────────────────────
 class AppColors {
