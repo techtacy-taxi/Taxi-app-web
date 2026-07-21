@@ -25,7 +25,7 @@ import 'voice/groups_admin.dart';
 
 const String _kSuperAdminEmail = 'techtacy@gmail.com';
 
-class SettingsPage extends StatelessWidget {
+class SettingsPage extends StatefulWidget {
   final String uid;
   final bool   isAdmin;
   final bool   isMaster;
@@ -55,6 +55,25 @@ class SettingsPage extends StatelessWidget {
   });
 
   @override
+  State<SettingsPage> createState() => _SettingsPageState();
+}
+
+class _SettingsPageState extends State<SettingsPage> {
+  // ── Τοπικό state για διακόπτες: ενημερώνεται ΑΜΕΣΩΣ στο tap, χωρίς να
+  // περιμένει το ξαναχτίσιμο του γονικού widget (map_page). Πριν, το
+  // `muted` ερχόταν σκέτο bool από τον γονιό — αυτή η οθόνη δεν ξαναχτιζόταν
+  // ποτέ μόνη της, οπότε ο διακόπτης έδειχνε την ΠΑΛΙΑ τιμή μέχρι να βγεις
+  // και να ξαναμπείς. Κάθε νέος διακόπτης εδώ πρέπει να ακολουθεί το ίδιο
+  // μοτίβο: τοπικό state (άμεση οπτική αλλαγή) + ειδοποίηση προς τα πάνω
+  // (αποθήκευση).
+  late bool _muted = widget.muted;
+
+  void _toggleMuted(bool v) {
+    setState(() => _muted = v);
+    widget.onMuteChanged(v);
+  }
+
+  @override
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
     return Scaffold(
@@ -77,18 +96,18 @@ class SettingsPage extends StatelessWidget {
             _tile(context, c,
                 icon: Icons.person_outline_rounded,
                 label: 'Στοιχεία οδηγού',
-                onTap: onEditProfile),
+                onTap: widget.onEditProfile),
             _divider(c),
             _tile(context, c,
                 icon: Icons.local_taxi_rounded,
                 label: 'Όχημα',
-                onTap: onOpenVehiclePicker),
+                onTap: widget.onOpenVehiclePicker),
             _divider(c),
             _switchTile(context, c,
                 icon: Icons.notifications_off_rounded,
                 label: 'Σίγαση ειδοποιήσεων',
-                value: muted,
-                onChanged: onMuteChanged),
+                value: _muted,
+                onChanged: _toggleMuted),
           ]),
 
           const SizedBox(height: 18),
@@ -112,10 +131,10 @@ class SettingsPage extends StatelessWidget {
             _tile(context, c,
                 icon: Icons.system_update_rounded,
                 label: 'Έλεγχος ενημέρωσης',
-                onTap: onCheckUpdate),
+                onTap: widget.onCheckUpdate),
           ]),
 
-          if (isAdmin || isMaster) ...[
+          if (widget.isAdmin || widget.isMaster) ...[
             const SizedBox(height: 18),
             _sectionLabel(c, 'ΟΜΑΔΑ'),
             const SizedBox(height: 8),
@@ -124,7 +143,7 @@ class SettingsPage extends StatelessWidget {
                   icon: Icons.groups_rounded,
                   label: 'Ομάδες οδηγών',
                   onTap: () => Navigator.of(context).push(MaterialPageRoute(
-                        builder: (_) => GroupsAdminPage(uid: uid),
+                        builder: (_) => GroupsAdminPage(uid: widget.uid),
                       ))),
               _divider(c),
               _tile(context, c,
@@ -143,7 +162,7 @@ class SettingsPage extends StatelessWidget {
             ]),
           ],
 
-          if (isMaster) ...[
+          if (widget.isMaster) ...[
             const SizedBox(height: 18),
             Text('ΠΛΑΤΦΟΡΜΑ · MASTER',
                 style: TextStyle(
@@ -162,20 +181,20 @@ class SettingsPage extends StatelessWidget {
                     labelColor: c.blueDeep,
                     iconColor: c.blueDeep,
                     onTap: () => Navigator.of(context).push(MaterialPageRoute(
-                          builder: (_) => GlobalSettingsPage(masterUid: uid),
+                          builder: (_) => GlobalSettingsPage(masterUid: widget.uid),
                         ))),
                 // Online Φόρμα (διαχείριση tenants) — ΜΟΝΟ ο πραγματικός
                 // super-admin (ίδιος έλεγχος με πριν στο popup menu).
                 if (FirebaseAuth.instance.currentUser?.email == _kSuperAdminEmail) ...[
                 ],
-                if (onBroadcastUpdate != null) ...[
+                if (widget.onBroadcastUpdate != null) ...[
                   Divider(height: 1, color: c.blueSoft),
                   _tile(context, c,
                       icon: Icons.campaign_rounded,
                       label: 'Ειδοποίηση αναβάθμισης σε όλους',
                       labelColor: c.blueDeep,
                       iconColor: c.blueDeep,
-                      onTap: onBroadcastUpdate!),
+                      onTap: widget.onBroadcastUpdate!),
                 ],
               ]),
             ),
@@ -184,7 +203,7 @@ class SettingsPage extends StatelessWidget {
           const SizedBox(height: 22),
           Center(
             child: TextButton.icon(
-              onPressed: onSignOut,
+              onPressed: widget.onSignOut,
               style: TextButton.styleFrom(foregroundColor: Colors.red),
               icon: const Icon(Icons.logout_rounded, size: 20),
               label: const Text('Αποσύνδεση'),

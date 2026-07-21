@@ -78,10 +78,12 @@ class HomeStatusBar extends StatelessWidget {
                     borderRadius: BorderRadius.circular(9),
                   ),
                   child: Text(isMaster ? 'MASTER' : 'ADMIN',
-                      style: const TextStyle(
+                      style: TextStyle(
                           fontSize: 13,
                           fontWeight: FontWeight.w700,
-                          color: Colors.white)),
+                          // Σε dark mode το textMain είναι ανοιχτό → το
+                          // κείμενο πρέπει να είναι σκούρο (χρώμα φόντου).
+                          color: isMaster ? c.scaffold : Colors.white)),
                 )
               : Container(
                   width: 34, height: 34,
@@ -169,9 +171,18 @@ class OwnJobsTodayStats extends StatelessWidget {
               _stat(c, '$openCount', 'Ανοιχτές', c.textMain),
               _divider(c),
               _stat(c, '$unassignedCount', 'Χωρίς οδηγό',
-                  unassignedCount > 0 ? const Color(0xFFA66A00) : c.textMain),
+                  unassignedCount > 0
+                      // Dark mode: φωτεινό πορτοκαλί — αλλιώς χανόταν.
+                      ? (c.isDark
+                          ? const Color(0xFFF5B942)
+                          : const Color(0xFFA66A00))
+                      : c.textMain),
               _divider(c),
-              _stat(c, '${revenue.toStringAsFixed(0)}€', 'Τζίρος', const Color(0xFF27500A)),
+              _stat(c, '${revenue.toStringAsFixed(0)}€', 'Τζίρος',
+                  // Dark mode: φωτεινό πράσινο — αλλιώς χανόταν.
+                  c.isDark
+                      ? const Color(0xFF97C459)
+                      : const Color(0xFF27500A)),
             ]),
           ]),
         );
@@ -250,7 +261,10 @@ class HomeFloatingChips extends StatelessWidget {
 
             return _chip(context, c,
                 icon: Icons.mic_rounded,
-                iconColor: const Color(0xFF534AB7),
+                // Dark mode: μοβ φωτεινό (0xFF534AB7 χανόταν σε σκούρο φόντο).
+                iconColor: c.isDark
+                    ? const Color(0xFFAFA9EC)
+                    : const Color(0xFF534AB7),
                 label: unread == 0 ? 'Μηνύματα' : '$unread νέα',
                 onTap: onTapMessages);
           },

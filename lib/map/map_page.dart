@@ -53,6 +53,32 @@ class HomeMapPage extends StatefulWidget {
   State<HomeMapPage> createState() => _HomeMapPageState();
 }
 
+
+// JSON style χάρτη Google Maps για dark mode (βασικό σκούρο θέμα).
+const String _darkMapStyle = '''
+[
+  {"elementType":"geometry","stylers":[{"color":"#212121"}]},
+  {"elementType":"labels.icon","stylers":[{"visibility":"off"}]},
+  {"elementType":"labels.text.fill","stylers":[{"color":"#757575"}]},
+  {"elementType":"labels.text.stroke","stylers":[{"color":"#212121"}]},
+  {"featureType":"administrative","elementType":"geometry","stylers":[{"color":"#757575"}]},
+  {"featureType":"administrative.country","elementType":"labels.text.fill","stylers":[{"color":"#9e9e9e"}]},
+  {"featureType":"administrative.locality","elementType":"labels.text.fill","stylers":[{"color":"#bdbdbd"}]},
+  {"featureType":"poi","elementType":"labels.text.fill","stylers":[{"color":"#757575"}]},
+  {"featureType":"poi.park","elementType":"geometry","stylers":[{"color":"#181818"}]},
+  {"featureType":"poi.park","elementType":"labels.text.fill","stylers":[{"color":"#616161"}]},
+  {"featureType":"road","elementType":"geometry.fill","stylers":[{"color":"#2c2c2c"}]},
+  {"featureType":"road","elementType":"labels.text.fill","stylers":[{"color":"#8a8a8a"}]},
+  {"featureType":"road.arterial","elementType":"geometry","stylers":[{"color":"#373737"}]},
+  {"featureType":"road.highway","elementType":"geometry","stylers":[{"color":"#3c3c3c"}]},
+  {"featureType":"road.highway.controlled_access","elementType":"geometry","stylers":[{"color":"#4e4e4e"}]},
+  {"featureType":"road.local","elementType":"labels.text.fill","stylers":[{"color":"#616161"}]},
+  {"featureType":"transit","elementType":"labels.text.fill","stylers":[{"color":"#757575"}]},
+  {"featureType":"water","elementType":"geometry","stylers":[{"color":"#0e1626"}]},
+  {"featureType":"water","elementType":"labels.text.fill","stylers":[{"color":"#3d3d3d"}]}
+]
+''';
+
 class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
 
   // Ύψος του κάτω nav bar (χωρίς το safe-area inset — αυτό προστίθεται
@@ -88,6 +114,7 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
 
   MarkerAsset?          _myAsset;
   GoogleMapController?  _mapController;
+  bool                   _pendingAutoCenter = false; // κεντράρισε μόλις έρθει η πρώτη θέση
   Position?             _currentPosition;
   StreamSubscription<Position>?                            _positionSub;
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _othersSub;
@@ -425,14 +452,29 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
       locationSettings: const LocationSettings(accuracy: LocationAccuracy.best, distanceFilter: 5),
     ).listen((pos) {
       _currentPosition = pos;
+      _maybeAutoCenter();
       if (!mounted) return;
       setState(() {});
     });
     final pos = await Geolocator.getCurrentPosition(
         locationSettings: const LocationSettings(accuracy: LocationAccuracy.best));
     _currentPosition = pos;
+    _maybeAutoCenter();
     if (!mounted) return;
     setState(() {});
+  }
+
+  // Κεντράρισμα στη θέση σου με ζουμ, ΜΙΑ φορά — μόλις έρθει η πρώτη θέση
+  // μετά το άνοιγμα του χάρτη, αν το onMapCreated είχε τρέξει πριν προλάβει
+  // να έρθει η θέση (π.χ. αργό GPS fix).
+  Future<void> _maybeAutoCenter() async {
+    if (!_pendingAutoCenter) return;
+    final map = _mapController;
+    final pos = _currentPosition;
+    if (map == null || pos == null) return;
+    _pendingAutoCenter = false;
+    await map.animateCamera(CameraUpdate.newLatLngZoom(
+        LatLng(pos.latitude, pos.longitude), 14));
   }
 
   void _startPeriodicLocationPublish() {
@@ -1047,14 +1089,25 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
           myLocationEnabled:       false,
           onMapCreated: (c) async {
             _mapController = c;
+            // Σκούρος χάρτης όταν το θέμα (auto ή χειροκίνητο) είναι dark.
+            if (AppColors.isDarkNow(context)) {
+              await c.setMapStyle(_darkMapStyle);
+            }
             final z = await c.getZoomLevel();
             if (!mounted) return;
             _currentZoom = z;
             await _refreshVehicleIcon();
             await _rebuildOtherMarkers();
             if (_currentPosition != null) {
+              // Κεντράρισμα στη θέση σου αμέσως — σαν να πάτησες το
+              // κουμπί «η θέση μου».
               await c.animateCamera(CameraUpdate.newLatLngZoom(
-                LatLng(_currentPosition!.latitude, _currentPosition!.longitude), 12));
+                LatLng(_currentPosition!.latitude, _currentPosition!.longitude), 14));
+            } else {
+              // Η θέση δεν έχει έρθει ακόμη· μόλις φτάσει, κεντράρισε
+              // αυτόματα μία φορά (χωρίς να χρειαστεί ο χρήστης να πατήσει
+              // το κουμπί «η θέση μου»).
+              _pendingAutoCenter = true;
             }
           },
           onCameraIdle: () async {
@@ -1165,13 +1218,17 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
         //     Ρυθμίσεις) — πάντα ορατό, με σωστό SafeArea (Android nav bar).
         Positioned(
           left: 0, right: 0, bottom: 0,
-          child: SafeArea(
+          child: Builder(builder: (context) {
+            final c = AppColors.of(context);
+            return SafeArea(
             top: false,
             child: Container(
               height: _kBottomNavHeight,
               decoration: BoxDecoration(
-                color: Colors.white,
-                border: Border(top: BorderSide(color: Colors.grey.shade200)),
+                // Παίρνει τα χρώματα του θέματος: λευκή σε light mode,
+                // σκούρα σε dark mode (πριν ήταν καρφωμένη λευκή).
+                color: c.card,
+                border: Border(top: BorderSide(color: c.divider)),
               ),
               child: Row(children: [
                 _navItem(
@@ -1271,7 +1328,8 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
                 ),
               ]),
             ),
-          ),
+          );
+          }),
         ),
 
         ]),
@@ -1285,7 +1343,9 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
     required bool     selected,
     required VoidCallback onTap,
   }) {
-    final color = selected ? Colors.amber.shade900 : Colors.grey.shade500;
+    final c = AppColors.of(context);
+    // amberDeep είναι φωτεινό σε dark mode· textFaint αχνό και στα δύο.
+    final color = selected ? c.amberDeep : c.textFaint;
     return Expanded(
       child: InkWell(
         onTap: onTap,
