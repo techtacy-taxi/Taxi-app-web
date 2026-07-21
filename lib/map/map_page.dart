@@ -15,6 +15,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../app_theme.dart';
 import '../models.dart';
 import '../fcm_service.dart';
 import '../owner_alerts.dart';

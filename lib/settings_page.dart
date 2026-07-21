@@ -122,7 +122,7 @@ class SettingsPage extends StatelessWidget {
                   icon: Icons.groups_rounded,
                   label: 'Ομάδες οδηγών',
                   onTap: () => Navigator.of(context).push(MaterialPageRoute(
-                        builder: (_) => const GroupsAdminPage(),
+                        builder: (_) => GroupsAdminPage(uid: uid),
                       ))),
               _divider(c),
               _tile(context, c,
