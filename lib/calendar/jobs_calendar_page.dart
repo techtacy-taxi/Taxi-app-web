@@ -531,7 +531,10 @@ class _JobsCalendarPageState extends State<JobsCalendarPage> {
         Expanded(
           child: OutlinedButton.icon(
             onPressed: () => Navigator.of(context).push(MaterialPageRoute(
-              builder: (_) => const GoogleCalendarPage(),
+              builder: (_) => GoogleCalendarPage(
+                adminUid:  widget.uid,
+                isMaster:  widget.isMaster,
+              ),
             )),
             icon: const Icon(Icons.calendar_month_rounded, size: 18),
             label: const Text('Google Calendar'),

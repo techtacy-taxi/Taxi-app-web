@@ -24,7 +24,16 @@ import 'converted_events_store.dart';
 import 'google_calendar_service.dart';
 
 class GoogleCalendarPage extends StatefulWidget {
-  const GoogleCalendarPage({super.key});
+  final String adminUid;
+  final String adminName;
+  final bool   isMaster;
+
+  const GoogleCalendarPage({
+    super.key,
+    required this.adminUid,
+    this.adminName = '',
+    this.isMaster   = false,
+  });
 
   @override
   State<GoogleCalendarPage> createState() => _GoogleCalendarPageState();
@@ -116,6 +125,10 @@ class _GoogleCalendarPageState extends State<GoogleCalendarPage> {
     // προσυμπληρώνονται κανονικά.
     final created = await Navigator.of(context).push<bool>(MaterialPageRoute(
       builder: (_) => JobFormPage(
+        adminUid:  widget.adminUid,
+        adminName: widget.adminName,
+        isMaster:  widget.isMaster,
+        calendarEventId: e.id,
         prefill: JobPrefill(
           clientName:   parsed.name,
           clientPhone:  parsed.phone,
