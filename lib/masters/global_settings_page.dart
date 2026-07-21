@@ -362,6 +362,9 @@ class _GlobalSettingsPageState extends State<GlobalSettingsPage> {
 
   // ═══ Μεταφέρθηκαν από την παλιά TenantAdminPage (η σελίδα καταργήθηκε) ═══
 
+  String _webhookUrlFor(String tenantId) =>
+      'https://us-central1-my-taxi-app-bbc7c.cloudfunctions.net/vivaWebhook?tenantId=$tenantId';
+
   Future<void> _copyWebhookUrl(String tenantId) async {
     final url = _webhookUrlFor(tenantId);
     await Clipboard.setData(ClipboardData(text: url));
