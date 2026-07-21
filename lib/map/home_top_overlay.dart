@@ -21,6 +21,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
 import '../app_theme.dart';
+import '../voice/messages_recorder_chip.dart';
 import '../jobs/job_model.dart';
 import '../jobs/job_service.dart';
 
@@ -208,6 +209,8 @@ class OwnJobsTodayStats extends StatelessWidget {
 // ─────────────────────────────────────────────────────────────────
 class HomeFloatingChips extends StatelessWidget {
   final String uid;
+  final String displayName;
+  final String lastName;
   final VoidCallback onTapJobs;
   final VoidCallback onTapMessages;
 
@@ -216,6 +219,8 @@ class HomeFloatingChips extends StatelessWidget {
     required this.uid,
     required this.onTapJobs,
     required this.onTapMessages,
+    this.displayName = '',
+    this.lastName    = '',
   });
 
   @override
@@ -259,14 +264,16 @@ class HomeFloatingChips extends StatelessWidget {
               return !readBy.contains(uid) && d.data()['fromUid'] != uid;
             }).length;
 
-            return _chip(context, c,
-                icon: Icons.mic_rounded,
+            return MessagesRecorderChip(
+                fromUid:      uid,
+                fromName:     displayName,
+                fromLastName: lastName,
+                label: unread == 0 ? 'Μηνύματα' : '$unread νέα',
                 // Dark mode: μοβ φωτεινό (0xFF534AB7 χανόταν σε σκούρο φόντο).
                 iconColor: c.isDark
                     ? const Color(0xFFAFA9EC)
                     : const Color(0xFF534AB7),
-                label: unread == 0 ? 'Μηνύματα' : '$unread νέα',
-                onTap: onTapMessages);
+                onTapOpenInbox: onTapMessages);
           },
         ),
       ),

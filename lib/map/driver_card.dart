@@ -8,6 +8,7 @@ import '../models.dart';
 import '../voice/voice_models.dart' show VoiceGroup;
 import '../voice/groups_admin.dart' show GroupBadge;
 import '../jobs/job_shared_widgets.dart';
+import '../app_theme.dart';
 
 // ─── Driver Card (άλλου οδηγού) ──────────────────────────────────────────────
 
@@ -39,83 +40,90 @@ void showDriverCard({
     isScrollControlled: true,
     backgroundColor: Colors.transparent,
     useSafeArea: true,
-    builder: (ctx) => Container(
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-      ),
-      padding: EdgeInsets.fromLTRB(24, 12, 24, 32 + MediaQuery.of(ctx).padding.bottom),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          _handle(),
-          Stack(alignment: Alignment.bottomRight, children: [
-            CircleAvatar(
-              radius: 40,
-              backgroundColor: Colors.amber.shade50,
-              child: Icon(
-                vehicle == VehicleType.van
-                    ? Icons.airport_shuttle_rounded
-                    : Icons.local_taxi_rounded,
-                size: 44, color: Colors.amber.shade700,
+    builder: (ctx) {
+      final c = AppColors.of(ctx);
+      return Container(
+        decoration: BoxDecoration(
+          color:        c.card,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+          border:       Border.all(color: c.cardBorder, width: 0.8),
+        ),
+        // +ύψος Android navigation bar (viewPadding πιάνει και 3-button bars).
+        padding: EdgeInsets.fromLTRB(
+            24, 12, 24, 32 + MediaQuery.of(ctx).viewPadding.bottom),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _handle(),
+            Stack(alignment: Alignment.bottomRight, children: [
+              CircleAvatar(
+                radius: 40,
+                backgroundColor: c.amberSoft,
+                child: Icon(
+                  vehicle == VehicleType.van
+                      ? Icons.airport_shuttle_rounded
+                      : Icons.local_taxi_rounded,
+                  size: 44, color: c.amberDeep,
+                ),
               ),
-            ),
-            _statusDot(sc),
-          ]),
-          const SizedBox(height: 12),
-          Text(fullName.isEmpty ? 'Άγνωστος οδηγός' : fullName,
-              style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Color(0xFF1A1A1A)),
-              textAlign: TextAlign.center),
-          const SizedBox(height: 4),
-          Text(vehicleModel, style: TextStyle(color: Colors.grey[600], fontSize: 14)),
-          const SizedBox(height: 4),
-          Wrap(
-            alignment: WrapAlignment.center,
-            spacing: 6, runSpacing: 4,
-            children: [
-              _vehicleBadge(vehicle),
-              ...driverGroups.map((g) => GroupBadge(name: g.name, color: g.color)),
-            ],
-          ),
-          const SizedBox(height: 12),
-          _statusChip(sc, statusLabel),
-          if (driverMuted) ...[
-            const SizedBox(height: 8),
-            _muteBadge(),
-          ],
-          const SizedBox(height: 16),
-          Divider(color: Colors.grey[200], height: 1),
-          const SizedBox(height: 16),
-          _infoRow(Icons.update_rounded,          'Τελ. ενημέρωση',   lastSeen),
-          const SizedBox(height: 10),
-          _infoRow(Icons.smartphone_rounded,      'Έκδοση εφαρμογής', 'v$driverVer'),
-          if (phone.isNotEmpty) ...[
-            const SizedBox(height: 10),
-            _infoRow(Icons.phone_rounded,         'Τηλέφωνο',         phone),
-          ],
-          if (plateNumber.isNotEmpty) ...[
-            const SizedBox(height: 10),
-            _infoRow(Icons.directions_car_rounded, 'Πινακίδα',         plateNumber),
-          ],
-          const SizedBox(height: 20),
-          if (phone.isNotEmpty)
-            Row(children: [
-              Expanded(child: _actionButton(
-                icon: Icons.phone_rounded, label: 'Κλήση',
-                color: const Color(0xFF1E8E3E),
-                onTap: () => _launch('tel:$phone'),
-              )),
-              const SizedBox(width: 12),
-              Expanded(child: _actionButton(
-                iconOverride: const FaIcon(FontAwesomeIcons.whatsapp, color: Colors.white, size: 20),
-                label: 'WhatsApp',
-                color: const Color(0xFF25D366),
-                onTap: () => _launch('https://wa.me/$waPhone'),
-              )),
+              _statusDot(sc, c),
             ]),
-        ],
-      ),
-    ),
+            const SizedBox(height: 12),
+            Text(fullName.isEmpty ? 'Άγνωστος οδηγός' : fullName,
+                style: TextStyle(
+                    fontSize: 22, fontWeight: FontWeight.bold, color: c.textMain),
+                textAlign: TextAlign.center),
+            const SizedBox(height: 4),
+            Text(vehicleModel, style: TextStyle(color: c.textFaint, fontSize: 14)),
+            const SizedBox(height: 4),
+            Wrap(
+              alignment: WrapAlignment.center,
+              spacing: 6, runSpacing: 4,
+              children: [
+                _vehicleBadge(vehicle, c),
+                ...driverGroups.map((g) => GroupBadge(name: g.name, color: g.color)),
+              ],
+            ),
+            const SizedBox(height: 12),
+            _statusChip(sc, statusLabel),
+            if (driverMuted) ...[
+              const SizedBox(height: 8),
+              _muteBadge(c),
+            ],
+            const SizedBox(height: 16),
+            Divider(color: c.divider, height: 1),
+            const SizedBox(height: 16),
+            _infoRow(c, Icons.update_rounded,          'Τελ. ενημέρωση',   lastSeen),
+            const SizedBox(height: 10),
+            _infoRow(c, Icons.smartphone_rounded,      'Έκδοση εφαρμογής', 'v$driverVer'),
+            if (phone.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              _infoRow(c, Icons.phone_rounded,         'Τηλέφωνο',         phone),
+            ],
+            if (plateNumber.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              _infoRow(c, Icons.directions_car_rounded, 'Πινακίδα',         plateNumber),
+            ],
+            const SizedBox(height: 20),
+            if (phone.isNotEmpty)
+              Row(children: [
+                Expanded(child: _actionButton(
+                  icon: Icons.phone_rounded, label: 'Κλήση',
+                  color: const Color(0xFF1E8E3E),
+                  onTap: () => _launch('tel:$phone'),
+                )),
+                const SizedBox(width: 12),
+                Expanded(child: _actionButton(
+                  iconOverride: const FaIcon(FontAwesomeIcons.whatsapp, color: Colors.white, size: 20),
+                  label: 'WhatsApp',
+                  color: const Color(0xFF25D366),
+                  onTap: () => _launch('https://wa.me/$waPhone'),
+                )),
+              ]),
+          ],
+        ),
+      );
+    },
   );
 }
 
@@ -146,74 +154,80 @@ void showMyCard({
     isScrollControlled: true,
     backgroundColor: Colors.transparent,
     useSafeArea: true,
-    builder: (ctx) => Container(
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-      ),
-      padding: EdgeInsets.fromLTRB(24, 12, 24, 32 + MediaQuery.of(ctx).padding.bottom),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          _handle(),
-          Stack(alignment: Alignment.bottomRight, children: [
-            CircleAvatar(
-              radius: 40,
-              backgroundColor: Colors.amber.shade50,
-              child: Icon(
-                vehicleType == VehicleType.van
-                    ? Icons.airport_shuttle_rounded
-                    : Icons.local_taxi_rounded,
-                size: 44, color: Colors.amber.shade700,
+    builder: (ctx) {
+      final c = AppColors.of(ctx);
+      return Container(
+        decoration: BoxDecoration(
+          color:        c.card,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+          border:       Border.all(color: c.cardBorder, width: 0.8),
+        ),
+        padding: EdgeInsets.fromLTRB(
+            24, 12, 24, 32 + MediaQuery.of(ctx).viewPadding.bottom),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _handle(),
+            Stack(alignment: Alignment.bottomRight, children: [
+              CircleAvatar(
+                radius: 40,
+                backgroundColor: c.amberSoft,
+                child: Icon(
+                  vehicleType == VehicleType.van
+                      ? Icons.airport_shuttle_rounded
+                      : Icons.local_taxi_rounded,
+                  size: 44, color: c.amberDeep,
+                ),
+              ),
+              _statusDot(statusColor(online: isOnline, available: isAvailable), c),
+            ]),
+            const SizedBox(height: 12),
+            Text('$displayName $lastName'.trim(),
+                style: TextStyle(
+                    fontSize: 22, fontWeight: FontWeight.bold, color: c.textMain),
+                textAlign: TextAlign.center),
+            const SizedBox(height: 4),
+            Text(vehicleModel.isNotEmpty ? vehicleModel : 'Άγνωστο μοντέλο',
+                style: TextStyle(color: c.textFaint, fontSize: 14)),
+            const SizedBox(height: 4),
+            Wrap(
+              alignment: WrapAlignment.center,
+              spacing: 6, runSpacing: 4,
+              children: [
+                _vehicleBadge(vehicleType, c),
+                ...myGroups.map((g) => GroupBadge(name: g.name, color: g.color)),
+              ],
+            ),
+            if (isMuted) ...[
+              const SizedBox(height: 8),
+              _muteBadge(c),
+            ],
+            const SizedBox(height: 20),
+            Divider(color: c.divider, height: 1),
+            const SizedBox(height: 16),
+            _infoRow(c, Icons.smartphone_rounded,      'Έκδοση εφαρμογής', 'v$appVersion'),
+            if (phone.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              _infoRow(c, Icons.phone_rounded,         'Τηλέφωνο',         phone),
+            ],
+            if (plateNumber.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              _infoRow(c, Icons.directions_car_rounded, 'Πινακίδα',         plateNumber),
+            ],
+            const SizedBox(height: 20),
+            SizedBox(
+              width: double.infinity,
+              child: _actionButton(
+                icon:  Icons.system_update_alt_rounded,
+                label: 'Έλεγχος για ενημέρωση',
+                color: c.amberDeep,
+                onTap: () => _launch(updateUrl),
               ),
             ),
-            _statusDot(statusColor(online: isOnline, available: isAvailable)),
-          ]),
-          const SizedBox(height: 12),
-          Text('$displayName $lastName'.trim(),
-              style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Color(0xFF1A1A1A)),
-              textAlign: TextAlign.center),
-          const SizedBox(height: 4),
-          Text(vehicleModel.isNotEmpty ? vehicleModel : 'Άγνωστο μοντέλο',
-              style: TextStyle(color: Colors.grey[600], fontSize: 14)),
-          const SizedBox(height: 4),
-          Wrap(
-            alignment: WrapAlignment.center,
-            spacing: 6, runSpacing: 4,
-            children: [
-              _vehicleBadge(vehicleType),
-              ...myGroups.map((g) => GroupBadge(name: g.name, color: g.color)),
-            ],
-          ),
-          if (isMuted) ...[
-            const SizedBox(height: 8),
-            _muteBadge(),
           ],
-          const SizedBox(height: 20),
-          Divider(color: Colors.grey[200], height: 1),
-          const SizedBox(height: 16),
-          _infoRow(Icons.smartphone_rounded,      'Έκδοση εφαρμογής', 'v$appVersion'),
-          if (phone.isNotEmpty) ...[
-            const SizedBox(height: 10),
-            _infoRow(Icons.phone_rounded,         'Τηλέφωνο',         phone),
-          ],
-          if (plateNumber.isNotEmpty) ...[
-            const SizedBox(height: 10),
-            _infoRow(Icons.directions_car_rounded, 'Πινακίδα',         plateNumber),
-          ],
-          const SizedBox(height: 20),
-          SizedBox(
-            width: double.infinity,
-            child: _actionButton(
-              icon:  Icons.system_update_alt_rounded,
-              label: 'Έλεγχος για ενημέρωση',
-              color: Colors.amber.shade700,
-              onTap: () => _launch(updateUrl),
-            ),
-          ),
-        ],
-      ),
-    ),
+        ),
+      );
+    },
   );
 }
 
@@ -236,25 +250,27 @@ Future<void> _launch(String url) async {
 
 Widget _handle() => const SheetHandle(bottomMargin: 20);
 
-Widget _statusDot(Color sc) => Container(
+Widget _statusDot(Color sc, AppColors c) => Container(
   width: 18, height: 18,
   decoration: BoxDecoration(
     color: sc, shape: BoxShape.circle,
-    border: Border.all(color: Colors.white, width: 2),
+    border: Border.all(color: c.card, width: 2),
   ),
 );
 
-Widget _vehicleBadge(VehicleType v) => Container(
+Widget _vehicleBadge(VehicleType v, AppColors c) => Container(
   padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
   decoration: BoxDecoration(
-    color:        Colors.amber.shade50,
+    color:        c.amberSoft,
     borderRadius: BorderRadius.circular(20),
-    border:       Border.all(color: Colors.amber.shade200),
+    border:       Border.all(color: c.amber.withValues(alpha: 0.4)),
   ),
   child: Text(v.name.toUpperCase(),
-      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.amber.shade800)),
+      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: c.amberDeep)),
 );
 
+// Σταθερά χρώματα σε ΟΛΑ τα modes (πράσινο/κόκκινο/γκρι = κατάσταση, όχι
+// θέμα) — δεν χρειάζονται AppColors.
 Widget _statusChip(Color sc, String label) => Container(
   padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
   decoration: BoxDecoration(color: sc.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(20)),
@@ -265,30 +281,30 @@ Widget _statusChip(Color sc, String label) => Container(
   ]),
 );
 
-Widget _muteBadge() => Container(
+Widget _muteBadge(AppColors c) => Container(
   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
   decoration: BoxDecoration(
-    color:        Colors.grey.shade100,
+    color:        c.scaffold,
     borderRadius: BorderRadius.circular(20),
-    border:       Border.all(color: Colors.grey.shade300),
+    border:       Border.all(color: c.cardBorder),
   ),
   child: Row(mainAxisSize: MainAxisSize.min, children: [
-    Icon(Icons.volume_off_rounded, size: 14, color: Colors.grey[600]),
+    Icon(Icons.volume_off_rounded, size: 14, color: c.textFaint),
     const SizedBox(width: 6),
-    Text('Σίγαση ενεργή', style: TextStyle(fontSize: 12, color: Colors.grey[600])),
+    Text('Σίγαση ενεργή', style: TextStyle(fontSize: 12, color: c.textFaint)),
   ]),
 );
 
-Widget _infoRow(IconData icon, String label, String value) => Row(children: [
+Widget _infoRow(AppColors c, IconData icon, String label, String value) => Row(children: [
   Container(
     width: 36, height: 36,
-    decoration: BoxDecoration(color: Colors.grey[100], borderRadius: BorderRadius.circular(10)),
-    child: Icon(icon, size: 18, color: Colors.grey[600]),
+    decoration: BoxDecoration(color: c.scaffold, borderRadius: BorderRadius.circular(10)),
+    child: Icon(icon, size: 18, color: c.textFaint),
   ),
   const SizedBox(width: 12),
   Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-    Text(label, style: TextStyle(fontSize: 11, color: Colors.grey[500])),
-    Text(value,  style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
+    Text(label, style: TextStyle(fontSize: 11, color: c.textFaint)),
+    Text(value,  style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: c.textMain)),
   ]),
 ]);
 

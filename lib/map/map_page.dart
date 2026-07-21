@@ -115,6 +115,7 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
   MarkerAsset?          _myAsset;
   GoogleMapController?  _mapController;
   bool                   _pendingAutoCenter = false; // κεντράρισε μόλις έρθει η πρώτη θέση
+  bool                   _mapIsDark         = false; // τρέχον εφαρμοσμένο στυλ χάρτη
   Position?             _currentPosition;
   StreamSubscription<Position>?                            _positionSub;
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _othersSub;
@@ -147,6 +148,11 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    // Το «Αυτόματο» του χάρτη ακολουθεί το ΓΕΝΙΚΟ θέμα εφαρμογής (όχι το
+    // system brightness) — γι' αυτό ακούμε ΚΑΙ τους δύο controllers: όποιος
+    // αλλάξει, ξαναεφαρμόζουμε το σωστό στυλ ΑΜΕΣΩΣ, χωρίς restart.
+    ThemeController.mode.addListener(_applyMapStyle);
+    MapThemeController.mode.addListener(_applyMapStyle);
     _initPage();
   }
 
@@ -351,6 +357,8 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    ThemeController.mode.removeListener(_applyMapStyle);
+    MapThemeController.mode.removeListener(_applyMapStyle);
     _positionSub?.cancel();
     _othersSub?.cancel();
     _groupsSub?.cancel();
@@ -462,6 +470,44 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
     _maybeAutoCenter();
     if (!mounted) return;
     setState(() {});
+  }
+
+  // Αποφασίζει αν ο χάρτης πρέπει να είναι σκούρος ΤΩΡΑ:
+  //  • Φωτεινό/Σκούρο (χειροκίνητο στου χάρτη) → ό,τι διάλεξες.
+  //  • Αυτόματο (του χάρτη) → ακολουθεί το ΓΕΝΙΚΟ θέμα εφαρμογής
+  //    (ThemeController) — π.χ. σκούρα εφαρμογή ⇒ σκούρος χάρτης,
+  //    ανοιχτόχρωμη εφαρμογή ⇒ ανοιχτόχρωμος χάρτης. Αν ΚΙ αυτό είναι σε
+  //    "Αυτόματο", πέφτουμε τελικά στο system brightness της συσκευής.
+  bool _shouldMapBeDark(BuildContext context) {
+    switch (MapThemeController.mode.value) {
+      case ThemeMode.light:
+        return false;
+      case ThemeMode.dark:
+        return true;
+      case ThemeMode.system:
+        switch (ThemeController.mode.value) {
+          case ThemeMode.light:
+            return false;
+          case ThemeMode.dark:
+            return true;
+          case ThemeMode.system:
+            return MediaQuery.platformBrightnessOf(context) == Brightness.dark;
+        }
+    }
+  }
+
+  // Εφαρμόζει (ή ξαναεφαρμόζει) το σωστό στυλ χάρτη ΤΩΡΑ — καλείται στη
+  // δημιουργία ΚΑΙ ζωντανά κάθε φορά που αλλάζει το θέμα εφαρμογής ή το
+  // θέμα χάρτη από τις Ρυθμίσεις, ώστε να ΜΗΝ χρειάζεται restart.
+  Future<void> _applyMapStyle() async {
+    final map = _mapController;
+    if (map == null || !mounted) return;
+    final wantDark = _shouldMapBeDark(context);
+    if (wantDark == _mapIsDark) return; // ήδη σωστό — τίποτα να κάνουμε
+    _mapIsDark = wantDark;
+    // null στο setMapStyle επαναφέρει το ΠΡΟΕΠΙΛΕΓΜΕΝΟ (ανοιχτόχρωμο) στυλ
+    // της Google — γι' αυτό δεν γινόταν ποτέ άσπρος μόνο με το dark JSON.
+    await map.setMapStyle(wantDark ? _darkMapStyle : null);
   }
 
   // Κεντράρισμα στη θέση σου με ζουμ, ΜΙΑ φορά — μόλις έρθει η πρώτη θέση
@@ -611,7 +657,7 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
         : _displayName;
     final asset = await buildMarkerAsset(
       name:        myMarkerName,
-      type:        _vehicleType,
+      type:        _vehicleForMenu, // δείχνει Λεωφορείο στον χάρτη αν hasBus
       color:       statusColor(online: _isOnline, available: _isAvailable),
       currentZoom: _currentZoom,
       groupColors: myGroups.map((g) => g.color).toList(),
@@ -697,23 +743,38 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
 
   // ─── profile ──────────────────────────────────────────────────────────────────
 
+  // Το μενού δείχνει 3 ισότιμες επιλογές (Ταξί/Van/Λεωφορείο), αλλά το
+  // backend/data model εξακολουθεί να ξέρει μόνο taxi/van + hasBus flag —
+  // ΚΑΜΙΑ αλλαγή στη δρομολόγηση δουλειών (functions/index.js). Το «τρέχον»
+  // που δείχνουμε στο μενού είναι bus ΜΟΝΟ αν hasBus == true, ώστε το
+  // check-mark να δείχνει σωστά ποιο είναι ήδη επιλεγμένο.
+  VehicleType get _vehicleForMenu =>
+      _hasBus ? VehicleType.bus : _vehicleType;
+
   Future<void> _openVehiclePicker(BuildContext outerContext) async {
     final result = await showVehicleTypeMenu(
-      context: outerContext, itemCtx: outerContext, currentType: _vehicleType,
-      hasBus: _hasBus,
-      onToggleBus: () async {
-        _hasBus = !_hasBus;
-        if (_uid != null) {
-          await FirebaseFirestore.instance
-              .collection('presence').doc(_uid)
-              .set({'hasBus': _hasBus}, SetOptions(merge: true));
-        }
-        if (mounted) setState(() {});
-      },
+      context: outerContext, itemCtx: outerContext,
+      currentType: _vehicleForMenu,
     );
-    if (result != null && result != _vehicleType) {
-      _vehicleType = result;
+    if (result == null) return;
+
+    final wantsBus = result == VehicleType.bus;
+    // Όταν διαλέγει Λεωφορείο, το πραγματικό vehicleType παραμένει Van
+    // (χωρητικότητα/συμβατότητα ίδια με πριν) — μόνο το hasBus αλλάζει.
+    final newVehicleType = wantsBus ? VehicleType.van : result;
+
+    if (newVehicleType != _vehicleType || wantsBus != _hasBus) {
+      _vehicleType = newVehicleType;
+      _hasBus = wantsBus;
       await _saveSettings();
+      if (_uid != null) {
+        await FirebaseFirestore.instance
+            .collection('presence').doc(_uid)
+            .set({
+          'vehicleType': _vehicleType.name,
+          'hasBus': _hasBus,
+        }, SetOptions(merge: true));
+      }
       await _refreshVehicleIcon();
       await _publishMyLocation(force: true);
       if (mounted) setState(() {});
@@ -1089,10 +1150,7 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
           myLocationEnabled:       false,
           onMapCreated: (c) async {
             _mapController = c;
-            // Σκούρος χάρτης όταν το θέμα (auto ή χειροκίνητο) είναι dark.
-            if (MapThemeController.isDarkNow(context)) {
-              await c.setMapStyle(_darkMapStyle);
-            }
+            await _applyMapStyle(); // πρώτη εφαρμογή στυλ (dark/light)
             final z = await c.getZoomLevel();
             if (!mounted) return;
             _currentZoom = z;
@@ -1192,6 +1250,8 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
               const SizedBox(height: 10),
               HomeFloatingChips(
                 uid: _uid ?? '',
+                displayName: _displayName,
+                lastName:    _lastName,
                 // Χωρίς το παλιό συρτάρι: το chip «Δουλειές» ανοίγει το
                 // Ημερολόγιο στη ΣΗΜΕΡΙΝΗ μέρα — βλέπεις τις σημερινές στο
                 // συρτάρι του και τις υπόλοιπες στον μήνα.

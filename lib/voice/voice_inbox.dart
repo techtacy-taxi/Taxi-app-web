@@ -10,6 +10,7 @@ import 'voice_models.dart';
 import 'voice_recorder.dart';
 import 'voice_service.dart';
 import '../jobs/job_shared_widgets.dart';
+import '../app_theme.dart';
 
 /// Ανοίγει το ίδιο inbox sheet απευθείας (π.χ. από το chip «Μηνύματα» στην
 /// κύρια οθόνη) — χωρίς να χρειάζεται το FAB widget στο ίδιο σημείο.
@@ -66,27 +67,30 @@ class _VoiceInboxButtonState extends State<VoiceInboxButton> {
         return Stack(
           clipBehavior: Clip.none,
           children: [
-            FloatingActionButton(
-              heroTag:         'voice_inbox',
-              onPressed:       () => _openInbox(context, messages),
-              backgroundColor: Colors.amber, // <-- ΝΕΟ: Κίτρινο φόντο
-              child: Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  const Icon(Icons.folder_rounded, color: Colors.white, size: 26), // <-- ΝΕΟ: Άσπρο εικονίδιο
-                  Positioned(
-                    bottom: -2, right: -4,
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        shape: BoxShape.circle,
+            Builder(builder: (context) {
+              final c = AppColors.of(context);
+              return FloatingActionButton(
+                heroTag:         'voice_inbox',
+                onPressed:       () => _openInbox(context, messages),
+                backgroundColor: c.amber,
+                child: Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    Icon(Icons.folder_rounded, color: c.onAmber, size: 26),
+                    Positioned(
+                      bottom: -2, right: -4,
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: c.onAmber,
+                          shape: BoxShape.circle,
+                        ),
+                        child: Icon(Icons.sync_rounded, color: c.amber, size: 14),
                       ),
-                      child: const Icon(Icons.sync_rounded, color: Colors.amber, size: 14),
                     ),
-                  ),
-                ],
-              ),
-            ),
+                  ],
+                ),
+              );
+            }),
             if (unread > 0)
               Positioned(
                 top:   -4,
@@ -161,9 +165,12 @@ class _InboxSheetState extends State<_InboxSheet>
 
   @override
   Widget build(BuildContext context) {
-    final bottomPad = MediaQuery.of(context).padding.bottom;
+    final c = AppColors.of(context);
+    // Ύψος Android navigation bar — να μη σκεπάζει ΠΟΤΕ το τελευταίο
+    // μήνυμα της λίστας (viewPadding πιάνει και τα 3-button nav bars).
+    final bottomPad = MediaQuery.of(context).viewPadding.bottom;
 
-    // Εισερχόμενα — μηνύματα που έστειλαν ΑΛΛΟΙ σε εμένα (max 10)
+    // Εισερχόμενα — μηνύματα που έστειλαν ΑΛΛΟΙ σε εμένα (max 20)
     final inbox = widget.messages
         .where((m) => m.fromUid != widget.uid)
         .take(20)
@@ -178,9 +185,10 @@ class _InboxSheetState extends State<_InboxSheet>
     final unreadCount = inbox.where((m) => m.isUnread(widget.uid)).length;
 
     return Container(
-      decoration: const BoxDecoration(
-        color:        Colors.white,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      decoration: BoxDecoration(
+        color:        c.card,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+        border:       Border.all(color: c.cardBorder, width: 0.8),
       ),
       padding: EdgeInsets.fromLTRB(0, 12, 0, bottomPad + 20),
       constraints: BoxConstraints(
@@ -189,7 +197,6 @@ class _InboxSheetState extends State<_InboxSheet>
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // Handle
           const SheetHandle(bottomMargin: 12),
 
           // Header: τίτλος + «Νέο μήνυμα» (εγγραφή) — έτσι η εγγραφή μένει
@@ -198,8 +205,10 @@ class _InboxSheetState extends State<_InboxSheet>
           Padding(
             padding: const EdgeInsets.fromLTRB(20, 0, 16, 12),
             child: Row(children: [
-              const Text('Μηνύματα',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+              Text('Μηνύματα',
+                  style: TextStyle(
+                      fontSize: 16, fontWeight: FontWeight.w600,
+                      color: c.textMain)),
               const Spacer(),
               _NewMessageButton(
                 uid: widget.uid,
@@ -214,19 +223,19 @@ class _InboxSheetState extends State<_InboxSheet>
             padding: const EdgeInsets.symmetric(horizontal: 20),
             child: Container(
               decoration: BoxDecoration(
-                color:        Colors.grey[100],
+                color:        c.scaffold,
                 borderRadius: BorderRadius.circular(12),
               ),
               child: TabBar(
                 controller:          _tabController,
                 indicator:           BoxDecoration(
-                  color:        Colors.amber,
+                  color:        c.amber,
                   borderRadius: BorderRadius.circular(10),
                 ),
                 indicatorSize:       TabBarIndicatorSize.tab,
                 dividerColor:        Colors.transparent,
-                labelColor:          Colors.white,
-                unselectedLabelColor: Colors.grey[600],
+                labelColor:          c.onAmber,
+                unselectedLabelColor: c.textFaint,
                 labelStyle: const TextStyle(
                     fontWeight: FontWeight.w600, fontSize: 14),
                 tabs: [
@@ -242,9 +251,9 @@ class _InboxSheetState extends State<_InboxSheet>
                           Container(
                             padding: const EdgeInsets.symmetric(
                                 horizontal: 6, vertical: 2),
-                            decoration: BoxDecoration(
-                              color:        Colors.red,
-                              borderRadius: BorderRadius.circular(10),
+                            decoration: const BoxDecoration(
+                              color:        Color(0xFFE24B4A),
+                              borderRadius: BorderRadius.all(Radius.circular(10)),
                             ),
                             child: Text(
                               '$unreadCount',
@@ -274,7 +283,7 @@ class _InboxSheetState extends State<_InboxSheet>
           ),
 
           const SizedBox(height: 8),
-          Divider(color: Colors.grey[200], height: 1),
+          Divider(color: c.divider, height: 1),
 
           // Content
           Flexible(
@@ -283,15 +292,14 @@ class _InboxSheetState extends State<_InboxSheet>
               children: [
                 // ── Εισερχόμενα ──────────────────────────────────────────
                 inbox.isEmpty
-                    ? const _EmptyState(
+                    ? _EmptyState(
                   icon:  Icons.move_to_inbox_rounded,
                   label: 'Δεν υπάρχουν εισερχόμενα',
                 )
                     : ListView.separated(
                   shrinkWrap:       true,
                   itemCount:        inbox.length,
-                  separatorBuilder: (_, _) =>
-                      Divider(color: Colors.grey[100], height: 1),
+                  separatorBuilder: (_, _) => Divider(color: c.divider, height: 1),
                   itemBuilder: (ctx, i) => _MessageTile(
                     message:  inbox[i],
                     uid:      widget.uid,
@@ -301,15 +309,14 @@ class _InboxSheetState extends State<_InboxSheet>
 
                 // ── Εξερχόμενα ───────────────────────────────────────────
                 outbox.isEmpty
-                    ? const _EmptyState(
+                    ? _EmptyState(
                   icon:  Icons.send_rounded,
                   label: 'Δεν υπάρχουν εξερχόμενα',
                 )
                     : ListView.separated(
                   shrinkWrap:       true,
                   itemCount:        outbox.length,
-                  separatorBuilder: (_, _) =>
-                      Divider(color: Colors.grey[100], height: 1),
+                  separatorBuilder: (_, _) => Divider(color: c.divider, height: 1),
                   itemBuilder: (ctx, i) => _MessageTile(
                     message:  outbox[i],
                     uid:      widget.uid,
@@ -444,6 +451,8 @@ class _MessageTileState extends State<_MessageTile> {
     final msg      = widget.message;
     final isUnread = !widget.isOutbox && msg.isUnread(widget.uid);
 
+    final c = AppColors.of(context);
+
     // Εισερχόμενα: αποστολέας | Εξερχόμενα: παραλήπτης
     final displayName = widget.isOutbox
         ? '→ ${msg.toLabel}'
@@ -453,16 +462,11 @@ class _MessageTileState extends State<_MessageTile> {
         ? msg.toLabel[0].toUpperCase()
         : (msg.fromName.isNotEmpty ? msg.fromName[0].toUpperCase() : '?');
 
-    final avatarBg = widget.isOutbox
-        ? Colors.blue.shade100
-        : Colors.amber.shade100;
-
-    final avatarFg = widget.isOutbox
-        ? Colors.blue.shade700
-        : Colors.amber.shade700;
+    final avatarBg = widget.isOutbox ? c.blueSoft  : c.amberSoft;
+    final avatarFg = widget.isOutbox ? c.blueDeep  : c.amberDeep;
 
     return Container(
-      color: isUnread ? Colors.amber.shade50 : Colors.transparent,
+      color: isUnread ? c.amberSoft.withValues(alpha: 0.5) : Colors.transparent,
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       child: Row(
         children: [
@@ -484,7 +488,8 @@ class _MessageTileState extends State<_MessageTile> {
                       fontWeight: isUnread
                           ? FontWeight.bold
                           : FontWeight.w500,
-                      fontSize: 14),
+                      fontSize: 14,
+                      color: c.textMain),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
@@ -493,9 +498,9 @@ class _MessageTileState extends State<_MessageTile> {
                   borderRadius: BorderRadius.circular(4),
                   child: LinearProgressIndicator(
                     value:           _progress,
-                    backgroundColor: Colors.grey[200],
+                    backgroundColor: c.divider,
                     valueColor:      AlwaysStoppedAnimation<Color>(
-                        _isPlaying ? Colors.amber : Colors.grey.shade400),
+                        _isPlaying ? c.amber : c.textFaint),
                     minHeight: 3,
                   ),
                 ),
@@ -503,12 +508,10 @@ class _MessageTileState extends State<_MessageTile> {
                 Row(
                   children: [
                     Text(_formatDuration(msg.duration),
-                        style: TextStyle(
-                            fontSize: 11, color: Colors.grey[500])),
+                        style: TextStyle(fontSize: 11, color: c.textFaint)),
                     const Spacer(),
                     Text(_formatTime(msg.timestamp),
-                        style: TextStyle(
-                            fontSize: 11, color: Colors.grey[400])),
+                        style: TextStyle(fontSize: 11, color: c.textFaint)),
                   ],
                 ),
               ],
@@ -516,12 +519,11 @@ class _MessageTileState extends State<_MessageTile> {
           ),
           const SizedBox(width: 12),
           _isLoading
-              ? const SizedBox(
+              ? SizedBox(
             width: 40, height: 40,
             child: Padding(
-              padding: EdgeInsets.all(10),
-              child: CircularProgressIndicator(
-                  strokeWidth: 2, color: Colors.amber),
+              padding: const EdgeInsets.all(10),
+              child: CircularProgressIndicator(strokeWidth: 2, color: c.amber),
             ),
           )
               : GestureDetector(
@@ -529,14 +531,14 @@ class _MessageTileState extends State<_MessageTile> {
             child: Container(
               width: 40, height: 40,
               decoration: BoxDecoration(
-                color:  _isPlaying ? Colors.amber : Colors.amber.shade100,
+                color:  _isPlaying ? c.amber : c.amberSoft,
                 shape: BoxShape.circle,
               ),
               child: Icon(
                 _isPlaying
                     ? Icons.pause_rounded
                     : Icons.play_arrow_rounded,
-                color: _isPlaying ? Colors.white : Colors.amber.shade700,
+                color: _isPlaying ? c.onAmber : c.amberDeep,
                 size:  22,
               ),
             ),
@@ -557,15 +559,15 @@ class _EmptyState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = AppColors.of(context);
     return Padding(
       padding: const EdgeInsets.all(40),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 64, color: Colors.grey[300]),
+          Icon(icon, size: 64, color: c.textFaint.withValues(alpha: 0.5)),
           const SizedBox(height: 16),
-          Text(label,
-              style: TextStyle(color: Colors.grey[400], fontSize: 16)),
+          Text(label, style: TextStyle(color: c.textFaint, fontSize: 16)),
         ],
       ),
     );
@@ -592,36 +594,43 @@ class _NewMessageButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = AppColors.of(context);
     return TextButton.icon(
       onPressed: () => showModalBottomSheet(
         context: context,
         backgroundColor: Colors.transparent,
-        builder: (_) => Padding(
-          padding: const EdgeInsets.all(24),
-          child: Container(
+        builder: (sheetCtx) {
+          final c2 = AppColors.of(sheetCtx);
+          return Padding(
             padding: const EdgeInsets.all(24),
-            decoration: const BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.all(Radius.circular(24)),
+            child: Container(
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                color:        c2.card,
+                borderRadius: const BorderRadius.all(Radius.circular(24)),
+                border:       Border.all(color: c2.cardBorder, width: 0.8),
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Text('Νέο μήνυμα φωνής',
+                      style: TextStyle(
+                          fontSize: 15, fontWeight: FontWeight.w600,
+                          color: c2.textMain)),
+                  const SizedBox(height: 16),
+                  // Χρησιμοποιεί το ΙΔΙΟ VoiceRecorderButton — δεν αγγίζουμε
+                  // καθόλου τη λογική εγγραφής/αποστολής/recipient picker.
+                  _VoiceRecorderInline(uid: uid, displayName: displayName, lastName: lastName),
+                ],
+              ),
             ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                const Text('Νέο μήνυμα φωνής',
-                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
-                const SizedBox(height: 16),
-                // Χρησιμοποιεί το ΙΔΙΟ VoiceRecorderButton — δεν αγγίζουμε
-                // καθόλου τη λογική εγγραφής/αποστολής/recipient picker.
-                _VoiceRecorderInline(uid: uid, displayName: displayName, lastName: lastName),
-              ],
-            ),
-          ),
-        ),
+          );
+        },
       ),
-      icon: const Icon(Icons.mic_none_rounded, size: 18, color: Colors.amber),
-      label: const Text('Νέο μήνυμα',
-          style: TextStyle(color: Colors.amber, fontWeight: FontWeight.w600)),
+      icon: Icon(Icons.mic_none_rounded, size: 18, color: c.amberDeep),
+      label: Text('Νέο μήνυμα',
+          style: TextStyle(color: c.amberDeep, fontWeight: FontWeight.w600)),
     );
   }
 }

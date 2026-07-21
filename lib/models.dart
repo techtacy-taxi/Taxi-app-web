@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 
 // ─── Vehicle type ─────────────────────────────────────────────────────────────
-enum VehicleType { taxi, van }
+enum VehicleType { taxi, van, bus }
 
 // ─── Menu actions ─────────────────────────────────────────────────────────────
 enum MenuAction { editName, jobs, taxi, van, groups, mute, checkUpdate, broadcastUpdate, billing, masters, calendar, pricingZones, tenants, vivaSettings }

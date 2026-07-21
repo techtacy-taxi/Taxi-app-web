@@ -96,6 +96,12 @@ Future<void> showProfileForm({
           fsVehicle = VehicleType.van;
         }
         fsHasBus          = data['hasBus'] == true;
+        // Το «Λεωφορείο» είναι πλέον 3η ΙΣΟΤΙΜΗ επιλογή στο UI (Ταξί/Van/
+        // Λεωφορείο — επιλέγεις ένα). Στο backend/data model ΔΕΝ αλλάζει
+        // τίποτα: εξακολουθεί να αποθηκεύεται σαν vehicleType taxi/van +
+        // hasBus=true, ώστε η δρομολόγηση δουλειών (functions/index.js) να
+        // συνεχίσει να δουλεύει ακριβώς όπως πριν, χωρίς καμία αλλαγή εκεί.
+        if (fsHasBus) fsVehicle = VehicleType.bus;
         fsHomeOwner       = data['homeOwner'] == true;
         fsOwnerClientId   = data['ownerOfClientId'] as String?;
         fsOwnerClientName = data['ownerOfClientName'] as String?;
@@ -428,54 +434,23 @@ Future<void> showProfileForm({
                               label: 'Βαν',
                             ),
                             const SizedBox(width: 8),
-                            // Λεωφορείο = ΕΠΙΠΛΕΟΝ ικανότητα (hasBus) — όχι
-                            // αντικατάσταση Ταξί/Βαν. Multi-select στυλ.
-                            Expanded(
-                              child: InkWell(
-                                borderRadius: BorderRadius.circular(14),
-                                onTap: () => setDialogState(
-                                    () => hasBus = !hasBus),
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(
-                                      vertical: 10),
-                                  decoration: BoxDecoration(
-                                    color: hasBus ? c.bluePale : c.card,
-                                    borderRadius:
-                                        BorderRadius.circular(14),
-                                    border: Border.all(
-                                      color: hasBus ? c.blue : c.cardBorder,
-                                      width: hasBus ? 2 : 0.8,
-                                    ),
-                                  ),
-                                  child: Column(children: [
-                                    Icon(Icons.directions_bus_rounded,
-                                        size: 22,
-                                        color: hasBus
-                                            ? (c.isDark
-                                                ? const Color(0xFF7FB3E8)
-                                                : const Color(0xFF0C447C))
-                                            : c.textFaint),
-                                    const SizedBox(height: 3),
-                                    Text('Λεωφορείο',
-                                        style: TextStyle(
-                                            fontSize: 12,
-                                            fontWeight: hasBus
-                                                ? FontWeight.w600
-                                                : FontWeight.w500,
-                                            color: hasBus
-                                                ? c.blueDeep
-                                                : c.textFaint)),
-                                  ]),
-                                ),
-                              ),
+                            // Λεωφορείο: ΙΣΟΤΙΜΗ 3η επιλογή — επιλέγεις ένα
+                            // από τα τρία, όπως Ταξί/Βαν. Από πίσω συνεχίζει
+                            // να αποθηκεύεται σαν vehicleType taxi/van +
+                            // hasBus=true, ώστε η δρομολόγηση δουλειών να
+                            // μη χρειαστεί ΚΑΜΙΑ αλλαγή στο backend.
+                            vehicleCard(
+                              type:  VehicleType.bus,
+                              icon:  Icons.directions_bus_rounded,
+                              label: 'Λεωφορείο',
                             ),
                           ]),
                           Padding(
                             padding: const EdgeInsets.only(top: 5),
                             child: Text(
-                              hasBus
-                                  ? 'Θα λαμβάνεις ΚΑΙ δουλειές Shuttle/Λεωφορείου πολλών ατόμων'
-                                  : 'Το «Λεωφορείο» είναι επιπλέον — πάτησέ το αν διαθέτεις και λεωφορείο',
+                              selectedVehicle == VehicleType.bus
+                                  ? 'Θα λαμβάνεις δουλειές Shuttle/Λεωφορείου πολλών ατόμων'
+                                  : 'Επίλεξε το όχημα με το οποίο δουλεύεις',
                               style: TextStyle(
                                   fontSize: 10.5, color: c.textFaint),
                             ),
@@ -714,6 +689,14 @@ Future<void> showProfileForm({
                                   }
 
                                   Navigator.of(ctx).pop();
+                                  // Το «Λεωφορείο» είναι επιλογή ΜΟΝΟ στο UI
+                                  // (VehicleType.bus). Το backend/data model
+                                  // δεν το ξέρει — συνεχίζει να αποθηκεύει
+                                  // taxi/van + hasBus=true, όπως πριν, ώστε η
+                                  // δρομολόγηση δουλειών να μη χρειαστεί
+                                  // ΚΑΜΙΑ αλλαγή.
+                                  final isBusSelected =
+                                      selectedVehicle == VehicleType.bus;
                                   onSaved(
                                     name: toProperCase(nameController.text),
                                     lastName:
@@ -728,8 +711,10 @@ Future<void> showProfileForm({
                                     plateNumber: isHomeOwner
                                         ? ''
                                         : 'ΤΑ$plateLetter-${plateNumberController.text.trim()}',
-                                    vehicleType: selectedVehicle,
-                                    hasBus: hasBus,
+                                    vehicleType: isBusSelected
+                                        ? VehicleType.van
+                                        : selectedVehicle,
+                                    hasBus: isBusSelected || hasBus,
                                     homeOwner: isHomeOwner,
                                     ownerOfClientId:
                                         isHomeOwner ? selectedClientId : null,

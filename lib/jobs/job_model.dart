@@ -370,9 +370,11 @@ class Job {
 
   String get vehicleLabel {
     switch (vehicleType) {
-      case 'taxi': return 'Taxi';
-      case 'van':  return 'Van';
-      default:     return 'Taxi / Van';
+      case 'taxi':    return 'Taxi';
+      case 'van':     return 'Van';
+      case 'bus':     return 'Λεωφορείο';
+      case 'shuttle': return 'Shuttle';
+      default:        return 'Taxi / Van';
     }
   }
 

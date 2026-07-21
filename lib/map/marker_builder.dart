@@ -12,9 +12,16 @@ Future<MarkerAsset> buildMarkerAsset({
   required double      currentZoom,
   List<Color>          groupColors = const [],
 }) async {
-  final iconData = type == VehicleType.taxi
-      ? Icons.local_taxi_rounded
-      : Icons.airport_shuttle_rounded;
+  final iconData = switch (type) {
+    VehicleType.taxi => Icons.local_taxi_rounded,
+    VehicleType.van  => Icons.airport_shuttle_rounded,
+    VehicleType.bus  => Icons.directions_bus_rounded,
+  };
+
+  // offline = χρώμα statusColor(online:false) = σχεδόν μαύρο (0xFF111111).
+  // Το κίτρινο περίγραμμα μπαίνει ΜΟΝΟ τότε — πράσινο/κόκκινο (online) ήδη
+  // ξεχωρίζουν αρκετά πάνω σε οποιοδήποτε φόντο, δεν χρειάζονται περίγραμμα.
+  final isOfflineColor = color == const Color(0xFF111111);
 
   final scale      = ((currentZoom - 8) / 10).clamp(0.13, 0.26);
   final canvasH    = kBaseCanvasHeight * scale;
@@ -45,6 +52,25 @@ Future<MarkerAsset> buildMarkerAsset({
         fontFamily: iconData.fontFamily,
         package:    iconData.fontPackage,
         color:      color,
+      ),
+    ),
+    textDirection: TextDirection.ltr,
+  )..layout();
+
+  // ── Κίτρινο περίγραμμα γύρω από το ΣΧΗΜΑ του οχήματος ──────────────────
+  // Λύνει το πρόβλημα ορατότητας σε σκούρο χάρτη (offline = σχεδόν μαύρο
+  // εικονίδιο, αόρατο πάνω σε μαύρο φόντο) ΧΩΡΙΣ να αλλάζει το ίδιο το
+  // χρώμα κατάστασης: ζωγραφίζουμε το ΙΔΙΟ glyph λίγο μεγαλύτερο σε
+  // κίτρινο ΠΡΩΤΑ (από κάτω), μετά το κανονικό glyph στο πραγματικό
+  // μέγεθος/χρώμα ΠΑΝΩ του — το αποτέλεσμα μοιάζει με λεπτό contour.
+  final outlinePainter = TextPainter(
+    text: TextSpan(
+      text:  String.fromCharCode(iconData.codePoint),
+      style: TextStyle(
+        fontSize:   iconSize + 5 * scale, // λίγο μεγαλύτερο → φαίνεται σαν στρώμα περιγράμματος
+        fontFamily: iconData.fontFamily,
+        package:    iconData.fontPackage,
+        color:      const Color(0xFFEF9F27), // amber — ορατό σε κάθε φόντο
       ),
     ),
     textDirection: TextDirection.ltr,
@@ -105,6 +131,15 @@ Future<MarkerAsset> buildMarkerAsset({
   }
 
   textPainter.paint(canvas, Offset(textX, textY));
+  // Στρώση περιγράμματος (κίτρινο, ελαφρώς μεγαλύτερο) — ΜΟΝΟ όταν ο
+  // οδηγός είναι offline (αλλιώς πράσινο/κόκκινο ήδη ξεχωρίζουν αρκετά).
+  if (isOfflineColor) {
+    outlinePainter.paint(canvas, Offset(
+      centerX - (outlinePainter.width / 2),
+      carCenterY - (outlinePainter.height / 2),
+    ));
+  }
+  // Το πραγματικό εικονίδιο (χρώμα κατάστασης) πάντα από ΠΑΝΩ.
   iconPainter.paint(canvas, Offset(
     centerX - (iconPainter.width / 2),
     carCenterY - (iconPainter.height / 2),
