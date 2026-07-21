@@ -7,7 +7,8 @@
 //                (ACTION_VIEW, text/calendar) → ανοίγει το Ημερολόγιο.
 //   • Web     → κατεβάζει το .ics (blob download) → ανοίγει η default εφαρμογή.
 //
-// Χρησιμοποιείται από το my_jobs_sheet.dart (κουμπί «Όλες στο ημερολόγιο»).
+// Χρησιμοποιείται από το ημερολόγιο δουλειών (jobs_calendar_page →
+// «Αποθήκευση ημερολογίου», μέσω ics_calendar_export.dart).
 
 import 'package:intl/intl.dart';
 

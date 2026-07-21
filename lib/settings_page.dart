@@ -68,7 +68,8 @@ class SettingsPage extends StatelessWidget {
       body: ListView(
         // Κάτω: +ύψος Android navigation bar να μην κρύβεται το τέλος.
         padding: EdgeInsets.fromLTRB(
-            14, 14, 14, 14 + MediaQuery.of(context).padding.bottom + 10),
+            14, 14, 14,
+            30 + MediaQuery.of(context).viewPadding.bottom),
         children: [
           _sectionLabel(c, 'ΛΟΓΑΡΙΑΣΜΟΣ'),
           const SizedBox(height: 8),

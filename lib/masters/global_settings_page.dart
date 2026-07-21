@@ -76,7 +76,8 @@ class _GlobalSettingsPageState extends State<GlobalSettingsPage> {
         // Κάτω padding + ύψος Android navigation bar — να μην κρύβεται
         // το τέλος της λίστας (ΤΙΜΕΣ ΠΛΑΤΦΟΡΜΑΣ κλπ).
         padding: EdgeInsets.fromLTRB(
-            14, 14, 14, 14 + MediaQuery.of(context).padding.bottom + 10),
+            14, 14, 14,
+            30 + MediaQuery.of(context).viewPadding.bottom),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
