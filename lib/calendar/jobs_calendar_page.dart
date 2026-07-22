@@ -74,6 +74,11 @@ class _JobsCalendarPageState extends State<JobsCalendarPage> {
 
   bool get _seesAllOrgJobs => widget.isAdmin || widget.isMaster;
 
+  // Μάτι πάνω δεξιά (μόνο admin/master): αναμμένο (true) = βλέπει ΟΛΟΥΣ τους
+  // οδηγούς/admins του οργανισμού (προεπιλογή, ίδια συμπεριφορά με πριν)·
+  // σβηστό (false) = βλέπει ΜΟΝΟ τις δικές του δουλειές.
+  bool _onlyMine = false;
+
   // Μεγέθη συρταριού (ποσοστά ύψους οθόνης).
   static const double _sheetMin = 0.30;
   static const double _sheetMax = 0.92;
@@ -169,6 +174,11 @@ class _JobsCalendarPageState extends State<JobsCalendarPage> {
       }
 
       entries.sort((a, b) => a.day.compareTo(b.day));
+      // Μάτι σβηστό (ΜΟΝΟ master — ο admin έτσι κι αλλιώς βλέπει μόνο τα δικά
+      // του): κράτα μόνο τις δουλειές που πήρε ο ίδιος ο master.
+      if (widget.isMaster && _onlyMine) {
+        return entries.where((e) => e.job.takenBy == widget.uid).toList();
+      }
       return entries;
     });
   }
@@ -213,6 +223,22 @@ class _JobsCalendarPageState extends State<JobsCalendarPage> {
         backgroundColor: c.scaffold,
         foregroundColor: c.textMain,
         elevation: 0,
+        actions: widget.isMaster
+            ? [
+                IconButton(
+                  tooltip: _onlyMine
+                      ? 'Βλέπεις μόνο τις δικές σου δουλειές'
+                      : 'Βλέπεις όλες τις δουλειές του οργανισμού',
+                  icon: Icon(
+                    _onlyMine
+                        ? Icons.visibility_off_rounded
+                        : Icons.visibility_rounded,
+                    color: _onlyMine ? c.textFaint : c.amberDeep,
+                  ),
+                  onPressed: () => setState(() => _onlyMine = !_onlyMine),
+                ),
+              ]
+            : null,
       ),
       body: StreamBuilder<List<_CalEntry>>(
         stream: _monthEntries(),
