@@ -443,6 +443,7 @@ class _JobsCalendarPageState extends State<JobsCalendarPage> {
     final job    = e.job;
     final status = _statusColor(c, e.kind);
     final border = _vehicleBorderColor(e.vehicleType);
+    final barBg  = status.withValues(alpha: 0.16);
 
     String timeLabel() {
       final t = e.day;
@@ -452,13 +453,14 @@ class _JobsCalendarPageState extends State<JobsCalendarPage> {
     String paymentLabel() =>
         job.fullyPaid ? 'Προπληρωμένη' : 'Μετρητά';
     Color paymentColor() => job.fullyPaid ? c.blueDeep : c.greenDeep;
+    Color paymentBg()    => job.fullyPaid ? c.bluePale : c.greenPale;
 
     final phone = (job.clientPhone ?? '').trim();
 
     return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.only(bottom: 10),
       child: InkWell(
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(16),
         onTap: () {
           if (e.kind == _EntryKind.saved && e.savedJob != null) {
             // TODO: hook to saved-job editor όταν φτάσουμε σε εκείνη την οθόνη
@@ -472,134 +474,184 @@ class _JobsCalendarPageState extends State<JobsCalendarPage> {
           );
         },
         child: Container(
+          clipBehavior: Clip.antiAlias,
           decoration: BoxDecoration(
             color: c.scaffold,
-            borderRadius: BorderRadius.circular(14),
-            border: Border(
-              top:    BorderSide(color: c.cardBorder, width: 0.8),
-              right:  BorderSide(color: c.cardBorder, width: 0.8),
-              bottom: BorderSide(color: c.cardBorder, width: 0.8),
-              left:   BorderSide(color: status, width: 4),
-            ),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: c.cardBorder, width: 0.8),
           ),
-          padding: const EdgeInsets.fromLTRB(10, 9, 12, 9),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // ── Πάνω γραμμή: ώρα · Μετρητά/Προπληρωμένη (πράσινο) · τιμή ──
-              Row(children: [
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 9, vertical: 3),
-                  decoration: BoxDecoration(
-                    color:        status.withValues(alpha: 0.16),
-                    borderRadius: BorderRadius.circular(9),
-                    border: border != null
-                        ? Border.all(color: border, width: 1.5)
-                        : null,
-                  ),
-                  child: Text(timeLabel(),
+              // ── Πάνω ΓΕΜΑΤΗ μπάρα: ώρα · Μετρητά (πράσινο) · τιμή ──────────
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 14, vertical: 11),
+                decoration: BoxDecoration(
+                  color: barBg,
+                  border: border != null
+                      ? Border(bottom: BorderSide(color: border, width: 2))
+                      : null,
+                ),
+                child: Row(children: [
+                  Icon(Icons.access_time_filled_rounded,
+                      size: 19, color: status),
+                  const SizedBox(width: 6),
+                  Text(timeLabel(),
                       style: TextStyle(
-                          fontSize: 12.5,
+                          fontSize: 17,
                           fontWeight: FontWeight.w700,
                           color: status)),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text('${job.from} → ${job.to}',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                          fontSize: 13, color: c.textMain)),
-                ),
-                Text(paymentLabel(),
-                    style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600,
-                        color: paymentColor())),
-                const SizedBox(width: 6),
-                Text('${job.price.toStringAsFixed(0)} €',
-                    style: TextStyle(
-                        fontSize: 13.5,
-                        fontWeight: FontWeight.w600,
-                        color: c.textMain)),
-              ]),
-              const SizedBox(height: 7),
-              // ── Εικονίδια-μόνο: όχημα · άτομα · βαλίτσες · παιδικό ──
-              Row(children: [
-                VehicleTypeIcon(
-                    vehicleType: job.vehicleType, size: 15, color: c.textFaint),
-                const SizedBox(width: 12),
-                _iconNum(c, Icons.person_rounded, job.persons),
-                if (job.luggage > 0) ...[
-                  const SizedBox(width: 12),
-                  _iconNum(c, Icons.work_outline_rounded, job.luggage),
-                ],
-                if (job.childSeatCount > 0) ...[
-                  const SizedBox(width: 12),
-                  _iconNum(c, Icons.child_care_rounded, job.childSeatCount,
-                      color: const Color(0xFFD4537E)),
-                ],
-              ]),
-              // ── Κάτω γραμμή: τηλέφωνο+WhatsApp (αριστερά) ·
-              //    υπενθυμίσεις+edit (δεξιά) — μία λωρίδα, compact ──
-              if (phone.isNotEmpty || job.scheduledAt != null) ...[
-                const SizedBox(height: 7),
-                Row(children: [
-                  if (phone.isNotEmpty) ...[
-                    Icon(Icons.phone_rounded, size: 13, color: c.textFaint),
-                    const SizedBox(width: 4),
-                    GestureDetector(
-                      onTap: () => launchUrl(Uri(scheme: 'tel', path: phone)),
-                      child: Text(phone,
-                          style: TextStyle(fontSize: 11.5, color: c.textFaint)),
-                    ),
-                    const SizedBox(width: 8),
-                    GestureDetector(
-                      onTap: () => launchUrl(
-                        Uri.parse(
-                            'https://wa.me/${phone.replaceAll(RegExp(r'[^0-9]'), '')}'),
-                        mode: LaunchMode.externalApplication,
-                      ),
-                      child: const Icon(Icons.chat_bubble_rounded,
-                          size: 14, color: Color(0xFF1D9E75)),
-                    ),
-                  ],
                   const Spacer(),
-                  if (job.scheduledAt != null) ...[
-                    Icon(Icons.notifications_active_rounded,
-                        size: 13, color: c.amberDeep),
-                    const SizedBox(width: 4),
-                    Text(
-                      job.reminderOffsets
-                          .map((m) => '$m′')
-                          .join(' · '),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color:        paymentBg(),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text(paymentLabel(),
+                        style: TextStyle(
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.w600,
+                            color: paymentColor())),
+                  ),
+                  const SizedBox(width: 10),
+                  Text('${job.price.toStringAsFixed(0)} €',
                       style: TextStyle(
-                          fontSize: 11, color: c.amberDeep,
-                          fontWeight: FontWeight.w600),
-                    ),
-                    const SizedBox(width: 6),
-                    GestureDetector(
-                      onTap: () => _editReminders(context, job),
-                      child: Icon(Icons.edit_rounded,
-                          size: 13, color: c.textFaint),
-                    ),
-                  ],
+                          fontSize: 17,
+                          fontWeight: FontWeight.w700,
+                          color: status)),
                 ]),
-              ],
-              if (e.kind == _EntryKind.assigned && job.takenByName != null) ...[
-                const SizedBox(height: 4),
-                Text('Ανέλαβε: ${job.takenByName}',
-                    style: TextStyle(fontSize: 10.5, color: c.textFaint)),
-              ],
-              if (e.kind == _EntryKind.saved) ...[
-                const SizedBox(height: 4),
-                Text('Αποθηκευμένη — δεν έχει δοθεί ακόμη',
-                    style: TextStyle(
-                        fontSize: 10.5,
-                        color: const Color(0xFFD64545),
-                        fontWeight: FontWeight.w600)),
-              ],
+              ),
+
+              Padding(
+                padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // ── Διαδρομή με pickup/dropoff ─────────────────────────
+                    Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Padding(
+                        padding: const EdgeInsets.only(top: 4),
+                        child: Column(children: [
+                          Container(
+                            width: 9, height: 9,
+                            decoration: BoxDecoration(
+                                color: c.greenDivider.withValues(alpha: 1),
+                                shape: BoxShape.circle,
+                                border: Border.all(color: c.green, width: 2)),
+                          ),
+                          Container(width: 2, height: 22, color: c.cardBorder),
+                          Icon(Icons.location_on_rounded,
+                              size: 14, color: const Color(0xFFE24B4A)),
+                        ]),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(job.from,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                    fontSize: 14.5, color: c.textMain)),
+                            const SizedBox(height: 14),
+                            Text(job.to,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                    fontSize: 14.5, color: c.textMain)),
+                          ],
+                        ),
+                      ),
+                    ]),
+                    const SizedBox(height: 12),
+                    // ── Εικονίδια: όχημα · άτομα · βαλίτσες · παιδικό ──────
+                    Row(children: [
+                      VehicleTypeIcon(
+                          vehicleType: job.vehicleType,
+                          size: 22, color: c.textFaint),
+                      const SizedBox(width: 16),
+                      _iconNum(c, Icons.person_rounded, job.persons),
+                      if (job.luggage > 0) ...[
+                        const SizedBox(width: 16),
+                        _iconNum(c, Icons.work_outline_rounded, job.luggage),
+                      ],
+                      if (job.childSeatCount > 0) ...[
+                        const SizedBox(width: 16),
+                        _iconNum(c, Icons.child_care_rounded,
+                            job.childSeatCount,
+                            color: const Color(0xFFD4537E)),
+                      ],
+                    ]),
+                    // ── Κάτω γραμμή: τηλέφωνο+WhatsApp · υπενθυμίσεις+edit ──
+                    if (phone.isNotEmpty || job.scheduledAt != null) ...[
+                      const SizedBox(height: 12),
+                      Divider(height: 1, color: c.cardBorder),
+                      const SizedBox(height: 10),
+                      Row(children: [
+                        if (phone.isNotEmpty) ...[
+                          Icon(Icons.phone_rounded,
+                              size: 19, color: c.textFaint),
+                          const SizedBox(width: 6),
+                          GestureDetector(
+                            onTap: () =>
+                                launchUrl(Uri(scheme: 'tel', path: phone)),
+                            child: Text(phone,
+                                style: TextStyle(
+                                    fontSize: 14, color: c.textFaint)),
+                          ),
+                          const SizedBox(width: 10),
+                          GestureDetector(
+                            onTap: () => launchUrl(
+                              Uri.parse('https://wa.me/'
+                                  '${phone.replaceAll(RegExp(r'[^0-9]'), '')}'),
+                              mode: LaunchMode.externalApplication,
+                            ),
+                            child: const Icon(Icons.chat_bubble_rounded,
+                                size: 19, color: Color(0xFF1D9E75)),
+                          ),
+                        ],
+                        const Spacer(),
+                        if (job.scheduledAt != null) ...[
+                          Icon(Icons.notifications_active_rounded,
+                              size: 18, color: c.amberDeep),
+                          const SizedBox(width: 5),
+                          Text(
+                            job.reminderOffsets.map((m) => '$m′').join(' · '),
+                            style: TextStyle(
+                                fontSize: 13.5, color: c.amberDeep,
+                                fontWeight: FontWeight.w600),
+                          ),
+                          const SizedBox(width: 8),
+                          GestureDetector(
+                            onTap: () => _editReminders(context, job),
+                            child: Icon(Icons.edit_rounded,
+                                size: 18, color: c.textFaint),
+                          ),
+                        ],
+                      ]),
+                    ],
+                    if (e.kind == _EntryKind.assigned &&
+                        job.takenByName != null) ...[
+                      const SizedBox(height: 6),
+                      Text('Ανέλαβε: ${job.takenByName}',
+                          style: TextStyle(fontSize: 12, color: c.textFaint)),
+                    ],
+                    if (e.kind == _EntryKind.saved) ...[
+                      const SizedBox(height: 6),
+                      Text('Αποθηκευμένη — δεν έχει δοθεί ακόμη',
+                          style: TextStyle(
+                              fontSize: 12,
+                              color: const Color(0xFFD64545),
+                              fontWeight: FontWeight.w600)),
+                    ],
+                  ],
+                ),
+              ),
             ],
           ),
         ),
@@ -609,9 +661,9 @@ class _JobsCalendarPageState extends State<JobsCalendarPage> {
 
   Widget _iconNum(AppColors c, IconData icon, int n, {Color? color}) {
     return Row(mainAxisSize: MainAxisSize.min, children: [
-      Icon(icon, size: 14, color: color ?? c.textFaint),
-      const SizedBox(width: 3),
-      Text('$n', style: TextStyle(fontSize: 12, color: color ?? c.textFaint)),
+      Icon(icon, size: 20, color: color ?? c.textFaint),
+      const SizedBox(width: 4),
+      Text('$n', style: TextStyle(fontSize: 14.5, color: color ?? c.textFaint)),
     ]);
   }
 
@@ -738,33 +790,62 @@ class _JobsCalendarPageState extends State<JobsCalendarPage> {
   }
 
   Widget _bottomButtons(AppColors c, List<_CalEntry> dayEntries) {
-    return Row(children: [
-      Expanded(
-        child: OutlinedButton.icon(
-          onPressed: dayEntries.isEmpty
-              ? null
-              : () => exportDayToIcsAndSave(
-                  context: context,
-                  jobs:    dayEntries.map((e) => e.job).toList(),
-                  day:     _selectedDay,
-                ),
-          icon: const Icon(Icons.event_available_rounded, size: 18),
-          label: const Text('Αποθήκευση ημερολογίου'),
+    Widget squareButton({
+      required IconData icon,
+      required String label,
+      required VoidCallback? onPressed,
+    }) {
+      return Expanded(
+        child: SizedBox(
+          height: 64,
+          child: OutlinedButton(
+            style: OutlinedButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12)),
+            ),
+            onPressed: onPressed,
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(icon, size: 22),
+                const SizedBox(height: 4),
+                Text(label,
+                    textAlign: TextAlign.center,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                        fontSize: 12.5, fontWeight: FontWeight.w600, height: 1.15)),
+              ],
+            ),
+          ),
         ),
+      );
+    }
+
+    return Row(children: [
+      squareButton(
+        icon: Icons.event_available_rounded,
+        label: 'Αποθήκευση ημερολογίου',
+        onPressed: dayEntries.isEmpty
+            ? null
+            : () => exportDayToIcsAndSave(
+                context: context,
+                jobs:    dayEntries.map((e) => e.job).toList(),
+                day:     _selectedDay,
+              ),
       ),
       if (widget.googleCalendarEnabled) ...[
         const SizedBox(width: 10),
-        Expanded(
-          child: OutlinedButton.icon(
-            onPressed: () => Navigator.of(context).push(MaterialPageRoute(
-              builder: (_) => GoogleCalendarPage(
-                adminUid:  widget.uid,
-                isMaster:  widget.isMaster,
-              ),
-            )),
-            icon: const Icon(Icons.calendar_month_rounded, size: 18),
-            label: const Text('Google Calendar'),
-          ),
+        squareButton(
+          icon: Icons.calendar_month_rounded,
+          label: 'Google Calendar',
+          onPressed: () => Navigator.of(context).push(MaterialPageRoute(
+            builder: (_) => GoogleCalendarPage(
+              adminUid:  widget.uid,
+              isMaster:  widget.isMaster,
+            ),
+          )),
         ),
       ],
     ]);
