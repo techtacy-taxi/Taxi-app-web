@@ -24,6 +24,7 @@ import '../app_theme.dart';
 import '../voice/messages_recorder_chip.dart';
 import '../jobs/job_model.dart';
 import '../jobs/job_service.dart';
+import '../jobs/job_details_sheet.dart';
 
 bool _isToday(DateTime d) {
   final now = DateTime.now();
@@ -425,19 +426,30 @@ class _AppointmentCountdownBarState extends State<AppointmentCountdownBar>
           shouldFlash = false;
         }
 
-        final content = Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(12)),
-          child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-            Icon(icon, size: 18, color: Colors.white),
-            const SizedBox(width: 8),
-            Text(label,
-                style: TextStyle(fontSize: 14, color: Colors.white.withValues(alpha: 0.9))),
-            const SizedBox(width: 6),
-            Text(_fmtRemaining(remaining),
-                style: const TextStyle(
-                    fontSize: 17, fontWeight: FontWeight.w700, color: Colors.white)),
-          ]),
+        final content = InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: () => showModalBottomSheet(
+            context: context,
+            isScrollControlled: true,
+            backgroundColor: Colors.transparent,
+            useSafeArea: true,
+            builder: (sheetCtx) =>
+                JobDetailsSheet(job: next, parentContext: context),
+          ),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(12)),
+            child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+              Icon(icon, size: 18, color: Colors.white),
+              const SizedBox(width: 8),
+              Text(label,
+                  style: TextStyle(fontSize: 14, color: Colors.white.withValues(alpha: 0.9))),
+              const SizedBox(width: 6),
+              Text(_fmtRemaining(remaining),
+                  style: const TextStyle(
+                      fontSize: 17, fontWeight: FontWeight.w700, color: Colors.white)),
+            ]),
+          ),
         );
 
         if (!shouldFlash) return content;

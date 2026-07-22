@@ -2,7 +2,7 @@ name: taxi_athens_driver
 description: "Taxi Athens Driver"
 publish_to: 'none'
 
-version: 1.0.0+202607220040
+version: 1.0.0+202607220148
 
 environment:
   sdk: ^3.11.5

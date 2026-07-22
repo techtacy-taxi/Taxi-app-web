@@ -9,6 +9,7 @@ import 'package:flutter/services.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:vibration/vibration.dart';
 import 'job_shared_widgets.dart';
+import '../app_theme.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -311,9 +312,9 @@ class JobDetailsSheet extends StatelessWidget {
       child: SafeArea(
         top: false,
         child: Container(
-          decoration: const BoxDecoration(
-            color:        Colors.white,
-            borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+          decoration: BoxDecoration(
+            color:        AppColors.of(context).card,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
           ),
           // Επιπλέον κάτω περιθώριο ώστε τα κουμπιά να μην κρύβονται ΠΟΤΕ
           // από το Android navigation bar (πίσω/Home) — μαζί με το SafeArea.
@@ -369,7 +370,7 @@ class JobDetailsSheet extends StatelessWidget {
               ],
 
               // ── 4) Chips λεπτομερειών ──
-              _detailChips(),
+              _detailChips(context),
               const SizedBox(height: 8),
 
               // Ομαδική μεταφορά (Shuttle/Λεωφορείο): στάσεις με σειρά
@@ -407,43 +408,46 @@ class JobDetailsSheet extends StatelessWidget {
 
               // Στοιχεία ιστορικού: ποιος δημιούργησε & ποιος εκτέλεσε
               if (historyMode) ...[
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.grey.shade50,
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: Colors.grey.shade200),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      if (job.createdByName.isNotEmpty)
-                        Row(children: [
-                          Icon(Icons.person_add_alt_rounded,
-                              size: 16, color: Colors.grey[600]),
-                          const SizedBox(width: 8),
-                          Expanded(child: Text(
-                              'Δημιουργήθηκε από: ${job.createdByName}',
-                              style: TextStyle(
-                                  fontSize: 13, color: Colors.grey[800]))),
-                        ]),
-                      if (job.createdByName.isNotEmpty &&
-                          (job.takenByName ?? '').isNotEmpty)
-                        const SizedBox(height: 6),
-                      if ((job.takenByName ?? '').isNotEmpty)
-                        Row(children: [
-                          Icon(Icons.local_taxi_rounded,
-                              size: 16, color: Colors.grey[600]),
-                          const SizedBox(width: 8),
-                          Expanded(child: Text(
-                              'Εκτελέστηκε από: ${job.takenByName}',
-                              style: TextStyle(
-                                  fontSize: 13, color: Colors.grey[800]))),
-                        ]),
-                    ],
-                  ),
-                ),
+                Builder(builder: (context) {
+                  final c = AppColors.of(context);
+                  return Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: c.scaffold,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: c.cardBorder),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (job.createdByName.isNotEmpty)
+                          Row(children: [
+                            Icon(Icons.person_add_alt_rounded,
+                                size: 16, color: c.textFaint),
+                            const SizedBox(width: 8),
+                            Expanded(child: Text(
+                                'Δημιουργήθηκε από: ${job.createdByName}',
+                                style: TextStyle(
+                                    fontSize: 13, color: c.textMain))),
+                          ]),
+                        if (job.createdByName.isNotEmpty &&
+                            (job.takenByName ?? '').isNotEmpty)
+                          const SizedBox(height: 6),
+                        if ((job.takenByName ?? '').isNotEmpty)
+                          Row(children: [
+                            Icon(Icons.local_taxi_rounded,
+                                size: 16, color: c.textFaint),
+                            const SizedBox(width: 8),
+                            Expanded(child: Text(
+                                'Εκτελέστηκε από: ${job.takenByName}',
+                                style: TextStyle(
+                                    fontSize: 13, color: c.textMain))),
+                          ]),
+                      ],
+                    ),
+                  );
+                }),
                 const SizedBox(height: 12),
               ],
 
@@ -453,7 +457,7 @@ class JobDetailsSheet extends StatelessWidget {
                   if (job.clientName != null &&
                       job.clientName!.isNotEmpty) ...[
                     Expanded(
-                      child: _pillButton(
+                      child: _pillButton(context,
                         icon:  Icons.badge_rounded,
                         label: 'Πινακίδα ονόματος',
                         onTap: () => Navigator.of(context).push(
@@ -750,13 +754,14 @@ class JobDetailsSheet extends StatelessWidget {
           ),
         );
 
+    final c = AppColors.of(context);
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 9),
       decoration: BoxDecoration(
-        color:        Colors.grey.shade50,
+        color:        c.scaffold,
         borderRadius: BorderRadius.circular(13),
-        border:       Border.all(color: Colors.grey.shade200, width: 0.8),
+        border:       Border.all(color: c.cardBorder, width: 0.8),
       ),
       child: Column(children: [
         Row(children: [
@@ -777,23 +782,24 @@ class JobDetailsSheet extends StatelessWidget {
                 children: [
               if (name.isNotEmpty)
                 Text(name,
-                    style: const TextStyle(
-                        fontSize: 14.5, fontWeight: FontWeight.w700)),
+                    style: TextStyle(
+                        fontSize: 14.5, fontWeight: FontWeight.w700,
+                        color: c.textMain)),
               if (job.flightOrShip != null && job.flightOrShip!.isNotEmpty)
                 Row(children: [
-                  const Icon(Icons.flight_land_rounded,
-                      size: 14, color: Color(0xFF5F5E5A)),
+                  Icon(Icons.flight_land_rounded,
+                      size: 14, color: c.textFaint),
                   const SizedBox(width: 4),
                   Flexible(
                     child: Text(job.flightOrShip!,
-                        style: const TextStyle(
-                            fontSize: 12, color: Color(0xFF5F5E5A))),
+                        style: TextStyle(
+                            fontSize: 12, color: c.textFaint)),
                   ),
                 ])
               else if (phone.isNotEmpty)
                 Text(phone,
-                    style: const TextStyle(
-                        fontSize: 12, color: Color(0xFF5F5E5A))),
+                    style: TextStyle(
+                        fontSize: 12, color: c.textFaint)),
             ]),
           ),
           if (phone.isNotEmpty) ...[
@@ -838,12 +844,12 @@ class JobDetailsSheet extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.only(top: 6),
             child: Row(children: [
-              const Icon(Icons.phone_iphone_rounded,
-                  size: 14, color: Color(0xFF888780)),
+              Icon(Icons.phone_iphone_rounded,
+                  size: 14, color: c.textFaint),
               const SizedBox(width: 6),
               Text(phone,
-                  style: const TextStyle(
-                      fontSize: 12.5, color: Color(0xFF5F5E5A))),
+                  style: TextStyle(
+                      fontSize: 12.5, color: c.textFaint)),
             ]),
           ),
       ]),
@@ -851,25 +857,26 @@ class JobDetailsSheet extends StatelessWidget {
   }
 
   // ─── 4) Chips λεπτομερειών ────────────────────────────────────────────────
-  Widget _detailChips() {
+  Widget _detailChips(BuildContext context) {
+    final c = AppColors.of(context);
     Widget chip(IconData icon, String label,
             {Color? bg, Color? fg, Color? borderCol}) =>
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
           decoration: BoxDecoration(
-            color:        bg ?? Colors.white,
+            color:        bg ?? c.card,
             border:       Border.all(
-                color: borderCol ?? Colors.grey.shade300, width: 0.8),
+                color: borderCol ?? c.cardBorder, width: 0.8),
             borderRadius: BorderRadius.circular(16),
           ),
           child: Row(mainAxisSize: MainAxisSize.min, children: [
-            Icon(icon, size: 15, color: fg ?? Colors.black87),
+            Icon(icon, size: 15, color: fg ?? c.textMain),
             const SizedBox(width: 5),
             Text(label,
                 style: TextStyle(
                     fontSize: 12.5,
                     fontWeight: FontWeight.w600,
-                    color: fg ?? Colors.black87)),
+                    color: fg ?? c.textMain)),
           ]),
         );
 
@@ -908,13 +915,14 @@ class JobDetailsSheet extends StatelessWidget {
 
     final routeMin = job.routeMinutes;
 
+    final c = AppColors.of(context);
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
-        color:        Colors.white,
+        color:        c.card,
         borderRadius: BorderRadius.circular(13),
-        border:       Border.all(color: Colors.grey.shade300, width: 0.8),
+        border:       Border.all(color: c.cardBorder, width: 0.8),
       ),
       child: Column(children: [
         // Παραλαβή
@@ -925,12 +933,12 @@ class JobDetailsSheet extends StatelessWidget {
           Expanded(
             child: Column(crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-              const Text('Παραλαβή',
-                  style: TextStyle(
-                      fontSize: 11, color: Color(0xFF888780))),
+              Text('Παραλαβή',
+                  style: TextStyle(fontSize: 11, color: c.textFaint)),
               Text(job.from,
-                  style: const TextStyle(
-                      fontSize: 14, fontWeight: FontWeight.w600)),
+                  style: TextStyle(
+                      fontSize: 14, fontWeight: FontWeight.w600,
+                      color: c.textMain)),
             ]),
           ),
           const SizedBox(width: 6),
@@ -941,8 +949,7 @@ class JobDetailsSheet extends StatelessWidget {
         Row(children: [
           Padding(
             padding: const EdgeInsets.only(left: 7.5),
-            child: Container(
-                width: 1.5, height: 14, color: Colors.grey.shade300),
+            child: Container(width: 1.5, height: 14, color: c.divider),
           ),
         ]),
         // Προορισμός
@@ -954,11 +961,11 @@ class JobDetailsSheet extends StatelessWidget {
             child: Column(crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
               Text('Προορισμός${routeMin != null ? " · ~$routeMin λεπτά" : ""}',
-                  style: const TextStyle(
-                      fontSize: 11, color: Color(0xFF888780))),
+                  style: TextStyle(fontSize: 11, color: c.textFaint)),
               Text(job.to,
-                  style: const TextStyle(
-                      fontSize: 14, fontWeight: FontWeight.w600)),
+                  style: TextStyle(
+                      fontSize: 14, fontWeight: FontWeight.w600,
+                      color: c.textMain)),
             ]),
           ),
           const SizedBox(width: 6),
@@ -970,29 +977,42 @@ class JobDetailsSheet extends StatelessWidget {
   }
 
   // ─── Outline pill κουμπί (Πινακίδα ονόματος / Στο ημερολόγιο) ─────────────
-  Widget _pillButton({
+  Widget _pillButton(BuildContext context, {
     required IconData icon,
     required String   label,
     required VoidCallback onTap,
   }) {
+    final c = AppColors.of(context);
+    // Ίδιο ύψος/γεωμετρία με το «Στο ημερολόγιο» δίπλα του (48px,
+    // ακτίνα 14) — Row με explicit spacing αντί για .icon() ώστε η
+    // στοίχιση εικονιδίου/κειμένου να είναι πανομοιότυπη και στα δύο.
     return SizedBox(
-      height: 44,
-      child: OutlinedButton.icon(
+      height: 48,
+      child: OutlinedButton(
         onPressed: onTap,
         style: OutlinedButton.styleFrom(
-          foregroundColor: Colors.black87,
-          side: BorderSide(color: Colors.grey.shade400, width: 0.8),
-          padding: const EdgeInsets.symmetric(horizontal: 6),
+          foregroundColor: c.textMain,
+          side: BorderSide(color: c.cardBorder, width: 0.8),
+          padding: const EdgeInsets.symmetric(horizontal: 10),
           shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(22)),
+              borderRadius: BorderRadius.circular(14)),
         ),
-        icon: Icon(icon, size: 17),
-        label: FittedBox(
-          fit: BoxFit.scaleDown,
-          child: Text(label,
-              maxLines: 1,
-              style: const TextStyle(
-                  fontSize: 12.5, fontWeight: FontWeight.w600)),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 18, color: c.textMain),
+            const SizedBox(width: 8),
+            Flexible(
+              child: Text(label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                      fontSize: 14, fontWeight: FontWeight.w600,
+                      color: c.textMain)),
+            ),
+          ],
         ),
       ),
     );
@@ -1155,25 +1175,41 @@ class _JobToCalendarButtonState extends State<_JobToCalendarButton> {
   @override
   Widget build(BuildContext context) {
     if (!_allowed) return const SizedBox.shrink();
+    // Ίδιο ύψος/γεωμετρία με το «Πινακίδα ονόματος» δίπλα του (48px,
+    // ακτίνα 14) — Row κεντραρισμένη με explicit spacing, ίδια στοίχιση
+    // εικονιδίου/κειμένου και στα δύο κουμπιά.
     return SizedBox(
+      height: 48,
       width: double.infinity,
-      child: FilledButton.icon(
+      child: FilledButton(
         onPressed: _busy ? null : _run,
         style: FilledButton.styleFrom(
           backgroundColor: const Color(0xFF1A73E8),
           disabledBackgroundColor: const Color(0xFF1A73E8),
           foregroundColor: Colors.white,
-          padding: const EdgeInsets.symmetric(vertical: 14),
+          padding: const EdgeInsets.symmetric(horizontal: 10),
           shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(14)),
         ),
-        icon: _busy
-            ? const SizedBox(width: 18, height: 18,
-                child: CircularProgressIndicator(
-                    strokeWidth: 2, color: Colors.white))
-            : const Icon(Icons.calendar_month_rounded),
-        label: const Text('Προσθήκη στο ημερολόγιο',
-            style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _busy
+                ? const SizedBox(width: 18, height: 18,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 2, color: Colors.white))
+                : const Icon(Icons.calendar_month_rounded, size: 18),
+            const SizedBox(width: 8),
+            const Flexible(
+              child: Text('Προσθήκη στο ημερολόγιο',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -1300,12 +1336,13 @@ class _GroupStopsSectionState extends State<GroupStopsSection> {
           final lat = (m['lat'] as num?)?.toDouble();
           final lng = (m['lng'] as num?)?.toDouble();
           final done = _done['$origIdx'] == true;
-          return Container(
+          return Builder(builder: (context) {
+            final c = AppColors.of(context);
+            return Container(
             margin: const EdgeInsets.only(bottom: 6),
             padding: const EdgeInsets.symmetric(vertical: 6),
             decoration: BoxDecoration(
-              border: Border(
-                  bottom: BorderSide(color: Colors.grey.shade200)),
+              border: Border(bottom: BorderSide(color: c.divider)),
             ),
             child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -1399,6 +1436,7 @@ class _GroupStopsSectionState extends State<GroupStopsSection> {
                   ),
                 ]),
           );
+            });
         }),
       ],
     ]);
