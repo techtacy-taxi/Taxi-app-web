@@ -20,11 +20,14 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:table_calendar/table_calendar.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../app_theme.dart';
 import '../jobs/job_details_sheet.dart';
 import '../jobs/job_model.dart';
+import '../jobs/job_service.dart';
 import '../jobs/saved_job_service.dart';
+import '../widgets/vehicle_type_icon.dart';
 import 'google_calendar_page.dart';
 import 'ics_calendar_export.dart';
 
@@ -446,15 +449,11 @@ class _JobsCalendarPageState extends State<JobsCalendarPage> {
       return '${t.hour.toString().padLeft(2, "0")}:${t.minute.toString().padLeft(2, "0")}';
     }
 
-    String paymentLabel() {
-      if (job.fullyPaid) return 'Προπληρωμένη';
-      return 'Μετρητά';
-    }
+    String paymentLabel() =>
+        job.fullyPaid ? 'Προπληρωμένη' : 'Μετρητά';
+    Color paymentColor() => job.fullyPaid ? c.blueDeep : c.greenDeep;
 
-    Color paymentColor() =>
-        job.fullyPaid ? c.blueDeep : c.greenDeep;
-    IconData paymentIcon() =>
-        job.fullyPaid ? Icons.credit_card_rounded : Icons.payments_rounded;
+    final phone = (job.clientPhone ?? '').trim();
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
@@ -487,6 +486,7 @@ class _JobsCalendarPageState extends State<JobsCalendarPage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              // ── Πάνω γραμμή: ώρα · Μετρητά/Προπληρωμένη (πράσινο) · τιμή ──
               Row(children: [
                 Container(
                   padding: const EdgeInsets.symmetric(
@@ -512,40 +512,81 @@ class _JobsCalendarPageState extends State<JobsCalendarPage> {
                       style: TextStyle(
                           fontSize: 13, color: c.textMain)),
                 ),
+                Text(paymentLabel(),
+                    style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: paymentColor())),
+                const SizedBox(width: 6),
                 Text('${job.price.toStringAsFixed(0)} €',
                     style: TextStyle(
                         fontSize: 13.5,
                         fontWeight: FontWeight.w600,
                         color: c.textMain)),
               ]),
-              const SizedBox(height: 6),
+              const SizedBox(height: 7),
+              // ── Εικονίδια-μόνο: όχημα · άτομα · βαλίτσες · παιδικό ──
               Row(children: [
-                _miniIcon(
-                  c,
-                  icon: job.vehicleType == 'van'
-                      ? Icons.airport_shuttle_rounded
-                      : job.vehicleType == 'bus'
-                          ? Icons.directions_bus_rounded
-                          : Icons.local_taxi_rounded,
-                  label: job.vehicleLabel,
-                ),
-                const SizedBox(width: 10),
-                _miniIcon(c,
-                    icon: Icons.person_rounded, label: '${job.persons}'),
-                if (job.childSeat) ...[
-                  const SizedBox(width: 10),
-                  Icon(Icons.child_care_rounded,
-                      size: 13, color: const Color(0xFFD4537E)),
+                VehicleTypeIcon(
+                    vehicleType: job.vehicleType, size: 15, color: c.textFaint),
+                const SizedBox(width: 12),
+                _iconNum(c, Icons.person_rounded, job.persons),
+                if (job.luggage > 0) ...[
+                  const SizedBox(width: 12),
+                  _iconNum(c, Icons.work_outline_rounded, job.luggage),
                 ],
-                const Spacer(),
-                Icon(paymentIcon(), size: 13, color: paymentColor()),
-                const SizedBox(width: 3),
-                Text(paymentLabel(),
-                    style: TextStyle(
-                        fontSize: 11.5,
-                        fontWeight: FontWeight.w600,
-                        color: paymentColor())),
+                if (job.childSeatCount > 0) ...[
+                  const SizedBox(width: 12),
+                  _iconNum(c, Icons.child_care_rounded, job.childSeatCount,
+                      color: const Color(0xFFD4537E)),
+                ],
               ]),
+              // ── Κάτω γραμμή: τηλέφωνο+WhatsApp (αριστερά) ·
+              //    υπενθυμίσεις+edit (δεξιά) — μία λωρίδα, compact ──
+              if (phone.isNotEmpty || job.scheduledAt != null) ...[
+                const SizedBox(height: 7),
+                Row(children: [
+                  if (phone.isNotEmpty) ...[
+                    Icon(Icons.phone_rounded, size: 13, color: c.textFaint),
+                    const SizedBox(width: 4),
+                    GestureDetector(
+                      onTap: () => launchUrl(Uri(scheme: 'tel', path: phone)),
+                      child: Text(phone,
+                          style: TextStyle(fontSize: 11.5, color: c.textFaint)),
+                    ),
+                    const SizedBox(width: 8),
+                    GestureDetector(
+                      onTap: () => launchUrl(
+                        Uri.parse(
+                            'https://wa.me/${phone.replaceAll(RegExp(r'[^0-9]'), '')}'),
+                        mode: LaunchMode.externalApplication,
+                      ),
+                      child: const Icon(Icons.chat_bubble_rounded,
+                          size: 14, color: Color(0xFF1D9E75)),
+                    ),
+                  ],
+                  const Spacer(),
+                  if (job.scheduledAt != null) ...[
+                    Icon(Icons.notifications_active_rounded,
+                        size: 13, color: c.amberDeep),
+                    const SizedBox(width: 4),
+                    Text(
+                      job.reminderOffsets
+                          .map((m) => '$m′')
+                          .join(' · '),
+                      style: TextStyle(
+                          fontSize: 11, color: c.amberDeep,
+                          fontWeight: FontWeight.w600),
+                    ),
+                    const SizedBox(width: 6),
+                    GestureDetector(
+                      onTap: () => _editReminders(context, job),
+                      child: Icon(Icons.edit_rounded,
+                          size: 13, color: c.textFaint),
+                    ),
+                  ],
+                ]),
+              ],
               if (e.kind == _EntryKind.assigned && job.takenByName != null) ...[
                 const SizedBox(height: 4),
                 Text('Ανέλαβε: ${job.takenByName}',
@@ -566,12 +607,134 @@ class _JobsCalendarPageState extends State<JobsCalendarPage> {
     );
   }
 
-  Widget _miniIcon(AppColors c, {required IconData icon, required String label}) {
+  Widget _iconNum(AppColors c, IconData icon, int n, {Color? color}) {
     return Row(mainAxisSize: MainAxisSize.min, children: [
-      Icon(icon, size: 13, color: c.textFaint),
+      Icon(icon, size: 14, color: color ?? c.textFaint),
       const SizedBox(width: 3),
-      Text(label, style: TextStyle(fontSize: 11.5, color: c.textFaint)),
+      Text('$n', style: TextStyle(fontSize: 12, color: color ?? c.textFaint)),
     ]);
+  }
+
+  // ── Μενού επεξεργασίας υπενθυμίσεων (10΄/30΄ κλειδωμένα + custom) ──────────
+  // Ίδια λογική με τη φόρμα νέας δουλειάς: 10 & 30 πάντα μέσα, ο χρήστης
+  // μπορεί να προσθέσει επιπλέον (π.χ. 90΄). Αποθηκεύει απευθείας στη
+  // δουλειά — το syncAppointmentReminders θα τα πάρει στο επόμενο snapshot.
+  static const List<int> _lockedReminderOffsets = [30, 10];
+
+  Future<void> _editReminders(BuildContext context, Job job) async {
+    var offsets = List<int>.from(job.reminderOffsets)
+      ..sort((a, b) => b.compareTo(a));
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (sheetCtx) => StatefulBuilder(
+        builder: (sheetCtx, setSheetState) {
+          Future<void> addOffset() async {
+            final ctrl = TextEditingController();
+            final mins = await showDialog<int>(
+              context: sheetCtx,
+              builder: (dctx) => AlertDialog(
+                title: const Text('Νέα υπενθύμιση'),
+                content: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Wrap(
+                      spacing: 6,
+                      children: [15, 45, 60, 90, 120, 180].map((m) =>
+                          ActionChip(
+                            label: Text(m % 60 == 0 ? '${m ~/ 60}ω' : '$m′'),
+                            onPressed: () => Navigator.pop(dctx, m),
+                          )).toList(),
+                    ),
+                    const SizedBox(height: 10),
+                    TextField(
+                      controller: ctrl,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                        labelText: 'Ή λεπτά', border: OutlineInputBorder(),
+                        isDense: true,
+                      ),
+                    ),
+                  ],
+                ),
+                actions: [
+                  TextButton(onPressed: () => Navigator.pop(dctx),
+                      child: const Text('Άκυρο')),
+                  FilledButton(
+                    onPressed: () =>
+                        Navigator.pop(dctx, int.tryParse(ctrl.text.trim())),
+                    child: const Text('Προσθήκη'),
+                  ),
+                ],
+              ),
+            );
+            if (mins == null || mins <= 0 || mins > 1440) return;
+            if (offsets.contains(mins)) return;
+            setSheetState(() {
+              offsets = ({...offsets, mins}.toList()
+                ..sort((a, b) => b.compareTo(a)));
+            });
+          }
+
+          return SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(18, 16, 18, 18),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Υπενθυμίσεις πριν το ραντεβού',
+                      style: TextStyle(
+                          fontSize: 16, fontWeight: FontWeight.w700)),
+                  const SizedBox(height: 12),
+                  Wrap(
+                    spacing: 8, runSpacing: 8,
+                    children: [
+                      for (final m in offsets)
+                        _lockedReminderOffsets.contains(m)
+                            ? Chip(
+                                avatar: const Icon(Icons.lock_rounded, size: 14),
+                                label: Text('$m′'),
+                                backgroundColor: Colors.grey.shade200,
+                              )
+                            : Chip(
+                                label: Text('$m′'),
+                                onDeleted: () => setSheetState(() =>
+                                    offsets = offsets
+                                        .where((x) => x != m)
+                                        .toList()),
+                              ),
+                      ActionChip(
+                        avatar: const Icon(Icons.add_rounded, size: 16),
+                        label: const Text('Προσθήκη'),
+                        onPressed: addOffset,
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 18),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton(
+                      onPressed: () async {
+                        await JobService.updateJob(job.id, {
+                          'reminderOffsets':
+                              ({...offsets, 30, 10}.toList()
+                                ..sort((a, b) => b.compareTo(a))),
+                        });
+                        if (sheetCtx.mounted) Navigator.pop(sheetCtx);
+                      },
+                      child: const Text('Αποθήκευση'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
   }
 
   Widget _bottomButtons(AppColors c, List<_CalEntry> dayEntries) {

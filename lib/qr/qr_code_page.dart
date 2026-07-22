@@ -299,7 +299,7 @@ class _QrCodePageState extends State<QrCodePage> {
                         child: Image.network(
                           bi.logoUrl!,
                           height: 72,
-                          errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                          errorBuilder: (_, _, _) => const SizedBox.shrink(),
                         ),
                       ),
                       const SizedBox(height: 14),

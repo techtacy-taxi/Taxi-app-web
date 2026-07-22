@@ -20,6 +20,7 @@ import 'saved_job_service.dart';
 import 'ics_export_service.dart';
 import 'ics_access.dart';
 import 'job_map_distance.dart';
+import '../widgets/vehicle_type_icon.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ΚΟΙΝΗ ΡΟΗ «ΤΕΛΟΣ ΔΙΑΔΡΟΜΗΣ» (+ προαιρετική ΕΠΙΣΤΡΟΦΗ)
@@ -605,13 +606,8 @@ class JobDetailsSheet extends StatelessWidget {
             borderRadius: BorderRadius.circular(11),
           ),
           child: Row(mainAxisSize: MainAxisSize.min, children: [
-            Icon(
-                job.vehicleType == 'van'
-                    ? Icons.airport_shuttle_rounded
-                    : job.vehicleType == 'bus'
-                        ? Icons.directions_bus_rounded
-                        : Icons.local_taxi_rounded,
-                size: 15, color: Colors.white),
+            VehicleTypeIcon(
+                vehicleType: job.vehicleType, size: 15, color: Colors.white),
             const SizedBox(width: 5),
             Text(job.vehicleLabel.toUpperCase(),
                 style: const TextStyle(

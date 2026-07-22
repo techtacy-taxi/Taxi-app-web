@@ -22,7 +22,6 @@ import 'job_details_sheet.dart';
 import 'job_model.dart';
 import 'job_popup.dart';
 import 'job_service.dart';
-import '../debug/reminder_debug_page.dart';
 import 'job_shared_widgets.dart';
 import 'batch_accept_sheet.dart';
 
@@ -1368,34 +1367,5 @@ class _JobListenerState extends State<JobListener> with WidgetsBindingObserver {
   }
 
   @override
-  Widget build(BuildContext context) {
-    if (!widget.isMaster) return widget.child;
-    // Διακριτικό κουμπί διαγνωστικών (ΜΟΝΟ master). SafeArea → δεν κρύβεται
-    // από το κάτω navigation bar. Αφαίρεσέ το όταν λυθεί το θέμα.
-    return Stack(
-      children: [
-        widget.child,
-        Positioned(
-          right: 6,
-          bottom: 6,
-          child: SafeArea(
-            child: Opacity(
-              opacity: 0.55,
-              child: FloatingActionButton.small(
-                heroTag: 'reminderDebugFab',
-                backgroundColor: Colors.blueGrey,
-                tooltip: 'Διαγνωστικά υπενθυμίσεων',
-                onPressed: () => Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (_) => const ReminderDebugPage(),
-                  ),
-                ),
-                child: const Icon(Icons.alarm, size: 18),
-              ),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
+  Widget build(BuildContext context) => widget.child;
 }

@@ -19,6 +19,7 @@ import 'job_service.dart';
 import 'job_shared_widgets.dart';
 import 'saved_job_service.dart';
 import 'places_service.dart';
+import '../widgets/vehicle_type_icon.dart';
 
 // Key αποθήκευσης τελευταίων ρυθμίσεων νέας δουλειάς
 const String _kLastJobSettings = 'last_job_settings_v1';
@@ -1293,7 +1294,7 @@ class _JobFormPageState extends State<JobFormPage> {
     }
     if (m > 60) {
       final h = m ~/ 60, r = m % 60;
-      return '${h}ω ${r}λ';
+      return '$hω $rλ';
     }
     return '$m λεπτά';
   }
@@ -1805,7 +1806,11 @@ class _JobFormPageState extends State<JobFormPage> {
           const SizedBox(height: 20),
           _section('Τύπος Οχήματος'),
           Row(children: [
-            _vehicleChip('any',  'Taxi / Van', Icons.directions_car_rounded),
+            _vehicleChip('any',  'All',       null,
+                customIcon: VehicleTypeIcon(
+                    vehicleType: 'any', size: 20,
+                    color: _vehicleType == 'any'
+                        ? Colors.black : Colors.grey[600])),
             const SizedBox(width: 8),
             _vehicleChip('taxi', 'Taxi',       Icons.local_taxi_rounded),
             const SizedBox(width: 8),
@@ -2730,7 +2735,8 @@ class _JobFormPageState extends State<JobFormPage> {
     );
   }
 
-  Widget _vehicleChip(String type, String label, IconData icon) {
+  Widget _vehicleChip(String type, String label, IconData? icon,
+      {Widget? customIcon}) {
     final selected = _vehicleType == type;
     return Expanded(
       child: GestureDetector(
@@ -2746,7 +2752,9 @@ class _JobFormPageState extends State<JobFormPage> {
             ),
           ),
           child: Column(mainAxisSize: MainAxisSize.min, children: [
-            Icon(icon, size: 20, color: selected ? Colors.black : Colors.grey[600]),
+            customIcon ??
+                Icon(icon, size: 20,
+                    color: selected ? Colors.black : Colors.grey[600]),
             const SizedBox(height: 4),
             Text(label,
                 style: TextStyle(

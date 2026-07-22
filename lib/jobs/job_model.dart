@@ -396,7 +396,7 @@ class Job {
       case 'van':     return 'Van';
       case 'bus':     return 'Λεωφορείο';
       case 'shuttle': return 'Shuttle';
-      default:        return 'Taxi / Van';
+      default:        return 'All';
     }
   }
 
