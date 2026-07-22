@@ -33,7 +33,7 @@ import '../widgets/vehicle_type_icon.dart';
 import 'google_calendar_page.dart';
 import 'ics_calendar_export.dart';
 
-enum _EntryKind { appointment, immediate, assigned, saved }
+enum _EntryKind { appointment, immediate, assigned, saved, done, cancelled }
 
 class _CalEntry {
   final Job        job;
@@ -127,19 +127,35 @@ class _JobsCalendarPageState extends State<JobsCalendarPage> {
       for (final doc in snap.docs) {
         final job = Job.fromDoc(doc);
         if (!_seesAllOrgJobs && job.takenBy != widget.uid) continue;
-        if (_seesAllOrgJobs && !(job.isTaken || job.isBoarded || job.isOpen)) {
-          continue;
+        // Επιτρεπόμενες καταστάσεις: admin/master βλέπει ό,τι είναι ακόμα
+        // ανοιχτό ΚΑΙ ό,τι έχει γίνει/ακυρωθεί· ο οδηγός βλέπει μόνο ό,τι
+        // ανέλαβε ο ίδιος — ανεξαρτήτως αν έχει ολοκληρωθεί ή ακυρωθεί.
+        final allowed = _seesAllOrgJobs
+            ? (job.isOpen || job.isTaken || job.isBoarded ||
+                job.status == JobStatus.done ||
+                job.status == JobStatus.cancelled)
+            : (job.isTaken || job.isBoarded ||
+                job.status == JobStatus.done ||
+                job.status == JobStatus.cancelled);
+        if (!allowed) continue;
+
+        final _EntryKind kind;
+        if (job.status == JobStatus.done) {
+          kind = _EntryKind.done;
+        } else if (job.status == JobStatus.cancelled) {
+          kind = _EntryKind.cancelled;
+        } else if (_seesAllOrgJobs && job.isOpen) {
+          kind = _EntryKind.assigned; // ανοιχτή αλλά με ραντεβού
+        } else {
+          kind = job.scheduledAt != null
+              ? _EntryKind.appointment
+              : _EntryKind.immediate;
         }
-        if (!_seesAllOrgJobs && !(job.isTaken || job.isBoarded)) continue;
 
         entries.add(_CalEntry(
           job: job,
           day: job.scheduledAt!,
-          kind: _seesAllOrgJobs && job.isOpen
-              ? _EntryKind.assigned // ανοιχτή αλλά με ραντεβού· εμφανίζεται σαν προγραμματισμένη
-              : (job.scheduledAt != null
-                  ? _EntryKind.appointment
-                  : _EntryKind.immediate),
+          kind: kind,
           vehicleType: job.vehicleType,
         ));
       }
@@ -165,10 +181,15 @@ class _JobsCalendarPageState extends State<JobsCalendarPage> {
         if (job.scheduledAt != null) continue; // ήδη μετρήθηκε πάνω
         if (job.takenAt == null) continue;
         if (!_seesAllOrgJobs && job.takenBy != widget.uid) continue;
+        final _EntryKind kind = job.status == JobStatus.done
+            ? _EntryKind.done
+            : job.status == JobStatus.cancelled
+                ? _EntryKind.cancelled
+                : _EntryKind.immediate;
         entries.add(_CalEntry(
           job: job,
           day: job.takenAt!,
-          kind: _EntryKind.immediate,
+          kind: kind,
           vehicleType: job.vehicleType,
         ));
       }
@@ -219,6 +240,10 @@ class _JobsCalendarPageState extends State<JobsCalendarPage> {
         return const Color(0xFFEF9F27); // πορτοκαλί — ανέλαβε κάποιος
       case _EntryKind.saved:
         return const Color(0xFFD64545); // κόκκινο — αποθηκευμένη
+      case _EntryKind.done:
+        return c.greenDeep; // πράσινο — ολοκληρωμένη
+      case _EntryKind.cancelled:
+        return const Color(0xFF8A8A8A); // γκρι — ακυρωμένη
     }
   }
 
@@ -696,6 +721,25 @@ class _JobsCalendarPageState extends State<JobsCalendarPage> {
                           style: TextStyle(
                               fontSize: 12,
                               color: const Color(0xFFD64545),
+                              fontWeight: FontWeight.w600)),
+                    ],
+                    if (e.kind == _EntryKind.done) ...[
+                      const SizedBox(height: 6),
+                      Text(
+                          job.takenByName != null
+                              ? 'Ολοκληρώθηκε — ${job.takenByName}'
+                              : 'Ολοκληρώθηκε',
+                          style: TextStyle(
+                              fontSize: 12,
+                              color: c.greenDeep,
+                              fontWeight: FontWeight.w600)),
+                    ],
+                    if (e.kind == _EntryKind.cancelled) ...[
+                      const SizedBox(height: 6),
+                      const Text('Ακυρώθηκε',
+                          style: TextStyle(
+                              fontSize: 12,
+                              color: Color(0xFF8A8A8A),
                               fontWeight: FontWeight.w600)),
                     ],
                   ],
