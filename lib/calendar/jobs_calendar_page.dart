@@ -113,7 +113,9 @@ class _JobsCalendarPageState extends State<JobsCalendarPage> {
     final monthEnd    = DateTime(_focusedMonth.year, _focusedMonth.month + 1, 1);
 
     // Ο οδηγός βλέπει μόνο τις δικές του δουλειές (ό,τι ώρα κι αν είναι).
-    // Ο admin/master βλέπει ΟΛΕΣ τις taken/boarded του οργανισμού.
+    // Ο admin βλέπει ΜΟΝΟ ό,τι δημιούργησε ο ίδιος (createdBy == uid) —
+    // ανεξαρτήτως ποιος την ανέλαβε/ολοκλήρωσε. Ο master βλέπει τα πάντα, με
+    // δυνατότητα (μάτι) να δει μόνο τις δικές του (createdBy == uid).
     Query<Map<String, dynamic>> q = FirebaseFirestore.instance
         .collection('jobs')
         .where('scheduledAt', isGreaterThanOrEqualTo: Timestamp.fromDate(monthStart))
@@ -127,6 +129,12 @@ class _JobsCalendarPageState extends State<JobsCalendarPage> {
       for (final doc in snap.docs) {
         final job = Job.fromDoc(doc);
         if (!_seesAllOrgJobs && job.takenBy != widget.uid) continue;
+        // Admin (ΟΧΙ master): βλέπει ΜΟΝΟ δουλειές που δημιούργησε ο ίδιος —
+        // ποτέ δουλειές άλλου admin/tenant, ανεξαρτήτως ποιος τις ανέλαβε ή
+        // πού κατέληξαν (αποθηκευμένη/ανάληψη/ολοκληρωμένη/ακυρωμένη).
+        if (widget.isAdmin && !widget.isMaster && job.createdBy != widget.uid) {
+          continue;
+        }
         // Επιτρεπόμενες καταστάσεις: admin/master βλέπει ό,τι είναι ακόμα
         // ανοιχτό ΚΑΙ ό,τι έχει γίνει/ακυρωθεί· ο οδηγός βλέπει μόνο ό,τι
         // ανέλαβε ο ίδιος — ανεξαρτήτως αν έχει ολοκληρωθεί ή ακυρωθεί.
@@ -181,6 +189,9 @@ class _JobsCalendarPageState extends State<JobsCalendarPage> {
         if (job.scheduledAt != null) continue; // ήδη μετρήθηκε πάνω
         if (job.takenAt == null) continue;
         if (!_seesAllOrgJobs && job.takenBy != widget.uid) continue;
+        if (widget.isAdmin && !widget.isMaster && job.createdBy != widget.uid) {
+          continue;
+        }
         final _EntryKind kind = job.status == JobStatus.done
             ? _EntryKind.done
             : job.status == JobStatus.cancelled
@@ -194,7 +205,8 @@ class _JobsCalendarPageState extends State<JobsCalendarPage> {
         ));
       }
 
-      // Admin/master: αποθηκευμένες (draft) δουλειές — κόκκινο.
+      // Admin/master: αποθηκευμένες (draft) δουλειές — κόκκινο. Ο admin
+      // (όχι master) βλέπει μόνο όσες αποθήκευσε ο ίδιος.
       if (_seesAllOrgJobs) {
         final savedSnap = await FirebaseFirestore.instance
             .collection('saved_jobs')
@@ -206,6 +218,10 @@ class _JobsCalendarPageState extends State<JobsCalendarPage> {
           try {
             final sj = SavedJob.fromDoc(doc);
             if (sj.job.scheduledAt == null) continue;
+            if (widget.isAdmin && !widget.isMaster &&
+                sj.ownerUid != widget.uid) {
+              continue;
+            }
             entries.add(_CalEntry(
               job:         sj.job,
               day:         sj.job.scheduledAt!,
@@ -218,10 +234,11 @@ class _JobsCalendarPageState extends State<JobsCalendarPage> {
       }
 
       entries.sort((a, b) => a.day.compareTo(b.day));
-      // Μάτι σβηστό (ΜΟΝΟ master — ο admin έτσι κι αλλιώς βλέπει μόνο τα δικά
-      // του): κράτα μόνο τις δουλειές που πήρε ο ίδιος ο master.
+      // Μάτι σβηστό (ΜΟΝΟ master): κράτα ΜΟΝΟ τις δουλειές που δημιούργησε
+      // ο ίδιος ο master — ΟΧΙ αυτές που έτυχε να οδηγήσει ο ίδιος. Το
+      // "δικές μου" σημαίνει «δικές μου επιχείρησης», όχι «οδήγησα εγώ».
       if (widget.isMaster && _onlyMine) {
-        return entries.where((e) => e.job.takenBy == widget.uid).toList();
+        return entries.where((e) => e.job.createdBy == widget.uid).toList();
       }
       return entries;
     });
@@ -709,12 +726,6 @@ class _JobsCalendarPageState extends State<JobsCalendarPage> {
                         ],
                       ]),
                     ],
-                    if (e.kind == _EntryKind.assigned &&
-                        job.takenByName != null) ...[
-                      const SizedBox(height: 6),
-                      Text('Ανέλαβε: ${job.takenByName}',
-                          style: TextStyle(fontSize: 12, color: c.textFaint)),
-                    ],
                     if (e.kind == _EntryKind.saved) ...[
                       const SizedBox(height: 6),
                       Text('Αποθηκευμένη — δεν έχει δοθεί ακόμη',
@@ -741,6 +752,33 @@ class _JobsCalendarPageState extends State<JobsCalendarPage> {
                               fontSize: 12,
                               color: Color(0xFF8A8A8A),
                               fontWeight: FontWeight.w600)),
+                    ],
+                    // ── Διακριτικά: ποιος τη δημιούργησε / ποιος την
+                    //    ανέλαβε — μόνο σε admin/master (ο οδηγός ήδη ξέρει
+                    //    ότι είναι δική του). Χρήσιμο ειδικά για τον master
+                    //    που βλέπει δουλειές από πολλούς admins μαζί.
+                    //    ΣΗΜΕΙΩΣΗ: οι αποθηκευμένες (saved) δουλειές κρατούν
+                    //    τον δημιουργό στο ownerName του SavedJob (όχι στο
+                    //    job.createdByName — διαφορετικό πεδίο στο doc).
+                    if (_seesAllOrgJobs) ...[
+                      const SizedBox(height: 6),
+                      Builder(builder: (_) {
+                        final creatorName = (e.kind == _EntryKind.saved
+                                ? e.savedJob?.ownerName
+                                : job.createdByName) ??
+                            '';
+                        return Text(
+                          [
+                            creatorName.isNotEmpty
+                                ? 'Από: $creatorName'
+                                : 'Από: Online φόρμα',
+                            if (job.takenByName != null &&
+                                job.takenByName!.isNotEmpty)
+                              'Οδηγός: ${job.takenByName}',
+                          ].join('   ·   '),
+                          style: TextStyle(fontSize: 11, color: c.textFaint),
+                        );
+                      }),
                     ],
                   ],
                 ),
