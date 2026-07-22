@@ -19,6 +19,8 @@
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:table_calendar/table_calendar.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -74,10 +76,31 @@ class _JobsCalendarPageState extends State<JobsCalendarPage> {
 
   bool get _seesAllOrgJobs => widget.isAdmin || widget.isMaster;
 
-  // Μάτι πάνω δεξιά (μόνο admin/master): αναμμένο (true) = βλέπει ΟΛΟΥΣ τους
+  // Μάτι πάνω δεξιά (ΜΟΝΟ master): αναμμένο (true) = βλέπει ΟΛΟΥΣ τους
   // οδηγούς/admins του οργανισμού (προεπιλογή, ίδια συμπεριφορά με πριν)·
-  // σβηστό (false) = βλέπει ΜΟΝΟ τις δικές του δουλειές.
+  // σβηστό (false) = βλέπει ΜΟΝΟ τις δικές του δουλειές. Η επιλογή
+  // αποθηκεύεται τοπικά (SharedPreferences) — μένει όπως την άφησε.
+  static const String _kOnlyMinePrefsKey = 'calendar_master_only_mine_v1';
   bool _onlyMine = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadOnlyMinePref();
+  }
+
+  Future<void> _loadOnlyMinePref() async {
+    if (!widget.isMaster) return;
+    final prefs = await SharedPreferences.getInstance();
+    final saved = prefs.getBool(_kOnlyMinePrefsKey) ?? false;
+    if (mounted && saved != _onlyMine) setState(() => _onlyMine = saved);
+  }
+
+  Future<void> _toggleOnlyMine() async {
+    setState(() => _onlyMine = !_onlyMine);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_kOnlyMinePrefsKey, _onlyMine);
+  }
 
   // Μεγέθη συρταριού (ποσοστά ύψους οθόνης).
   static const double _sheetMin = 0.30;
@@ -235,7 +258,7 @@ class _JobsCalendarPageState extends State<JobsCalendarPage> {
                         : Icons.visibility_rounded,
                     color: _onlyMine ? c.textFaint : c.amberDeep,
                   ),
-                  onPressed: () => setState(() => _onlyMine = !_onlyMine),
+                  onPressed: _toggleOnlyMine,
                 ),
               ]
             : null,
@@ -637,7 +660,7 @@ class _JobsCalendarPageState extends State<JobsCalendarPage> {
                                   '${phone.replaceAll(RegExp(r'[^0-9]'), '')}'),
                               mode: LaunchMode.externalApplication,
                             ),
-                            child: const Icon(Icons.chat_bubble_rounded,
+                            child: const FaIcon(FontAwesomeIcons.whatsapp,
                                 size: 19, color: Color(0xFF1D9E75)),
                           ),
                         ],

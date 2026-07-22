@@ -36,10 +36,14 @@ class VehicleTypeIcon extends StatelessWidget {
   Widget build(BuildContext context) {
     final v = (vehicleType ?? '').trim();
     if (isAnyVehicleType(v)) {
+      // Το «All» εικονίδιο έχει περισσότερη λεπτομέρεια (3 οχήματα μαζί) από
+      // τα μονά εικονίδια οχήματος — μεγαλώνει λίγο παραπάνω ώστε να
+      // παραμένει καθαρό στο ίδιο οπτικό μέγεθος.
+      final displaySize = size * 1.25;
       return SvgPicture.asset(
         'assets/icons/all_vehicles.svg',
-        width:  size,
-        height: size * (72 / 120), // ίδια αναλογία με το viewBox του SVG
+        width:  displaySize,
+        height: displaySize * (68 / 120), // ίδια αναλογία με το viewBox του SVG
         colorFilter: color != null
             ? ColorFilter.mode(color!, BlendMode.srcIn)
             : null,
