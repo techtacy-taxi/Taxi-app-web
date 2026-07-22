@@ -787,6 +787,7 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
       displayName: _displayName, lastName: _lastName, phone: _phone,
       vehicleModel: _vehicleModel, referredBy: _referredBy,
       plateNumber: _plateNumber, vehicleType: _vehicleType, initialHasBus: _hasBus,
+      isAlreadyApproved: _isApproved,
       onSaved: ({required name, required lastName, required phone,
           required vehicleModel, required referredBy, required plateNumber, required vehicleType,
           required hasBus,

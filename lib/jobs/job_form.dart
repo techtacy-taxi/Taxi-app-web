@@ -353,6 +353,8 @@ class _JobFormPageState extends State<JobFormPage> {
 
   DateTime? _scheduledAt;
   bool      _isScheduled   = false;
+  /// Λεπτά πριν το ραντεβού για ειδοποιήσεις. 10 & 30 κλειδωμένα (πάντα μέσα).
+  List<int> _reminderOffsets = [30, 10];
   bool      _isSaving      = false;
   bool      _availableOnly = true;
   bool      _exclusiveTarget = false; // αποκλειστική αποστολή σε ομάδα/οδηγούς
@@ -443,6 +445,7 @@ class _JobFormPageState extends State<JobFormPage> {
       _fullyPaidManual = false;
       // Αν η αρχική ήταν προγραμματισμένη → ζήτα νέα ώρα αμέσως.
       // Άκυρο = μένει κενό → βγαίνει ΑΜΕΣΑ.
+      _reminderOffsets = List<int>.from(widget.copyFromJob!.reminderOffsets);
       if (widget.copyFromJob!.scheduledAt != null) {
         _scheduledAt = null;
         _isScheduled = false;
@@ -951,6 +954,7 @@ class _JobFormPageState extends State<JobFormPage> {
     }
     _isScheduled      = job.scheduledAt != null;
     _scheduledAt      = job.scheduledAt;
+    _reminderOffsets  = List<int>.from(job.reminderOffsets);
     _availableOnly    = job.availableOnly;
     _exclusiveTarget  = job.exclusiveTarget;
     _clientNameCtrl.text  = job.clientName   ?? '';
@@ -1115,6 +1119,7 @@ class _JobFormPageState extends State<JobFormPage> {
       sourceId:         _selectedSource?.id,
       sourceName:       _selectedSource?.name,
       scheduledAt:      _isScheduled ? _scheduledAt : null,
+      reminderOffsets:  _sortedOffsets(),
       createdAt:        DateTime.now(),
       groupId:          _targetUids.isNotEmpty ? null : _selectedGroupId,
       targetUids:       _targetUids.toList(),
@@ -1270,6 +1275,98 @@ class _JobFormPageState extends State<JobFormPage> {
   }
 
   // ─── Date/Time picker ─────────────────────────────────────────────────────
+
+  // ─── Υπενθυμίσεις (λεπτά πριν) ──────────────────────────────────────────
+  static const List<int> _lockedOffsets = [30, 10]; // πάντα μέσα, μη-επεξεργάσιμα
+
+  /// Τα offsets ταξινομημένα φθίνουσα (π.χ. 90, 30, 10), χωρίς διπλότυπα.
+  List<int> _sortedOffsets() {
+    final set = <int>{..._lockedOffsets, ..._reminderOffsets};
+    final list = set.toList()..sort((a, b) => b.compareTo(a));
+    return list;
+  }
+
+  String _fmtOffset(int m) {
+    if (m % 60 == 0) {
+      final h = m ~/ 60;
+      return h == 1 ? '1 ώρα' : '$h ώρες';
+    }
+    if (m > 60) {
+      final h = m ~/ 60, r = m % 60;
+      return '${h}ω ${r}λ';
+    }
+    return '$m λεπτά';
+  }
+
+  Future<void> _addReminderOffset() async {
+    final ctrl = TextEditingController();
+    final mins = await showDialog<int>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Νέα υπενθύμιση'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Πόσα λεπτά πριν το ραντεβού;'),
+            const SizedBox(height: 4),
+            const Text('Γρήγορη επιλογή:',
+                style: TextStyle(fontSize: 12, color: Colors.grey)),
+            const SizedBox(height: 6),
+            Wrap(
+              spacing: 6,
+              children: [15, 45, 60, 90, 120, 180].map((m) =>
+                  ActionChip(
+                    label: Text(_fmtOffset(m)),
+                    onPressed: () => Navigator.pop(ctx, m),
+                  )).toList(),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: ctrl,
+              keyboardType: TextInputType.number,
+              autofocus: false,
+              decoration: const InputDecoration(
+                labelText: 'Ή δώσε λεπτά',
+                hintText: 'π.χ. 75',
+                border: OutlineInputBorder(),
+                isDense: true,
+              ),
+              onSubmitted: (v) =>
+                  Navigator.pop(ctx, int.tryParse(v.trim())),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Άκυρο')),
+          FilledButton(
+            onPressed: () =>
+                Navigator.pop(ctx, int.tryParse(ctrl.text.trim())),
+            child: const Text('Προσθήκη'),
+          ),
+        ],
+      ),
+    );
+    if (mins == null) return;
+    if (mins <= 0 || mins > 1440) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Δώσε τιμή 1–1440 λεπτά.'),
+      ));
+      return;
+    }
+    if (_lockedOffsets.contains(mins) || _reminderOffsets.contains(mins)) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('Το «${_fmtOffset(mins)}» υπάρχει ήδη.'),
+      ));
+      return;
+    }
+    setState(() => _reminderOffsets = _sortedOffsets()..add(mins));
+    setState(() => _reminderOffsets.sort((a, b) => b.compareTo(a)));
+  }
 
   Future<void> _pickScheduledTime() async {
     final now  = DateTime.now();
@@ -1896,6 +1993,100 @@ class _JobFormPageState extends State<JobFormPage> {
                   ),
                 ]),
               ),
+            ),
+            // ── Υπενθυμίσεις πριν το ραντεβού ──────────────────────────────
+            const SizedBox(height: 12),
+            Row(children: [
+              const Icon(Icons.notifications_active_rounded,
+                  size: 18, color: Colors.grey),
+              const SizedBox(width: 6),
+              const Text('Ειδοποίηση πριν',
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+              const Spacer(),
+              const Text('τα 10 & 30 είναι σταθερά',
+                  style: TextStyle(fontSize: 11, color: Colors.grey)),
+            ]),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final m in _sortedOffsets())
+                  _lockedOffsets.contains(m)
+                      // Κλειδωμένα (γκρι, δεν πειράζονται)
+                      ? Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 8),
+                          decoration: BoxDecoration(
+                            color: Colors.grey.shade200,
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(color: Colors.grey.shade400),
+                          ),
+                          child: Row(mainAxisSize: MainAxisSize.min, children: [
+                            Icon(Icons.lock_rounded,
+                                size: 13, color: Colors.grey.shade600),
+                            const SizedBox(width: 5),
+                            Text(_fmtOffset(m),
+                                style: TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600,
+                                    color: Colors.grey.shade700)),
+                          ]),
+                        )
+                      // Custom (μπλε, με X για αφαίρεση)
+                      : Container(
+                          padding: const EdgeInsets.only(
+                              left: 12, right: 6, top: 8, bottom: 8),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFE3F0FB),
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(color: const Color(0xFF9CC7EC)),
+                          ),
+                          child: Row(mainAxisSize: MainAxisSize.min, children: [
+                            Text(_fmtOffset(m),
+                                style: const TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600,
+                                    color: Color(0xFF0C447C))),
+                            const SizedBox(width: 2),
+                            InkWell(
+                              onTap: () => setState(() =>
+                                  _reminderOffsets = _sortedOffsets()
+                                    ..removeWhere((x) => x == m)),
+                              borderRadius: BorderRadius.circular(20),
+                              child: const Padding(
+                                padding: EdgeInsets.all(2),
+                                child: Icon(Icons.close_rounded,
+                                    size: 15, color: Color(0xFF0C447C)),
+                              ),
+                            ),
+                          ]),
+                        ),
+                // Κουμπί +
+                InkWell(
+                  onTap: _addReminderOffset,
+                  borderRadius: BorderRadius.circular(20),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: Colors.amber.shade50,
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: Colors.amber.shade400),
+                    ),
+                    child: Row(mainAxisSize: MainAxisSize.min, children: [
+                      Icon(Icons.add_rounded,
+                          size: 16, color: Colors.amber.shade800),
+                      const SizedBox(width: 3),
+                      Text('Προσθήκη',
+                          style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              color: Colors.amber.shade900)),
+                    ]),
+                  ),
+                ),
+              ],
             ),
           ],
 

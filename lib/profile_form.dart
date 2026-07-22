@@ -63,6 +63,11 @@ Future<void> showProfileForm({
   required String plateNumber,
   required VehicleType vehicleType,
   required bool initialHasBus, // συμβατότητα κλήσης — φορτώνεται φρέσκο από Firestore
+  /// true όταν ο οδηγός είναι ΗΔΗ εγκεκριμένος (μπήκε από Ρυθμίσεις για
+  /// επεξεργασία στοιχείων) — κρύβει τη μπάρα onboarding «3/4» και το
+  /// κείμενο του κουμπιού γίνεται «Αποθήκευση» αντί για «Αποστολή για
+  /// έγκριση» (δεν χρειάζεται νέα έγκριση για απλή επεξεργασία στοιχείων).
+  bool isAlreadyApproved = false,
   required OnProfileSaved onSaved,
 }) async {
   // Φορτώνουμε πάντα φρέσκα δεδομένα από Firestore πριν ανοίξει η φόρμα
@@ -248,7 +253,10 @@ Future<void> showProfileForm({
               constraints: const BoxConstraints(maxWidth: 420),
               child: Column(mainAxisSize: MainAxisSize.min, children: [
 
-                // ── Header: τίτλος + βήμα + μπάρα προόδου (3/4) ──
+                // ── Header: τίτλος + βήμα + μπάρα προόδου ──
+                // Η μπάρα «3/4» έχει νόημα ΜΟΝΟ στο αρχικό onboarding· αν ο
+                // οδηγός είναι ήδη εγκεκριμένος (άνοιξε από Ρυθμίσεις για
+                // επεξεργασία) δεν υπάρχουν «βήματα» — κρύβεται τελείως.
                 Padding(
                   padding: const EdgeInsets.fromLTRB(18, 16, 18, 0),
                   child: Column(children: [
@@ -260,25 +268,30 @@ Future<void> showProfileForm({
                                 fontWeight: FontWeight.w600,
                                 color: c.textMain)),
                       ),
-                      Text('3 / 4',
-                          style: TextStyle(
-                              fontSize: 12, color: c.textFaint)),
+                      if (!isAlreadyApproved)
+                        Text('3 / 4',
+                            style: TextStyle(
+                                fontSize: 12, color: c.textFaint)),
                     ]),
-                    const SizedBox(height: 8),
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(3),
-                      child: LinearProgressIndicator(
-                        value: 0.75,
-                        minHeight: 5,
-                        backgroundColor: c.divider,
-                        color: c.amber,
+                    if (!isAlreadyApproved) ...[
+                      const SizedBox(height: 8),
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(3),
+                        child: LinearProgressIndicator(
+                          value: 0.75,
+                          minHeight: 5,
+                          backgroundColor: c.divider,
+                          color: c.amber,
+                        ),
                       ),
-                    ),
+                    ],
                     const SizedBox(height: 6),
                     Row(children: [
                       Expanded(
                         child: Text(
-                            'Θα τα δει ο διαχειριστής για να σε εγκρίνει',
+                            isAlreadyApproved
+                                ? 'Επεξεργασία στοιχείων προφίλ'
+                                : 'Θα τα δει ο διαχειριστής για να σε εγκρίνει',
                             style: TextStyle(
                                 fontSize: 12, color: c.textFaint)),
                       ),
@@ -728,7 +741,9 @@ Future<void> showProfileForm({
                                   width: 18, height: 18,
                                   child: CircularProgressIndicator(
                                       strokeWidth: 2))
-                              : const Text('Αποστολή για έγκριση'),
+                              : Text(isAlreadyApproved
+                                  ? 'Αποθήκευση'
+                                  : 'Αποστολή για έγκριση'),
                         ),
                       ),
                       const SizedBox(height: 4),

@@ -105,11 +105,14 @@ class ReminderSpec {
   final String   from;
   final String   to;
   final DateTime scheduledAt;
+  /// Λεπτά πριν το ραντεβού για ειδοποίηση (π.χ. [90, 30, 10]).
+  final List<int> offsets;
   const ReminderSpec({
     required this.jobId,
     required this.from,
     required this.to,
     required this.scheduledAt,
+    this.offsets = const [30, 10],
   });
 }
 
@@ -999,10 +1002,12 @@ class NotificationsService {
   // Ο ήχος επαναλαμβάνεται native (FLAG_INSISTENT) μέχρι ο χρήστης να
   // αλληλεπιδράσει — δεν χρειάζεται ζωντανό Dart isolate.
 
-  /// Σταθερό, μοναδικό notifId ανά (δουλειά, offset).
+  /// Σταθερό, μοναδικό notifId ανά (δουλειά, offset) — για οποιοδήποτε offset.
   static int _reminderNotifId(String jobId, int offset) {
     final base = jobId.hashCode.abs() & 0x7FFFFFFF;
-    return (base ^ (offset == 30 ? 0x30303 : 0x10101)) & 0x7FFFFFFF;
+    // Ανακάτεμα του offset ώστε 10/30/90… να δίνουν σίγουρα διαφορετικά id.
+    final mix = (offset * 2654435761) & 0x7FFFFFFF;
+    return (base ^ mix) & 0x7FFFFFFF;
   }
 
   /// Συγχρονίζει τα προγραμματισμένα reminders με την τρέχουσα λίστα
@@ -1026,7 +1031,7 @@ class NotificationsService {
     } catch (_) {}
 
     for (final s in specs) {
-      for (final off in kReminderOffsets) {
+      for (final off in s.offsets) {
         final fireAt = s.scheduledAt.subtract(Duration(minutes: off));
         // Προγραμμάτισε μόνο αν το σημείο είναι στο μέλλον (5″ περιθώριο).
         if (fireAt.isBefore(now.add(const Duration(seconds: 5)))) {

@@ -46,6 +46,9 @@ class Job {
   final String?    sourceId;
   final String?    sourceName;
   final DateTime?  scheduledAt;
+  /// Λεπτά ΠΡΙΝ το ραντεβού για ειδοποιήσεις. 10 & 30 είναι πάντα κλειδωμένα·
+  /// ο χρήστης μπορεί να προσθέσει κι άλλα (π.χ. 90). Ταξινομημένα φθίνουσα.
+  final List<int>  reminderOffsets;
   final DateTime   createdAt;
   final DateTime?  takenAt;
   final DateTime?  doneAt;
@@ -121,6 +124,7 @@ class Job {
     this.sourceId,
     this.sourceName,
     this.scheduledAt,
+    this.reminderOffsets = const [30, 10],
     required this.createdAt,
     this.takenAt,
     this.doneAt,
@@ -224,6 +228,7 @@ class Job {
       sourceId:         d['sourceId'],
       sourceName:       d['sourceName'],
       scheduledAt:      (d['scheduledAt'] as Timestamp?)?.toDate(),
+      reminderOffsets:  _parseOffsets(d['reminderOffsets']),
       createdAt:        (d['createdAt']   as Timestamp?)?.toDate() ?? DateTime.now(),
       takenAt:          (d['takenAt']       as Timestamp?)?.toDate(),
       doneAt:           (d['doneAt']        as Timestamp?)?.toDate(),
@@ -249,6 +254,21 @@ class Job {
       fullyPaid:        (d['fullyPaid'] as bool?) ?? false,
       bookingNumber:    (d['bookingNumber'] as num?)?.toInt(),
     );
+  }
+
+  /// Διαβάζει με ασφάλεια τα reminderOffsets από Firestore. Εγγυάται ότι το
+  /// 10 & 30 υπάρχουν ΠΑΝΤΑ (κλειδωμένα), προσθέτει τυχόν custom, βγάζει
+  /// διπλότυπα/μη-θετικά και τα επιστρέφει ταξινομημένα φθίνουσα.
+  static List<int> _parseOffsets(dynamic raw) {
+    final set = <int>{30, 10};
+    if (raw is List) {
+      for (final e in raw) {
+        final n = (e is num) ? e.toInt() : int.tryParse('$e');
+        if (n != null && n > 0 && n <= 1440) set.add(n);
+      }
+    }
+    final list = set.toList()..sort((a, b) => b.compareTo(a));
+    return list;
   }
 
   Map<String, dynamic> toMap() => {
@@ -289,6 +309,7 @@ class Job {
     if (sourceId    != null) 'sourceId':    sourceId,
     if (sourceName  != null) 'sourceName':  sourceName,
     if (scheduledAt != null) 'scheduledAt': Timestamp.fromDate(scheduledAt!),
+    'reminderOffsets': reminderOffsets,
     'createdAt':        FieldValue.serverTimestamp(),
     if (groupId     != null) 'groupId':     groupId,
     'targetUids':       targetUids,
@@ -330,7 +351,8 @@ class Job {
     childSeatPrice: childSeatPrice, vehicleType: vehicleType, status: status,
     createdBy: createdBy, createdByName: createdByName, takenBy: takenBy,
     takenByName: takenByName, note: note, sourceId: sourceId, sourceName: sourceName,
-    scheduledAt: scheduledAt, createdAt: createdAt, takenAt: takenAt,
+    scheduledAt: scheduledAt, reminderOffsets: reminderOffsets,
+    createdAt: createdAt, takenAt: takenAt,
     doneAt: doneAt, cancelledAt: cancelledAt, groupId: groupId,
     targetUids: targetUids, targetNames: targetNames, timeoutMins: timeoutMins,
     clientName: clientName, clientPhone: clientPhone, clientEmail: clientEmail,

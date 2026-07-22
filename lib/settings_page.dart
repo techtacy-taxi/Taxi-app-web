@@ -20,6 +20,7 @@ import 'package:flutter/material.dart';
 import 'app_theme.dart';
 import 'masters/global_settings_page.dart';
 import 'pricing/pricing_zones_page.dart';
+import 'qr/qr_code_page.dart';
 import 'viva_settings_page.dart';
 import 'voice/groups_admin.dart';
 
@@ -83,6 +84,25 @@ class _SettingsPageState extends State<SettingsPage> {
         backgroundColor: c.scaffold,
         foregroundColor: c.textMain,
         elevation: 0,
+        // Μόνο για tenant-admins και master: κουμπί επεξεργασίας link (μολύβι)
+        // + κουμπί εμφάνισης QR code (full screen) — ίδια δικαιώματα με
+        // «Ρυθμίσεις Online Φόρμας».
+        actions: (widget.isAdmin || widget.isMaster)
+            ? [
+                IconButton(
+                  icon: const Icon(Icons.edit_rounded),
+                  tooltip: 'Επεξεργασία link QR',
+                  onPressed: () => showQrLinkEditDialog(context),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.qr_code_rounded),
+                  tooltip: 'Προβολή QR code',
+                  onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const QrCodePage()),
+                  ),
+                ),
+              ]
+            : null,
       ),
       body: ListView(
         // Κάτω: +ύψος Android navigation bar να μην κρύβεται το τέλος.

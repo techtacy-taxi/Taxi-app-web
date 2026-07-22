@@ -88,7 +88,7 @@ class _JobListenerState extends State<JobListener> with WidgetsBindingObserver {
   // ── Υπενθυμίσεις ραντεβού (exact alarms) ───────────────────────────────
   // Δεν κάνουμε πια polling με Timer. Ακούμε τις προγραμματισμένες δουλειές
   // και αναθέτουμε στο NotificationsService να προγραμματίσει exact alarms.
-  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _scheduledSub;
+  StreamSubscription<List<Job>>? _scheduledSub;
   List<Job>   _myScheduledJobs    = const [];
   bool        _reminderDialogShowing = false;
 
@@ -248,23 +248,22 @@ class _JobListenerState extends State<JobListener> with WidgetsBindingObserver {
   // προγραμματίζει όσα ραντεβού έχουν μελλοντικά checkpoints και ακυρώνει
   // όσα δεν ισχύουν πλέον (ολοκληρώθηκαν / ακυρώθηκαν / άλλαξε η ώρα).
   Future<void> _initScheduledReminders() async {
-    _scheduledSub = FirebaseFirestore.instance
-        .collection('jobs')
-        .where('takenBy', isEqualTo: widget.uid)
-        .where('status',  whereIn: ['taken', 'boarded'])
-        .snapshots()
-        .listen((snap) {
-      _myScheduledJobs = snap.docs
-          .map((d) => Job.fromDoc(d))
-          .where((j) => j.scheduledAt != null)
-          .toList();
-      NotificationsService.dbg('snapshot: ${snap.docs.length} δουλειές '
-          '(taken/boarded), ${_myScheduledJobs.length} με scheduledAt');
+    // ΣΗΜΑΝΤΙΚΟ: τρεφόμαστε από την ΙΔΙΑ πηγή με το countdown bar
+    // (JobService.allJobs → orderBy createdAt, single-field index που υπάρχει
+    // ΠΑΝΤΑ). Το παλιό server-side composite query (where takenBy + where
+    // status whereIn) απαιτούσε composite index· αν έλειπε, ΣΚΑΓΕ ΣΙΩΠΗΛΑ και
+    // δεν προγραμματιζόταν κανένα alarm — ενώ το countdown bar δούλευε
+    // κανονικά. Το φιλτράρισμα γίνεται τώρα client-side.
+    _scheduledSub = JobService.allJobs(limit: 150).listen((jobs) {
+      _myScheduledJobs = jobs.where((j) =>
+          j.scheduledAt != null &&
+          j.takenBy == widget.uid &&
+          (j.isTaken || j.isBoarded)).toList();
+      NotificationsService.dbg('snapshot: ${jobs.length} δουλειές σύνολο, '
+          '${_myScheduledJobs.length} δικά μου με ραντεβού (taken/boarded)');
       // ignore: unawaited_futures
       _syncReminders();
     }, onError: (Object e, StackTrace st) {
-      // ΚΡΙΣΙΜΟ: χωρίς αυτό, ένα missing composite index ή σφάλμα parsing
-      // απέτυχε ΣΙΩΠΗΛΑ → κανένα alarm προγραμματιζόταν, κανένα μήνυμα.
       NotificationsService.dbg('listener ERROR: $e');
       debugPrint('$st');
     });
@@ -278,6 +277,7 @@ class _JobListenerState extends State<JobListener> with WidgetsBindingObserver {
               from:        j.from,
               to:          j.to,
               scheduledAt: j.scheduledAt!,
+              offsets:     j.reminderOffsets,
             ))
         .toList();
     await NotificationsService.syncAppointmentReminders(specs);

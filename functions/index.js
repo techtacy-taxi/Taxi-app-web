@@ -6639,6 +6639,8 @@ exports.updateTenantBusinessInfo = onCall(
     if (d.contactEmail != null)   updates.contactEmail   = s(d.contactEmail) || null;
     if (d.whatsappNumber != null) updates.whatsappNumber = s(d.whatsappNumber) || null;
     if (d.logoUrl != null)        updates.logoUrl        = s(d.logoUrl) || null;
+    // Link για το QR code (π.χ. σελίδα κράτησης) — δημόσιο, όχι μυστικό.
+    if (d.qrLinkUrl != null)      updates.qrLinkUrl      = s(d.qrLinkUrl) || null;
     // Google Maps/Places API key — ΔΕΝ είναι μυστικό (τα κλειδιά Google Maps
     // είναι ΠΑΝΤΑ ορατά στον browser, η ασφάλεια έρχεται από τον περιορισμό
     // domain στο ίδιο το Google Cloud Console, όχι από μυστικότητα).
@@ -6665,6 +6667,7 @@ exports.getTenantBusinessInfo = onRequest(
       if (!doc.exists) {
         return res.status(200).json({ ok: true, businessName: null, contactPhone: null,
           contactEmail: null, whatsappNumber: null, logoUrl: null, mapsApiKey: null,
+          qrLinkUrl: null,
           mapEnabled: true, placesEnabled: true,
           afm: null, doy: null, taxAddress: null, kad: null,
           invoiceProvider: "none", hasInvoiceApiKey: false,
@@ -6682,6 +6685,7 @@ exports.getTenantBusinessInfo = onRequest(
         whatsappNumber: t.whatsappNumber || null,
         logoUrl:        t.logoUrl        || null,
         mapsApiKey:     t.mapsApiKey     || null,
+        qrLinkUrl:      t.qrLinkUrl      || null,
         // ── Διακόπτες master — απενεργοποιούν χάρτη/Places ανά φόρμα.
         // ΠΡΟΕΠΙΛΟΓΗ true (ενεργά) αν δεν έχουν οριστεί ρητά ποτέ.
         mapEnabled:     t.mapEnabled     !== false,

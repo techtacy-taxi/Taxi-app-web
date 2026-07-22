@@ -120,7 +120,7 @@ class _ReminderDebugPageState extends State<ReminderDebugPage> {
                   : ListView.separated(
                       padding: const EdgeInsets.symmetric(horizontal: 12),
                       itemCount: _log.length,
-                      separatorBuilder: (_, _) =>
+                      separatorBuilder: (_, __) =>
                           const Divider(height: 1),
                       itemBuilder: (_, i) => Padding(
                         padding: const EdgeInsets.symmetric(vertical: 6),
