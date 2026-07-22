@@ -674,12 +674,19 @@ class _JobsCalendarPageState extends State<JobsCalendarPage> {
   static const List<int> _lockedReminderOffsets = [30, 10];
 
   Future<void> _editReminders(BuildContext context, Job job) async {
+    final c = AppColors.of(context);
     var offsets = List<int>.from(job.reminderOffsets)
       ..sort((a, b) => b.compareTo(a));
 
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
+      // ΡΗΤΟ σκούρο φόντο — δεν βασιζόμαστε στο ambient Theme (που μπορεί να
+      // δίνει λευκό/διάφανο canvas και να «χάνεται» το λευκό κείμενο).
+      backgroundColor: c.scaffold,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
       builder: (sheetCtx) => StatefulBuilder(
         builder: (sheetCtx, setSheetState) {
           Future<void> addOffset() async {
@@ -687,16 +694,20 @@ class _JobsCalendarPageState extends State<JobsCalendarPage> {
             final mins = await showDialog<int>(
               context: sheetCtx,
               builder: (dctx) => AlertDialog(
-                title: const Text('Νέα υπενθύμιση'),
+                backgroundColor: c.scaffold,
+                title: Text('Νέα υπενθύμιση',
+                    style: TextStyle(color: c.textMain)),
                 content: Column(
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Wrap(
-                      spacing: 6,
+                      spacing: 6, runSpacing: 6,
                       children: [15, 45, 60, 90, 120, 180].map((m) =>
                           ActionChip(
-                            label: Text(m % 60 == 0 ? '${m ~/ 60}ω' : '$m′'),
+                            label: Text(m % 60 == 0 ? '${m ~/ 60}ω' : '$m′',
+                                style: TextStyle(color: c.textMain)),
+                            backgroundColor: c.cardBorder.withValues(alpha: 0.25),
                             onPressed: () => Navigator.pop(dctx, m),
                           )).toList(),
                     ),
@@ -704,8 +715,13 @@ class _JobsCalendarPageState extends State<JobsCalendarPage> {
                     TextField(
                       controller: ctrl,
                       keyboardType: TextInputType.number,
-                      decoration: const InputDecoration(
-                        labelText: 'Ή λεπτά', border: OutlineInputBorder(),
+                      style: TextStyle(color: c.textMain),
+                      decoration: InputDecoration(
+                        labelText: 'Ή λεπτά',
+                        labelStyle: TextStyle(color: c.textFaint),
+                        border: const OutlineInputBorder(),
+                        enabledBorder: OutlineInputBorder(
+                            borderSide: BorderSide(color: c.cardBorder)),
                         isDense: true,
                       ),
                     ),
@@ -713,7 +729,7 @@ class _JobsCalendarPageState extends State<JobsCalendarPage> {
                 ),
                 actions: [
                   TextButton(onPressed: () => Navigator.pop(dctx),
-                      child: const Text('Άκυρο')),
+                      child: Text('Άκυρο', style: TextStyle(color: c.textFaint))),
                   FilledButton(
                     onPressed: () =>
                         Navigator.pop(dctx, int.tryParse(ctrl.text.trim())),
@@ -737,9 +753,10 @@ class _JobsCalendarPageState extends State<JobsCalendarPage> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text('Υπενθυμίσεις πριν το ραντεβού',
+                  Text('Υπενθυμίσεις πριν το ραντεβού',
                       style: TextStyle(
-                          fontSize: 16, fontWeight: FontWeight.w700)),
+                          fontSize: 16, fontWeight: FontWeight.w700,
+                          color: c.textMain)),
                   const SizedBox(height: 12),
                   Wrap(
                     spacing: 8, runSpacing: 8,
@@ -747,20 +764,29 @@ class _JobsCalendarPageState extends State<JobsCalendarPage> {
                       for (final m in offsets)
                         _lockedReminderOffsets.contains(m)
                             ? Chip(
-                                avatar: const Icon(Icons.lock_rounded, size: 14),
-                                label: Text('$m′'),
-                                backgroundColor: Colors.grey.shade200,
+                                avatar: Icon(Icons.lock_rounded,
+                                    size: 14, color: c.textFaint),
+                                label: Text('$m′',
+                                    style: TextStyle(color: c.textFaint)),
+                                backgroundColor:
+                                    c.cardBorder.withValues(alpha: 0.25),
                               )
                             : Chip(
-                                label: Text('$m′'),
+                                label: Text('$m′',
+                                    style: TextStyle(color: c.textMain)),
+                                backgroundColor: c.amberSoft,
+                                deleteIconColor: c.amberDeep,
                                 onDeleted: () => setSheetState(() =>
                                     offsets = offsets
                                         .where((x) => x != m)
                                         .toList()),
                               ),
                       ActionChip(
-                        avatar: const Icon(Icons.add_rounded, size: 16),
-                        label: const Text('Προσθήκη'),
+                        avatar: Icon(Icons.add_rounded,
+                            size: 16, color: c.textMain),
+                        label: Text('Προσθήκη',
+                            style: TextStyle(color: c.textMain)),
+                        backgroundColor: c.cardBorder.withValues(alpha: 0.25),
                         onPressed: addOffset,
                       ),
                     ],
