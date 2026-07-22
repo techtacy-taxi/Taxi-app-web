@@ -39,7 +39,7 @@ class VehicleTypeIcon extends StatelessWidget {
       // Το «All» εικονίδιο έχει περισσότερη λεπτομέρεια (3 οχήματα μαζί) από
       // τα μονά εικονίδια οχήματος — μεγαλώνει λίγο παραπάνω ώστε να
       // παραμένει καθαρό στο ίδιο οπτικό μέγεθος.
-      final displaySize = size * 1.25;
+      final displaySize = size * 1.55;
       return SvgPicture.asset(
         'assets/icons/all_vehicles.svg',
         width:  displaySize,
