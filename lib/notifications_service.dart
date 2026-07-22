@@ -26,6 +26,14 @@ const String kUpdateChannelId   = 'app_updates_v1';
 const String kUpdateChannelName = 'Ενημερώσεις & Υπενθυμίσεις';
 const String kUpdateChannelDesc = 'Νέες εκδόσεις και υπενθυμίσεις ραντεβού';
 
+// ΞΕΧΩΡΙΣΤΟ channel ΜΟΝΟ για τις υπενθυμίσεις ραντεβού (30′/10′).
+// ΝΕΟ ID → παρακάμπτει το «κλειδωμένο» app_updates_v1 (τα settings ενός
+// channel καθορίζονται ΜΙΑ φορά στη δημιουργία και δεν αλλάζουν με update).
+// Ρυθμισμένο σαν ΞΥΠΝΗΤΗΡΙ: μέγιστη σημαντικότητα, ήχος alarm, full-screen.
+const String kApptChannelId   = 'appointment_alarms_v1';
+const String kApptChannelName = 'Υπενθυμίσεις Ραντεβού';
+const String kApptChannelDesc = 'Ειδοποιήσεις 30 & 10 λεπτά πριν το ραντεβού';
+
 // Channel για αιτήματα έγκρισης (μόνο master)
 const String kApprovalChannelId   = 'approval_requests_v1';
 const String kApprovalChannelName = 'Αιτήματα Έγκρισης';
@@ -343,6 +351,27 @@ Future<void> _ensureChannels(
     debugPrint('notif: channel $kUpdateChannelId created');
   } catch (e) {
     debugPrint('notif: update channel error: $e');
+  }
+
+  // Dedicated ALARM channel για τις υπενθυμίσεις ραντεβού (30′/10′).
+  try {
+    await androidPlugin.createNotificationChannel(
+      AndroidNotificationChannel(
+        kApptChannelId,
+        kApptChannelName,
+        description:      kApptChannelDesc,
+        importance:       Importance.max,   // full-screen «κλήση»
+        playSound:        true,
+        enableVibration:  true,
+        vibrationPattern: kStrongVibration,
+        enableLights:     true,
+        showBadge:        true,
+        audioAttributesUsage: AudioAttributesUsage.alarm, // δυνατά σαν ξυπνητήρι
+      ),
+    );
+    debugPrint('notif: channel $kApptChannelId created');
+  } catch (e) {
+    debugPrint('notif: appt channel error: $e');
   }
 
   try {
@@ -718,6 +747,83 @@ Future<void> cancelPublicBookingNotifications() async {
 
 // ─── Public API ─────────────────────────────────────────────────────────────
 class NotificationsService {
+  // ─── In-app DEBUG log (χωρίς adb) ───────────────────────────────────────
+  // Κρατάμε τις τελευταίες ~120 γραμμές σε SharedPreferences ώστε να τις
+  // βλέπουμε μέσα από την εφαρμογή (οθόνη διαγνωστικών ραντεβού).
+  static const String _kDbgLogKey = 'reminder_debug_log_v1';
+
+  /// Γράφει μια γραμμή log: στο console ΚΑΙ στο in-app buffer.
+  static Future<void> dbg(String msg) async {
+    final line = '${DateTime.now().toIso8601String().substring(11, 19)}  $msg';
+    debugPrint('[REMINDERS] $msg');
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final list = prefs.getStringList(_kDbgLogKey) ?? <String>[];
+      list.add(line);
+      // Κράτα μόνο τις τελευταίες 120 γραμμές.
+      final trimmed = list.length > 120
+          ? list.sublist(list.length - 120)
+          : list;
+      await prefs.setStringList(_kDbgLogKey, trimmed);
+    } catch (_) {}
+  }
+
+  static Future<List<String>> getDebugLog() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getStringList(_kDbgLogKey) ?? const <String>[];
+  }
+
+  static Future<void> clearDebugLog() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_kDbgLogKey);
+  }
+
+  /// Μαζεύει την τρέχουσα κατάσταση των υπενθυμίσεων ραντεβού σε αναγνώσιμο
+  /// κείμενο — χωρίς adb. Καλείται από την οθόνη διαγνωστικών.
+  static Future<String> buildReminderDiagnostics() async {
+    final sb = StringBuffer();
+    final android = _localNotifs.resolvePlatformSpecificImplementation<
+        AndroidFlutterLocalNotificationsPlugin>();
+    try {
+      final canNotif = await android?.areNotificationsEnabled();
+      sb.writeln('Ειδοποιήσεις ενεργές: $canNotif');
+    } catch (e) { sb.writeln('Ειδοποιήσεις: σφάλμα ($e)'); }
+    try {
+      final canExact = await android?.canScheduleExactNotifications();
+      sb.writeln('Exact alarms (Alarms & reminders): $canExact');
+    } catch (e) { sb.writeln('Exact alarms: σφάλμα ($e)'); }
+    try {
+      final pending = await _localNotifs.pendingNotificationRequests();
+      final appt = pending.where((p) =>
+          (p.payload ?? '').contains('appointment')).toList();
+      sb.writeln('Προγραμματισμένα alarms (σύνολο): ${pending.length}');
+      sb.writeln('  → εκ των οποίων ραντεβού: ${appt.length}');
+      for (final p in appt) {
+        sb.writeln('     • id=${p.id}  ${p.title}');
+      }
+    } catch (e) { sb.writeln('pending: σφάλμα ($e)'); }
+    return sb.toString();
+  }
+
+  /// Προγραμματίζει ΔΟΚΙΜΑΣΤΙΚΗ υπενθύμιση 1 λεπτό μπροστά, μέσα από το ΙΔΙΟ
+  /// path (ίδιο channel, ίδιο zonedSchedule). Αν χτυπήσει → το σύστημα είναι
+  /// υγιές και το πρόβλημα ήταν στα δεδομένα (query/scheduledAt).
+  static Future<void> scheduleTestReminder() async {
+    final fireAt = DateTime.now().add(const Duration(minutes: 1));
+    await _scheduleOneReminder(
+      id: 999001,
+      spec: ReminderSpec(
+        jobId: 'TEST',
+        from: 'ΔΟΚΙΜΗ',
+        to: 'σε 1 λεπτό',
+        scheduledAt: fireAt.add(const Duration(minutes: 30)),
+      ),
+      offset: 30,
+      fireAt: fireAt,
+    );
+    await dbg('ΔΟΚΙΜΑΣΤΙΚΟ alarm προγραμματίστηκε για $fireAt');
+  }
+
   /// Global navigator key — επιτρέπει να εμφανίζονται dialogs/popups ΠΑΝΩ
   /// από οποιαδήποτε οθόνη (Ιστορικό, Χρεώσεις κ.λπ.), όχι μόνο στον χάρτη.
   static final GlobalKey<NavigatorState> navigatorKey =
@@ -910,16 +1016,30 @@ class NotificationsService {
     final now   = DateTime.now();
     final desired = <int>{};
 
+    // Διαγνωστικό: επιβεβαιώνει αν επιτρέπονται τα exact alarms. Αν είναι
+    // false, το zonedSchedule με exactAllowWhileIdle αποτυγχάνει σιωπηλά.
+    try {
+      final android = _localNotifs.resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin>();
+      final canExact = await android?.canScheduleExactNotifications();
+      await dbg('sync: ${specs.length} ραντεβού, canScheduleExact=$canExact');
+    } catch (_) {}
+
     for (final s in specs) {
       for (final off in kReminderOffsets) {
         final fireAt = s.scheduledAt.subtract(Duration(minutes: off));
         // Προγραμμάτισε μόνο αν το σημείο είναι στο μέλλον (5″ περιθώριο).
-        if (fireAt.isBefore(now.add(const Duration(seconds: 5)))) continue;
+        if (fireAt.isBefore(now.add(const Duration(seconds: 5)))) {
+          await dbg('skip ${s.jobId} -$off′ (fireAt=$fireAt στο παρελθόν)');
+          continue;
+        }
         final id = _reminderNotifId(s.jobId, off);
         desired.add(id);
         await _scheduleOneReminder(id: id, spec: s, offset: off, fireAt: fireAt);
+        await dbg('scheduled ${s.jobId} -$off′ → $fireAt (id=$id)');
       }
     }
+    await dbg('σύνολο προγραμματισμένων alarms: ${desired.length}');
 
     // Ακύρωσε ό,τι ήταν προγραμματισμένο και δεν χρειάζεται πλέον.
     final prev = prefs.getStringList(kScheduledReminderIds) ?? const <String>[];
@@ -943,9 +1063,9 @@ class NotificationsService {
     final body    = '$whenStr  •  ${spec.from} → ${spec.to}';
 
     final androidDetails = AndroidNotificationDetails(
-      kUpdateChannelId,
-      kUpdateChannelName,
-      channelDescription:  kUpdateChannelDesc,
+      kApptChannelId,
+      kApptChannelName,
+      channelDescription:  kApptChannelDesc,
       importance:          Importance.max,
       priority:            Priority.max,
       category:            AndroidNotificationCategory.reminder,
