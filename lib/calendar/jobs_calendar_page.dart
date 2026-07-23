@@ -18,7 +18,6 @@
 // admin/master βλέπουν όλες τις δουλειές τους ΚΑΙ τις saved_jobs.
 
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -252,19 +251,14 @@ class _JobsCalendarPageState extends State<JobsCalendarPage> {
       // ενώ ο super-admin περνούσε λόγω masterEmail(). Γι' αυτό «δεν έβλεπε
       // ποτέ τίποτα». Τώρα το tenantId μπαίνει ΜΕΣΑ στο query.
       if (_seesAllOrgJobs) {
-        final isSuperAdmin =
-            FirebaseAuth.instance.currentUser?.email == 'techtacy@gmail.com';
-        // Περίμενε να φορτωθεί το tenantId πριν ρωτήσεις (αλλιώς θα ρωτούσαμε
-        // λάθος tenant). Μόλις φορτωθεί, το setState ξαναχτίζει το stream.
-        if (isSuperAdmin || _myTenantId != null) {
-          Query<Map<String, dynamic>> savedQ = FirebaseFirestore.instance
-              .collection('saved_jobs')
+        // Ενιαίο helper: προσθέτει αυτόματα το φίλτρο tenantId (εκτός
+        // super-admin). ΚΑΘΕ νέο query σε tenant-scoped collection πρέπει να
+        // περνά από εδώ — αλλιώς permission-denied για κάθε admin.
+        {
+          final savedQ = (await JobService.tenantScoped('saved_jobs'))
               .where('scheduledAt',
                   isGreaterThanOrEqualTo: Timestamp.fromDate(monthStart))
               .where('scheduledAt', isLessThan: Timestamp.fromDate(monthEnd));
-          if (!isSuperAdmin) {
-            savedQ = savedQ.where('tenantId', isEqualTo: _myTenantId);
-          }
           final savedSnap = await savedQ.get();
           for (final doc in savedSnap.docs) {
             try {

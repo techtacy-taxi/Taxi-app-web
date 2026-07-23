@@ -42,6 +42,44 @@ class JobService {
   /// κληρονομήσει το tenantId του προηγούμενου.
   static void clearTenantCache() { _cachedTenantId = null; _cachedForUid = null; }
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // ΜΟΝΙΜΗ ΛΥΣΗ MULTI-TENANT — ΧΡΗΣΙΜΟΠΟΙΗΣΕ ΤΟ ΣΕ ΚΑΘΕ ΝΕΟ QUERY
+  // ═══════════════════════════════════════════════════════════════════════════
+  //
+  // ⚠️ ΚΡΙΣΙΜΟΣ ΚΑΝΟΝΑΣ FIRESTORE (η αιτία που «δεν βλέπει τίποτα» ο admin):
+  // Τα Security Rules ΔΕΝ φιλτράρουν αποτελέσματα — ΑΠΟΡΡΙΠΤΟΥΝ ΟΛΟΚΛΗΡΟ το
+  // query αν ΜΠΟΡΕΙ να επιστρέψει έστω ένα doc άλλου tenant. Δηλαδή ένα query
+  // ΧΩΡΙΣ .where('tenantId', ...) πάνω σε tenant-scoped collection επιστρέφει
+  // permission-denied για ΚΑΘΕ μη super-admin — σιωπηλά, σαν να μην υπάρχουν
+  // δεδομένα. Ο super-admin (techtacy@gmail.com) περνάει λόγω masterEmail()
+  // στα rules, γι' αυτό «σε εσένα δουλεύει και στους άλλους όχι».
+  //
+  // Tenant-scoped collections (βλ. firestore.rules → sameTenantAsResource):
+  //   jobs · saved_jobs · billing_tx · settlements · clients · sources ·
+  //   job_batches · pricing_zones · pricing_routes
+  //
+  // ΧΡΗΣΗ — αντί για:
+  //     FirebaseFirestore.instance.collection('saved_jobs').where(...)
+  // γράψε:
+  //     (await JobService.tenantScoped('saved_jobs')).where(...)
+  //
+  // ⚠️ Γιατί ΔΕΝ βάζουμε φίλτρο για τον super-admin: παλιά έγγραφα (πριν το
+  // multi-tenant) ΔΕΝ έχουν καθόλου πεδίο tenantId. Το Firestore ΔΕΝ ταιριάζει
+  // missing πεδίο με ==, οπότε ένα .where('tenantId', == 'default') θα έκρυβε
+  // όλο το παλιό ιστορικό. Τα rules ήδη επιτρέπουν στον super-admin τα πάντα.
+  static Future<Query<Map<String, dynamic>>> tenantScoped(
+      String collection) async {
+    final base = _fs.collection(collection);
+    if (await isSuperAdmin()) return base;
+    return base.where('tenantId', isEqualTo: await myTenantId());
+  }
+
+  /// True μόνο για τον πραγματικό super-admin (ταιριάζει με masterEmail()
+  /// στα firestore.rules) — αυτός και μόνο βλέπει όλους τους tenants.
+  static Future<bool> isSuperAdmin() async {
+    return FirebaseAuth.instance.currentUser?.email == 'techtacy@gmail.com';
+  }
+
   // ─── Jobs ─────────────────────────────────────────────────────────────────
 
   // Stream ανοιχτών δουλειών (για τον οδηγό).
@@ -76,15 +114,19 @@ class JobService {
     }
 
     controller = StreamController<List<Job>>(
-      onListen: () {
-        sub = _fs
-            .collection(_jobs)
+      onListen: () async {
+        // Tenant-scoped (βλ. tenantScoped): χωρίς φίλτρο tenantId το query
+        // απορρίπτεται ΟΛΟΚΛΗΡΟ για κάθε μη super-admin.
+        final q = await tenantScoped(_jobs);
+        sub = q
             .where('status', isEqualTo: JobStatus.open.name)
             .orderBy('createdAt', descending: true)
             .snapshots()
             .listen((snap) {
           latestRaw = snap.docs.map((d) => Job.fromDoc(d)).toList();
           emit();
+        }, onError: (Object e) {
+          if (!controller.isClosed) controller.addError(e);
         });
         // Επανεκτίμηση κάθε 20s ώστε να πιάνουμε νέα isTimedOut transitions
         ticker = Timer.periodic(const Duration(seconds: 20), (_) => emit());
@@ -152,12 +194,29 @@ class JobService {
 
   // Stream για admin — όλες οι δουλειές
   static Stream<List<Job>> allJobs({int limit = 50}) {
-    return _fs
-        .collection(_jobs)
-        .orderBy('createdAt', descending: true)
-        .limit(limit)
-        .snapshots()
-        .map((snap) => snap.docs.map((d) => Job.fromDoc(d)).toList());
+    // Tenant-scoped (βλ. tenantScoped): χωρίς φίλτρο tenantId το query
+    // απορρίπτεται ΟΛΟΚΛΗΡΟ για κάθε μη super-admin — permission-denied,
+    // σιωπηλά, σαν να μην υπάρχουν δεδομένα.
+    late final StreamController<List<Job>> ctl;
+    StreamSubscription? sub;
+    ctl = StreamController<List<Job>>(
+      onListen: () async {
+        final q = await tenantScoped(_jobs);
+        sub = q
+            .orderBy('createdAt', descending: true)
+            .limit(limit)
+            .snapshots()
+            .listen((snap) {
+          if (!ctl.isClosed) {
+            ctl.add(snap.docs.map((d) => Job.fromDoc(d)).toList());
+          }
+        }, onError: (Object e) {
+          if (!ctl.isClosed) ctl.addError(e);
+        });
+      },
+      onCancel: () async { await sub?.cancel(); },
+    );
+    return ctl.stream;
   }
 
   // Δημιουργία νέας δουλειάς
@@ -959,25 +1018,34 @@ class JobService {
   // Επιστρέφει πηγές. Αν δοθεί createdBy → δικές του + global (Standard Rate).
   // Χωρίς createdBy (master) → όλες.
   static Stream<List<JobSource>> sources({String? createdBy}) {
-    return _fs
-        .collection(_sources)
-        .orderBy('name')
-        .snapshots()
-        .map((snap) {
-      var all = snap.docs.map((d) => JobSource.fromDoc(d)).toList();
-      if (createdBy != null && createdBy.isNotEmpty) {
-        all = all
-            .where((s) => s.createdBy == createdBy || s.isGlobal)
-            .toList();
-      }
-      // Global πηγές (Standard Rate) πρώτες
-      all.sort((a, b) {
-        if (a.isGlobal && !b.isGlobal) return -1;
-        if (!a.isGlobal && b.isGlobal) return 1;
-        return a.name.compareTo(b.name);
-      });
-      return all;
-    });
+    // Tenant-scoped: χωρίς φίλτρο tenantId το query απορρίπτεται ΟΛΟΚΛΗΡΟ για
+    // κάθε μη super-admin (βλ. tenantScoped παραπάνω).
+    late final StreamController<List<JobSource>> ctl;
+    StreamSubscription? sub;
+    ctl = StreamController<List<JobSource>>(
+      onListen: () async {
+        final q = await tenantScoped(_sources);
+        sub = q.orderBy('name').snapshots().listen((snap) {
+          var all = snap.docs.map((d) => JobSource.fromDoc(d)).toList();
+          if (createdBy != null && createdBy.isNotEmpty) {
+            all = all
+                .where((s) => s.createdBy == createdBy || s.isGlobal)
+                .toList();
+          }
+          // Global πηγές (Standard Rate) πρώτες
+          all.sort((a, b) {
+            if (a.isGlobal && !b.isGlobal) return -1;
+            if (!a.isGlobal && b.isGlobal) return 1;
+            return a.name.compareTo(b.name);
+          });
+          if (!ctl.isClosed) ctl.add(all);
+        }, onError: (Object e) {
+          if (!ctl.isClosed) ctl.addError(e);
+        });
+      },
+      onCancel: () async { await sub?.cancel(); },
+    );
+    return ctl.stream;
   }
 
   // ─── Clients (Πελάτες) ────────────────────────────────────────────────────
@@ -2113,12 +2181,24 @@ class JobService {
 
   /// Stream ΟΛΩΝ των εγγραφών billing (για master/εκκαθαρίσεις).
   static Stream<List<BillingTx>> allBillingTx() {
-    return _fs.collection(_billingTx).snapshots().map((s) {
-      final list = s.docs.map((d) => BillingTx.fromDoc(d)).toList()
-        ..removeWhere((t) => t.voided);
-      list.sort((a, b) => b.createdAt.compareTo(a.createdAt));
-      return list;
-    });
+    // Tenant-scoped (βλ. tenantScoped) — αλλιώς permission-denied για admins.
+    late final StreamController<List<BillingTx>> ctl;
+    StreamSubscription? sub;
+    ctl = StreamController<List<BillingTx>>(
+      onListen: () async {
+        final q = await tenantScoped(_billingTx);
+        sub = q.snapshots().listen((s) {
+          final list = s.docs.map((d) => BillingTx.fromDoc(d)).toList()
+            ..removeWhere((t) => t.voided);
+          list.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+          if (!ctl.isClosed) ctl.add(list);
+        }, onError: (Object e) {
+          if (!ctl.isClosed) ctl.addError(e);
+        });
+      },
+      onCancel: () async { await sub?.cancel(); },
+    );
+    return ctl.stream;
   }
 
   /// «Σε ποιον οφείλονται πόσα» (recipient view).
@@ -2256,8 +2336,23 @@ class JobService {
   }
 
   static Stream<List<Settlement>> settlements() {
-    return _fs.collection(_settlements).snapshots().map((s) =>
-        s.docs.map((d) => Settlement.fromDoc(d)).toList());
+    // Tenant-scoped (βλ. tenantScoped) — αλλιώς permission-denied για admins.
+    late final StreamController<List<Settlement>> ctl;
+    StreamSubscription? sub;
+    ctl = StreamController<List<Settlement>>(
+      onListen: () async {
+        final q = await tenantScoped(_settlements);
+        sub = q.snapshots().listen((s) {
+          if (!ctl.isClosed) {
+            ctl.add(s.docs.map((d) => Settlement.fromDoc(d)).toList());
+          }
+        }, onError: (Object e) {
+          if (!ctl.isClosed) ctl.addError(e);
+        });
+      },
+      onCancel: () async { await sub?.cancel(); },
+    );
+    return ctl.stream;
   }
 
   /// Ledger προώθησης: τι έχει μαζέψει ο collector για άλλους και τι εκκρεμεί.
