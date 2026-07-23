@@ -1624,8 +1624,6 @@ class _DriverBillingView extends StatelessWidget {
   final String userName;
   final String masterUid;
   final bool   canManage;
-  // Προσωπική όψη admin/master: κρύβει αυτο-οφειλές (και App/συνδρομή για master)
-  final bool   excludeOwnRecipient;
   final bool   isMaster;
 
   const _DriverBillingView({
@@ -1658,8 +1656,7 @@ class _DriverBillingView extends StatelessWidget {
         final lifeTurnover = lockedTurnover + monthTurnover;
         final lifeJobs     = lockedJobs + monthJobsN;
         return StreamBuilder<List<MonthlyBilling>>(
-          stream: JobService.monthlyBillingFor(uid,
-              excludeOwnRecipient: excludeOwnRecipient, isMaster: isMaster),
+          stream: JobService.monthlyBillingFor(uid, isMaster: isMaster),
           builder: (context, snap) {
             if (!snap.hasData) {
               return const Center(
@@ -2948,7 +2945,7 @@ class _OwedBreakdown extends StatelessWidget {
               style: TextStyle(
                   fontWeight: FontWeight.bold, fontSize: 14)),
           const SizedBox(height: 4),
-          const Text('Για να ξέρεις τι να μαζέψεις ανά πηγή',
+          Text('Για να ξέρεις τι να μαζέψεις ανά πηγή',
               style: TextStyle(fontSize: 11, color: c.textFaint)),
           const Divider(height: 16),
           ...bySource.entries.map((e) => row(

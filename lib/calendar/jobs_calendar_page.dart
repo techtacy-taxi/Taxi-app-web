@@ -207,12 +207,16 @@ class _JobsCalendarPageState extends State<JobsCalendarPage> {
 
       // Admin/master: αποθηκευμένες (draft) δουλειές — κόκκινο. Ο admin
       // (όχι master) βλέπει μόνο όσες αποθήκευσε ο ίδιος.
+      // ΣΗΜΕΙΩΣΗ: τα πεδία στο saved_jobs doc είναι FLAT (scheduledAt, from,
+      // to...) — ΟΧΙ ένθετα κάτω από 'job'. Το query έψαχνε λάθος
+      // 'job.scheduledAt' (πεδίο που δεν υπάρχει) και γι' αυτό ΚΑΜΙΑ
+      // online-form κράτηση δεν εμφανιζόταν ποτέ σε κανέναν admin/master.
       if (_seesAllOrgJobs) {
         final savedSnap = await FirebaseFirestore.instance
             .collection('saved_jobs')
-            .where('job.scheduledAt',
+            .where('scheduledAt',
                 isGreaterThanOrEqualTo: Timestamp.fromDate(monthStart))
-            .where('job.scheduledAt', isLessThan: Timestamp.fromDate(monthEnd))
+            .where('scheduledAt', isLessThan: Timestamp.fromDate(monthEnd))
             .get();
         for (final doc in savedSnap.docs) {
           try {
