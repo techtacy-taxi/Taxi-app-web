@@ -83,33 +83,29 @@ class BillingPage extends StatelessWidget {
           Text(isMaster || isAdmin ? 'Χρεώσεις' : 'Το Χρέος μου',
               style: const TextStyle(fontWeight: FontWeight.bold)),
         ]),
-      ),
-      body: Column(
-        children: [
-          Expanded(child: body),
-          // ── Εργαλεία master/admin — μετακινήθηκαν εδώ (πριν ήταν πάνω
-          //    δεξιά στο AppBar σαν γυμνά εικονίδια χωρίς εξήγηση). Ίδια
-          //    ακριβώς δικαιώματα με πριν, απλά με περιγραφή τώρα.
-          if (isMaster || isAdmin) _BillingToolsBar(
-            isMaster: isMaster,
-            onHomeOwners: () => _showHomeOwnersBillingDialog(context),
-            onDriveFolder: () => _openReportsFolder(context),
-            onMonthlyReport: () => _showReportDialog(context),
-            onPurge: () => _showPurgeDialog(context),
-            onSettlements: () => Navigator.of(context).push(
-              MaterialPageRoute(
-                builder: (_) => BillingSettlementPage(
-                  uid:      uid,
-                  userName: userName,
-                  isMaster: isMaster,
+        // ── Εργαλεία master/admin: μετακινήθηκαν σε ξεχωριστή σελίδα
+        //    «Ρυθμίσεις» (πάνω δεξιά, γρανάζι) — πριν ήταν κολλημένα κάτω και
+        //    έκρυβαν τη μισή οθόνη. Ίδια ακριβώς δικαιώματα με πριν.
+        actions: (isMaster || isAdmin)
+            ? [
+                IconButton(
+                  tooltip: 'Ρυθμίσεις Χρεώσεων',
+                  icon: const Icon(Icons.settings_rounded),
+                  onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => _BillingSettingsPage(
+                        uid: uid, userName: userName, isMaster: isMaster,
+                      ),
+                    ),
+                  ),
                 ),
-              ),
-            ),
-          ),
-        ],
+              ]
+            : null,
       ),
+      body: body,
     );
   }
+
 
   // ─── Μηνιαία αναφορά PDF (χειροκίνητη παραγωγή — μόνο master) ─────────────
 
@@ -129,7 +125,7 @@ class BillingPage extends StatelessWidget {
   }
 
   // ─── Χρεώσεις Home Owners — λίστα με ό,τι χρωστάει ο καθένας ─────────────
-  Future<void> _showHomeOwnersBillingDialog(BuildContext context) async {
+  static Future<void> _showHomeOwnersBillingDialog(BuildContext context) async {
     final c = AppColors.of(context);
     const indigo = Color(0xFF3F51B5);
     await showDialog<void>(
@@ -286,7 +282,7 @@ class BillingPage extends StatelessWidget {
   }
 
   // ─── Άνοιγμα φακέλου Drive (χωρίς νέο PDF) — μόνο master ──────────────────
-  Future<void> _openReportsFolder(BuildContext context) async {
+  static Future<void> _openReportsFolder(BuildContext context) async {
     final c = AppColors.of(context);
     final messenger = ScaffoldMessenger.of(context);
     messenger.showSnackBar(const SnackBar(
@@ -329,7 +325,7 @@ class BillingPage extends StatelessWidget {
     }
   }
 
-  void _showReportDialog(BuildContext context) {
+  static void _showReportDialog(BuildContext context) {
     final c = AppColors.of(context);
     showDialog<void>(
       context: context,
@@ -423,7 +419,7 @@ class BillingPage extends StatelessWidget {
     );
   }
 
-  Future<void> _generateReport(BuildContext context, String monthKey) async {
+  static Future<void> _generateReport(BuildContext context, String monthKey) async {
     final c = AppColors.of(context);
     final messenger = ScaffoldMessenger.of(context);
     messenger.showSnackBar(SnackBar(
@@ -480,7 +476,7 @@ class BillingPage extends StatelessWidget {
   }
 
   // ─── Καθαρισμός παλιών δεδομένων (>3 μήνες) — μόνο master ────────────────
-  Future<void> _showPurgeDialog(BuildContext context) async {
+  static Future<void> _showPurgeDialog(BuildContext context) async {
     final c = AppColors.of(context);
     final messenger = ScaffoldMessenger.of(context);
     // Πρώτα ρώτα το backend πόσα εκκρεμούν & αν μπλοκάρει χρέος.
@@ -675,7 +671,7 @@ class BillingPage extends StatelessWidget {
     );
   }
 
-  Future<void> _runPurge(BuildContext context) async {
+  static Future<void> _runPurge(BuildContext context) async {
     final c = AppColors.of(context);
     final messenger = ScaffoldMessenger.of(context);
     messenger.showSnackBar(const SnackBar(
@@ -714,6 +710,54 @@ class BillingPage extends StatelessWidget {
         content: Text('Σφάλμα: $e'),
       ));
     }
+  }
+}
+
+// ═══ Ρυθμίσεις Χρεώσεων (ξεχωριστή σελίδα — γρανάζι πάνω δεξιά) ═════════════
+// Πριν, αυτά τα εργαλεία ήταν μια μπάρα κολλημένη στο κάτω μέρος της κύριας
+// σελίδας Χρεώσεων και έκρυβαν τη μισή οθόνη. Τώρα ζουν εδώ, σε δική τους
+// σελίδα, ανοίγοντας από το γρανάζι πάνω δεξιά.
+class _BillingSettingsPage extends StatelessWidget {
+  final String uid;
+  final String userName;
+  final bool   isMaster;
+
+  const _BillingSettingsPage({
+    required this.uid,
+    required this.userName,
+    required this.isMaster,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    return Scaffold(
+      backgroundColor: c.scaffold,
+      appBar: AppBar(
+        backgroundColor: _purple,
+        foregroundColor: Colors.white,
+        elevation: 0,
+        title: const Text('Ρυθμίσεις Χρεώσεων',
+            style: TextStyle(fontWeight: FontWeight.bold)),
+      ),
+      body: _BillingToolsBar(
+        isMaster: isMaster,
+        onHomeOwners: () =>
+            BillingPage._showHomeOwnersBillingDialog(context),
+        onDriveFolder: () => BillingPage._openReportsFolder(context),
+        onMonthlyReport: () => BillingPage._showReportDialog(context),
+        onPurge: () => BillingPage._showPurgeDialog(context),
+        onSettlements: () => Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => BillingSettlementPage(
+              uid:      uid,
+              userName: userName,
+              isMaster: isMaster,
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }
 
@@ -1580,6 +1624,8 @@ class _DriverBillingView extends StatelessWidget {
   final String userName;
   final String masterUid;
   final bool   canManage;
+  // Προσωπική όψη admin/master: κρύβει αυτο-οφειλές (και App/συνδρομή για master)
+  final bool   excludeOwnRecipient;
   final bool   isMaster;
 
   const _DriverBillingView({
@@ -1613,7 +1659,7 @@ class _DriverBillingView extends StatelessWidget {
         final lifeJobs     = lockedJobs + monthJobsN;
         return StreamBuilder<List<MonthlyBilling>>(
           stream: JobService.monthlyBillingFor(uid,
-              isMaster: isMaster),
+              excludeOwnRecipient: excludeOwnRecipient, isMaster: isMaster),
           builder: (context, snap) {
             if (!snap.hasData) {
               return const Center(
@@ -2902,7 +2948,7 @@ class _OwedBreakdown extends StatelessWidget {
               style: TextStyle(
                   fontWeight: FontWeight.bold, fontSize: 14)),
           const SizedBox(height: 4),
-          Text('Για να ξέρεις τι να μαζέψεις ανά πηγή',
+          const Text('Για να ξέρεις τι να μαζέψεις ανά πηγή',
               style: TextStyle(fontSize: 11, color: c.textFaint)),
           const Divider(height: 16),
           ...bySource.entries.map((e) => row(
