@@ -2902,7 +2902,7 @@ class _OwedBreakdown extends StatelessWidget {
               style: TextStyle(
                   fontWeight: FontWeight.bold, fontSize: 14)),
           const SizedBox(height: 4),
-          const Text('Για να ξέρεις τι να μαζέψεις ανά πηγή',
+          Text('Για να ξέρεις τι να μαζέψεις ανά πηγή',
               style: TextStyle(fontSize: 11, color: c.textFaint)),
           const Divider(height: 16),
           ...bySource.entries.map((e) => row(
