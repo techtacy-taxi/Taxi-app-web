@@ -18,6 +18,7 @@
 // admin/master βλέπουν όλες τις δουλειές τους ΚΑΙ τις saved_jobs.
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -83,10 +84,48 @@ class _JobsCalendarPageState extends State<JobsCalendarPage> {
   static const String _kOnlyMinePrefsKey = 'calendar_master_only_mine_v1';
   bool _onlyMine = false;
 
+  // ── ΜΟΝΙΜΗ ΣΥΝΔΕΣΗ admin ↔ δικής του online φόρμας ──────────────────────
+  // Οι κρατήσεις από την online φόρμα γράφονται στο saved_jobs με ΔΥΟ κλειδιά:
+  //   • ownerUid  = ο admin/master που «κατέχει» τον tenant
+  //   • tenantId  = ποιας φόρμας είναι (π.χ. 'seretis_form', 'default')
+  // Παλιά κοιτούσαμε ΜΟΝΟ το ownerUid· αν αυτό δεν συνέπιπτε (π.χ. το
+  // presence του admin δεν είχε ακόμη tenantId όταν έγινε η κράτηση, ή την
+  // «κατέχει» άλλος uid), η δουλειά δεν εμφανιζόταν ΠΟΤΕ και ψάχναμε κάθε
+  // φορά από την αρχή. Τώρα δέχεται ΚΑΙ ΤΑ ΔΥΟ: ό,τι είναι δικό του είτε
+  // κατά ownerUid είτε κατά tenantId — μία φορά, για πάντα.
+  String? _myTenantId;
+
   @override
   void initState() {
     super.initState();
     _loadOnlyMinePref();
+    _loadMyTenantId();
+  }
+
+  Future<void> _loadMyTenantId() async {
+    if (!_seesAllOrgJobs) return;
+    try {
+      final doc = await FirebaseFirestore.instance
+          .collection('presence').doc(widget.uid).get();
+      final tid = (doc.data()?['tenantId'] as String?)?.trim();
+      if (!mounted) return;
+      setState(() => _myTenantId =
+          (tid == null || tid.isEmpty) ? 'default' : tid);
+    } catch (_) {
+      if (mounted) setState(() => _myTenantId = 'default');
+    }
+  }
+
+  /// True αν αυτή η αποθηκευμένη δουλειά ανήκει στον τρέχοντα χρήστη —
+  /// είτε επειδή είναι ο owner της, είτε επειδή ήρθε από ΤΗ ΔΙΚΗ ΤΟΥ φόρμα.
+  bool _savedJobIsMine(SavedJob sj, Map<String, dynamic> raw) {
+    if (widget.isMaster) return true;            // ο master τα βλέπει όλα
+    if (sj.ownerUid == widget.uid) return true;  // δική του κατά owner
+    final jobTenant = (raw['tenantId'] as String?)?.trim();
+    if (jobTenant != null && jobTenant.isNotEmpty && jobTenant == _myTenantId) {
+      return true;                               // δική του κατά online φόρμα
+    }
+    return false;
   }
 
   Future<void> _loadOnlyMinePref() async {
@@ -205,35 +244,43 @@ class _JobsCalendarPageState extends State<JobsCalendarPage> {
         ));
       }
 
-      // Admin/master: αποθηκευμένες (draft) δουλειές — κόκκινο. Ο admin
-      // (όχι master) βλέπει μόνο όσες αποθήκευσε ο ίδιος.
-      // ΣΗΜΕΙΩΣΗ: τα πεδία στο saved_jobs doc είναι FLAT (scheduledAt, from,
-      // to...) — ΟΧΙ ένθετα κάτω από 'job'. Το query έψαχνε λάθος
-      // 'job.scheduledAt' (πεδίο που δεν υπάρχει) και γι' αυτό ΚΑΜΙΑ
-      // online-form κράτηση δεν εμφανιζόταν ποτέ σε κανέναν admin/master.
+      // Admin/master: αποθηκευμένες (draft) δουλειές — κόκκινο.
+      // ⚠️ ΚΡΙΣΙΜΟ (Firestore): τα Security Rules ΔΕΝ φιλτράρουν αποτελέσματα —
+      // ΑΠΟΡΡΙΠΤΟΥΝ ολόκληρο το query αν αυτό ΜΠΟΡΕΙ να επιστρέψει έγγραφα
+      // άλλου tenant. Το παλιό query ζητούσε ΟΛΑ τα saved_jobs χωρίς φίλτρο
+      // tenantId → permission-denied για κάθε admin (π.χ. Σερέτης), σιωπηλά,
+      // ενώ ο super-admin περνούσε λόγω masterEmail(). Γι' αυτό «δεν έβλεπε
+      // ποτέ τίποτα». Τώρα το tenantId μπαίνει ΜΕΣΑ στο query.
       if (_seesAllOrgJobs) {
-        final savedSnap = await FirebaseFirestore.instance
-            .collection('saved_jobs')
-            .where('scheduledAt',
-                isGreaterThanOrEqualTo: Timestamp.fromDate(monthStart))
-            .where('scheduledAt', isLessThan: Timestamp.fromDate(monthEnd))
-            .get();
-        for (final doc in savedSnap.docs) {
-          try {
-            final sj = SavedJob.fromDoc(doc);
-            if (sj.job.scheduledAt == null) continue;
-            if (widget.isAdmin && !widget.isMaster &&
-                sj.ownerUid != widget.uid) {
-              continue;
-            }
-            entries.add(_CalEntry(
-              job:         sj.job,
-              day:         sj.job.scheduledAt!,
-              kind:        _EntryKind.saved,
-              vehicleType: sj.job.vehicleType,
-              savedJob:    sj,
-            ));
-          } catch (_) {/* παλιό/ασύμβατο doc — αγνόησέ το */}
+        final isSuperAdmin =
+            FirebaseAuth.instance.currentUser?.email == 'techtacy@gmail.com';
+        // Περίμενε να φορτωθεί το tenantId πριν ρωτήσεις (αλλιώς θα ρωτούσαμε
+        // λάθος tenant). Μόλις φορτωθεί, το setState ξαναχτίζει το stream.
+        if (isSuperAdmin || _myTenantId != null) {
+          Query<Map<String, dynamic>> savedQ = FirebaseFirestore.instance
+              .collection('saved_jobs')
+              .where('scheduledAt',
+                  isGreaterThanOrEqualTo: Timestamp.fromDate(monthStart))
+              .where('scheduledAt', isLessThan: Timestamp.fromDate(monthEnd));
+          if (!isSuperAdmin) {
+            savedQ = savedQ.where('tenantId', isEqualTo: _myTenantId);
+          }
+          final savedSnap = await savedQ.get();
+          for (final doc in savedSnap.docs) {
+            try {
+              final sj = SavedJob.fromDoc(doc);
+              if (sj.job.scheduledAt == null) continue;
+              // Δέχεται είτε ownerUid είτε tenantId (δική του online φόρμα).
+              if (!_savedJobIsMine(sj, doc.data())) continue;
+              entries.add(_CalEntry(
+                job:         sj.job,
+                day:         sj.job.scheduledAt!,
+                kind:        _EntryKind.saved,
+                vehicleType: sj.job.vehicleType,
+                savedJob:    sj,
+              ));
+            } catch (_) {/* παλιό/ασύμβατο doc — αγνόησέ το */}
+          }
         }
       }
 
