@@ -2043,6 +2043,13 @@ exports.onJobBilling = onDocumentUpdated("jobs/{jobId}", async (event) => {
     const driverRef = db.collection("presence").doc(driverUid);
     // Αρνητικό γιαούρτι → προστίθεται στον τζίρο (ο οδηγός το εισέπραξε).
     const effPrice  = price - Math.min(commission, 0);
+    // ΣΗΜΕΙΩΣΗ: ο τζίρος «από πάντα» ΔΕΝ κρατιέται πια εδώ per-job (θα
+    // παρέμενε λάθος αν μια δουλειά ακυρωνόταν ΜΕΤΑ την ολοκλήρωση —
+    // αυτό το update δεν θα ξανάτρεχε). Αντ' αυτού: ο ΤΡΕΧΩΝ μήνας
+    // υπολογίζεται ΖΩΝΤΑΝΑ (βλέπε groupBillingTotals/monthlyTurnoverStatsFor
+    // στο Flutter — ζωντανό query, αντανακλά ακυρώσεις αμέσως), και μόλις
+    // κλείσει ο μήνας «κλειδώνεται» οριστικά από το lockMonthlyTurnover()
+    // παρακάτω σε presence.lockedTurnoverThroughLastMonth.
     const driverUpd = { turnover: FieldValue.increment(effPrice) };
     // billedTotal μπορεί να είναι αρνητικό → μειώνει το χρέος (συμψηφισμός).
     if (billedTotal !== 0) driverUpd.appDebt = FieldValue.increment(billedTotal);
@@ -2228,6 +2235,91 @@ async function runMonthlyCharges() {
 }
 
 // Αυτόματο: 1η του μήνα, 05:30 Αθήνα (πριν το report)
+// ─── Κλείδωμα μηνιαίου τζίρου (τρέχει 1η κάθε μήνα, 05:15 Αθήνας) ───────────
+// Ο ΤΡΕΧΩΝ μήνας υπολογίζεται ΠΑΝΤΑ ζωντανά (Flutter, live query) — ώστε αν
+// ακυρωθεί μια δουλειά ενώ ο μήνας «τρέχει ακόμα», ο τζίρος να μειώνεται
+// αμέσως. Μόλις ο μήνας ΚΛΕΙΣΕΙ, αυτή η function παγώνει οριστικά το ποσό
+// του σε presence.lockedTurnoverThroughLastMonth — ΔΕΝ ξαναϋπολογίζεται
+// ποτέ, ΔΕΝ επηρεάζεται από μεταγενέστερη ακύρωση ή από το «Καθαρισμός
+// παλιών δεδομένων» (purgeOldData). Ιδεμπoτεντ: το lastLockedTurnoverMonth
+// εμποδίζει διπλό κλείδωμα του ίδιου μήνα αν η function ξανατρέξει.
+async function lockMonthlyTurnover() {
+  const db = getFirestore();
+  const { Timestamp } = require("firebase-admin/firestore");
+  const now = new Date();
+  // Ο μήνας που μόλις έκλεισε (σήμερα είναι η 1η του επόμενου).
+  const prevMonthDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const monthKey    = _monthKeyJS(prevMonthDate);
+  const rangeStart  = new Date(prevMonthDate.getFullYear(), prevMonthDate.getMonth(), 1);
+  const rangeEnd    = new Date(prevMonthDate.getFullYear(), prevMonthDate.getMonth() + 1, 1);
+
+  const snap = await db.collection("jobs")
+    .where("status", "==", "done")
+    .where("doneAt", ">=", Timestamp.fromDate(rangeStart))
+    .where("doneAt", "<",  Timestamp.fromDate(rangeEnd))
+    .get();
+
+  const perDriver = new Map(); // uid → { turnover, jobs }
+  for (const doc of snap.docs) {
+    const d   = doc.data();
+    const uid = d.takenBy;
+    if (!uid) continue;
+    const price = Number(d.price) || 0;
+    const comm  = Number(d.commission) || 0;
+    // Αρνητικό γιαούρτι → προστίθεται στον τζίρο (ίδιος κανόνας παντού).
+    const effPrice = price - Math.min(comm, 0);
+    const cur = perDriver.get(uid) || { turnover: 0, jobs: 0 };
+    cur.turnover += effPrice;
+    cur.jobs += 1;
+    perDriver.set(uid, cur);
+  }
+
+  let locked = 0;
+  for (const [uid, agg] of perDriver.entries()) {
+    const ref = db.collection("presence").doc(uid);
+    try {
+      await db.runTransaction(async (tx) => {
+        const doc = await tx.get(ref);
+        // Ιδεμπoτεντ ασφάλεια: μην ξανακλειδώσεις τον ίδιο μήνα δύο φορές.
+        if (doc.exists && doc.data().lastLockedTurnoverMonth === monthKey) {
+          return;
+        }
+        tx.set(ref, {
+          lockedTurnoverThroughLastMonth:
+              FieldValue.increment(agg.turnover),
+          lockedTurnoverThroughLastMonthJobs:
+              FieldValue.increment(agg.jobs),
+          lastLockedTurnoverMonth: monthKey,
+        }, { merge: true });
+      });
+      locked++;
+    } catch (e) {
+      console.warn(`lockMonthlyTurnover: αποτυχία για ${uid}:`, e.message || e);
+    }
+  }
+  console.log(`lockMonthlyTurnover(${monthKey}): κλειδώθηκαν ${locked} οδηγοί.`);
+  return { monthKey, drivers: locked };
+}
+
+exports.lockMonthlyTurnover = onSchedule(
+  { schedule: "15 5 1 * *", timeZone: "Europe/Athens",
+    memory: "256MiB", timeoutSeconds: 300 },
+  async () => { await lockMonthlyTurnover(); }
+);
+
+// Χειροκίνητο (μόνο master) — για δοκιμή ή αν χρειαστεί επανεκτέλεση/backfill
+// παλιότερων μηνών (κάλεσέ το με monthOverride: "YYYY-MM" αν χρειαστεί —
+// βλ. TODO μελλοντικά· προς το παρόν κλειδώνει πάντα τον ΠΡΟΗΓΟΥΜΕΝΟ μήνα).
+exports.lockMonthlyTurnoverNow = onCall(async (request) => {
+  const uid = request.auth && request.auth.uid;
+  if (!uid) throw new HttpsError("unauthenticated", "Απαιτείται σύνδεση.");
+  const me = await getFirestore().collection("presence").doc(uid).get();
+  if (!me.exists || me.data().master !== true) {
+    throw new HttpsError("permission-denied", "Μόνο για τον master.");
+  }
+  return await lockMonthlyTurnover();
+});
+
 exports.monthlyCharges = onSchedule(
   { schedule: "30 5 1 * *", timeZone: "Europe/Athens",
     memory: "256MiB", timeoutSeconds: 300 },

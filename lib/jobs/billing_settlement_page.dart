@@ -14,6 +14,8 @@
 
 import 'package:flutter/material.dart';
 
+import '../app_theme.dart';
+
 import 'job_model.dart';
 import 'job_service.dart';
 import 'job_shared_widgets.dart';
@@ -43,8 +45,9 @@ class BillingSettlementPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final ac = AppColors.of(context);
     return Scaffold(
-      backgroundColor: const Color(0xFFF4F5F7),
+      backgroundColor: ac.scaffold,
       appBar: AppBar(
         backgroundColor: _kAmber,
         foregroundColor: Colors.black,
@@ -63,8 +66,8 @@ class BillingSettlementPage extends StatelessWidget {
               builder: (context, setSnap) {
                 final sets = setSnap.data ?? const <Settlement>[];
                 return isMaster
-                    ? _masterBody(context, txs, sets)
-                    : _adminBody(context, txs, sets);
+                    ? _masterBody(ac, context, txs, sets)
+                    : _adminBody(ac, context, txs, sets);
               },
             );
           },
@@ -74,7 +77,7 @@ class BillingSettlementPage extends StatelessWidget {
   }
 
   // ─── MASTER ────────────────────────────────────────────────────────────────
-  Widget _masterBody(
+  Widget _masterBody(AppColors ac,
       BuildContext context, List<BillingTx> txs, List<Settlement> sets) {
     final recipients = JobService.recipientOutstanding(txs);
     final collectors = JobService.collectorOutstanding(txs);
@@ -106,39 +109,39 @@ class BillingSettlementPage extends StatelessWidget {
       padding: EdgeInsets.fromLTRB(
           12, 12, 12, 16 + MediaQuery.of(context).padding.bottom),
       children: [
-        _summaryBar(pendingTotal, owedTotal, settledTotal),
+        _summaryBar(ac, pendingTotal, owedTotal, settledTotal),
         const SizedBox(height: 16),
-        _sectionHeader(Icons.forward_rounded, 'Εκκρεμείς προωθήσεις',
+        _sectionHeader(ac, Icons.forward_rounded, 'Εκκρεμείς προωθήσεις',
             'Χρήματα που έχουν εισπραχθεί και πρέπει να παραδοθούν'),
-        ..._forwardingCards(context, ledger),
+        ..._forwardingCards(ac, context, ledger),
         const SizedBox(height: 20),
-        _sectionHeader(Icons.account_balance_wallet_rounded, 'Σε ποιον οφείλονται',
+        _sectionHeader(ac, Icons.account_balance_wallet_rounded, 'Σε ποιον οφείλονται',
             'Ανεξόφλητα από οδηγούς, ανά δικαιούχο'),
         if (recEntries.every((e) => (e.value['total'] as double) <= 0.01))
-          const _Empty('Όλα εξοφλημένα ✔')
+          _Empty('Όλα εξοφλημένα ✔', ac)
         else
           for (final e in recEntries)
             if ((e.value['total'] as double) > 0.01)
-              _recipientCard(e.key, e.value),
+              _recipientCard(ac, e.key, e.value),
         const SizedBox(height: 20),
-        _sectionHeader(Icons.group_rounded, 'Τι μαζεύει ο κάθε εισπράκτορας',
+        _sectionHeader(ac, Icons.group_rounded, 'Τι μαζεύει ο κάθε εισπράκτορας',
             'Ποσά που κρατούν αυτή τη στιγμή, και για λογαριασμό ποιου'),
         if (colEntries.every((e) => (e.value['total'] as double) <= 0.01))
-          const _Empty('Κανένα ποσό σε εκκρεμότητα')
+          _Empty('Κανένα ποσό σε εκκρεμότητα', ac)
         else
           for (final e in colEntries)
             if ((e.value['total'] as double) > 0.01)
-              _collectorCard(e.key, e.value),
+              _collectorCard(ac, e.key, e.value),
         const SizedBox(height: 20),
-        _sectionHeader(Icons.history_rounded, 'Ιστορικό εκκαθαρίσεων',
+        _sectionHeader(ac, Icons.history_rounded, 'Ιστορικό εκκαθαρίσεων',
             'Οι τελευταίες καταγεγραμμένες παραδόσεις χρημάτων'),
-        ..._historyCards(sets),
+        ..._historyCards(ac, sets),
       ],
     );
   }
 
   // ─── ADMIN ───────────────────────────────────────────────────────────────
-  Widget _adminBody(
+  Widget _adminBody(AppColors ac,
       BuildContext context, List<BillingTx> txs, List<Settlement> sets) {
     final collectors = JobService.collectorOutstanding(txs);
     final recipients = JobService.recipientOutstanding(txs);
@@ -167,38 +170,38 @@ class BillingSettlementPage extends StatelessWidget {
       padding: EdgeInsets.fromLTRB(
           12, 12, 12, 16 + MediaQuery.of(context).padding.bottom),
       children: [
-        _summaryBar(myPending, myOwed, mySettled),
+        _summaryBar(ac, myPending, myOwed, mySettled),
         const SizedBox(height: 16),
-        _sectionHeader(Icons.forward_rounded, 'Τι πρέπει να προωθήσω',
+        _sectionHeader(ac, Icons.forward_rounded, 'Τι πρέπει να προωθήσω',
             'Χρήματα που έχεις εισπράξει για άλλους'),
         if (myLedger == null)
-          const _Empty('Τίποτα προς προώθηση ✔')
+          _Empty('Τίποτα προς προώθηση ✔', ac)
         else
-          ..._forwardingCards(context, {uid: myLedger}, hideName: true),
+          ..._forwardingCards(ac, context, {uid: myLedger}, hideName: true),
         const SizedBox(height: 20),
-        _sectionHeader(Icons.download_rounded, 'Τι έχω να μαζέψω',
+        _sectionHeader(ac, Icons.download_rounded, 'Τι έχω να μαζέψω',
             'Ανεξόφλητα από τους οδηγούς σου'),
         if (myCollect == null || (myCollect['total'] as double) <= 0.01)
-          const _Empty('Τίποτα προς είσπραξη ✔')
+          _Empty('Τίποτα προς είσπραξη ✔', ac)
         else
-          _collectorCard(uid, myCollect, expanded: true),
+          _collectorCard(ac, uid, myCollect, expanded: true),
         const SizedBox(height: 20),
-        _sectionHeader(Icons.account_balance_wallet_rounded, 'Τι μου οφείλεται',
+        _sectionHeader(ac, Icons.account_balance_wallet_rounded, 'Τι μου οφείλεται',
             'Ανά πηγή εσόδου'),
         if (myReceive == null || (myReceive['total'] as double) <= 0.01)
-          const _Empty('Τίποτα ✔')
+          _Empty('Τίποτα ✔', ac)
         else
-          _recipientCard(uid, myReceive, expanded: true),
+          _recipientCard(ac, uid, myReceive, expanded: true),
         const SizedBox(height: 20),
-        _sectionHeader(Icons.history_rounded, 'Ιστορικό εκκαθαρίσεων',
+        _sectionHeader(ac, Icons.history_rounded, 'Ιστορικό εκκαθαρίσεων',
             'Οι δικές σου παραδόσεις/παραλαβές'),
-        ..._historyCards(mySets),
+        ..._historyCards(ac, mySets),
       ],
     );
   }
 
   // ─── Σύνοψη (3 stats) ──────────────────────────────────────────────────────
-  Widget _summaryBar(double pending, double owed, double settled) {
+  Widget _summaryBar(AppColors ac, double pending, double owed, double settled) {
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
@@ -212,11 +215,11 @@ class BillingSettlementPage extends StatelessWidget {
       ),
       child: Row(
         children: [
-          _stat('Εκκρεμή', _eur(pending), _kOrange, Icons.hourglass_top_rounded),
+          _stat(ac, 'Εκκρεμή', _eur(pending), _kOrange, Icons.hourglass_top_rounded),
           _vDiv(),
-          _stat('Οφειλόμενα', _eur(owed), _kInk, Icons.account_balance_wallet_rounded),
+          _stat(ac, 'Οφειλόμενα', _eur(owed), _kInk, Icons.account_balance_wallet_rounded),
           _vDiv(),
-          _stat('Εξοφλημένα', _eur(settled), _kGreen, Icons.verified_rounded),
+          _stat(ac, 'Εξοφλημένα', _eur(settled), _kGreen, Icons.verified_rounded),
         ],
       ),
     );
@@ -226,7 +229,10 @@ class BillingSettlementPage extends StatelessWidget {
       width: 1, height: 42, color: Colors.black.withValues(alpha: 0.15),
       margin: const EdgeInsets.symmetric(horizontal: 10));
 
-  Widget _stat(String label, String value, Color color, IconData icon) {
+  // Σημείωση: αυτή η μπάρα έχει ΠΑΝΤΑ κίτρινο/πορτοκαλί gradient φόντο (brand
+  // accent, όχι «surface») — τα εσωτερικά κείμενα δουλεύουν με μαύρο/ημιδιαφανές
+  // πάνω σε αυτό ανεξαρτήτως θέματος, οπότε δεν χρειάζονται αλλαγή.
+  Widget _stat(AppColors ac, String label, String value, Color color, IconData icon) {
     return Expanded(
       child: Column(
         children: [
@@ -253,7 +259,7 @@ class BillingSettlementPage extends StatelessWidget {
   }
 
   // ─── Επικεφαλίδες ενοτήτων ────────────────────────────────────────────────
-  Widget _sectionHeader(IconData icon, String title, String subtitle) {
+  Widget _sectionHeader(AppColors ac, IconData icon, String title, String subtitle) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(2, 0, 2, 8),
       child: Row(
@@ -272,10 +278,10 @@ class BillingSettlementPage extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(title,
-                    style: const TextStyle(
-                        fontSize: 15, fontWeight: FontWeight.w800, color: _kInk)),
+                    style: TextStyle(
+                        fontSize: 15, fontWeight: FontWeight.w800, color: ac.textMain)),
                 Text(subtitle,
-                    style: TextStyle(fontSize: 11, color: Colors.grey[600])),
+                    style: TextStyle(fontSize: 11, color: ac.textFaint)),
               ],
             ),
           ),
@@ -287,7 +293,7 @@ class BillingSettlementPage extends StatelessWidget {
   static const Color _kAmberDarkText = Color(0xFF8A6100);
 
   // ─── Κάρτες προώθησης (με μπάρα προόδου πληρωμής) ─────────────────────────
-  List<Widget> _forwardingCards(
+  List<Widget> _forwardingCards(AppColors ac,
       BuildContext context, Map<String, Map<String, dynamic>> ledger,
       {bool hideName = false}) {
     final cards = <Widget>[];
@@ -302,6 +308,7 @@ class BillingSettlementPage extends StatelessWidget {
       if (byRec.isEmpty) continue;
 
       cards.add(_card(
+        ac,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -312,22 +319,23 @@ class BillingSettlementPage extends StatelessWidget {
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(cName.isEmpty ? 'Εισπράκτορας' : cName,
-                      style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14)),
+                      style: TextStyle(fontWeight: FontWeight.w800, fontSize: 14,
+                          color: ac.textMain)),
                 ),
               ]),
               const SizedBox(height: 8),
             ],
             for (final r in byRec)
-              _forwardRow(context, e.key, cName, r.key, r.value),
+              _forwardRow(ac, context, e.key, cName, r.key, r.value),
           ],
         ),
       ));
     }
-    if (cards.isEmpty) cards.add(const _Empty('Καμία εκκρεμής προώθηση ✔'));
+    if (cards.isEmpty) cards.add(_Empty('Καμία εκκρεμής προώθηση ✔', ac));
     return cards;
   }
 
-  Widget _forwardRow(BuildContext context, String collectorUid,
+  Widget _forwardRow(AppColors ac, BuildContext context, String collectorUid,
       String collectorName, String rid, Map<String, dynamic> r) {
     final isMasterRec = r['isMaster'] == true;
     final name      = (r['name'] as String?)?.trim() ?? '';
@@ -354,7 +362,7 @@ class BillingSettlementPage extends StatelessWidget {
             children: [
               Expanded(
                 child: Text(label,
-                    style: const TextStyle(fontWeight: FontWeight.w700, color: _kInk)),
+                    style: TextStyle(fontWeight: FontWeight.w700, color: ac.textMain)),
               ),
               _chip('ΕΚΚΡΕΜΕΙ ${_eur(pending)}', _kOrange),
             ],
@@ -374,7 +382,7 @@ class BillingSettlementPage extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text('Εισπράχθηκαν: ${_eur(collected)}',
-                  style: TextStyle(fontSize: 11, color: Colors.grey[700])),
+                  style: TextStyle(fontSize: 11, color: ac.textFaint)),
               Text('Παραδόθηκαν: ${_eur(forwarded)}',
                   style: const TextStyle(fontSize: 11, color: _kGreen, fontWeight: FontWeight.w600)),
             ],
@@ -403,19 +411,23 @@ class BillingSettlementPage extends StatelessWidget {
       String rid,
       String recipientName,
       double pending) async {
+    final ac = AppColors.of(context);
     final ctrl = TextEditingController(text: pending.toStringAsFixed(2));
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: Text('Προώθηση σε $recipientName'),
+        backgroundColor: ac.card,
+        title: Text('Προώθηση σε $recipientName',
+            style: TextStyle(color: ac.textMain)),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             Text('Εκκρεμεί: ${_eur(pending)}',
-                style: const TextStyle(color: Colors.grey)),
+                style: TextStyle(color: ac.textFaint)),
             const SizedBox(height: 12),
             TextField(
               controller: ctrl,
+              style: TextStyle(color: ac.textMain),
               keyboardType: const TextInputType.numberWithOptions(decimal: true),
               decoration: const InputDecoration(
                 labelText: 'Ποσό που προώθησες',
@@ -445,7 +457,7 @@ class BillingSettlementPage extends StatelessWidget {
   }
 
   // ─── Κάρτα δικαιούχου ─────────────────────────────────────────────────────
-  Widget _recipientCard(String rid, Map<String, dynamic> data,
+  Widget _recipientCard(AppColors ac, String rid, Map<String, dynamic> data,
       {bool expanded = false}) {
     final name  = (data['name'] as String?)?.trim();
     final total = data['total'] as double;
@@ -458,30 +470,37 @@ class BillingSettlementPage extends StatelessWidget {
         : name;
 
     return _card(
+      ac,
       padding: EdgeInsets.zero,
       child: ExpansionTile(
         initiallyExpanded: expanded,
         shape: const Border(),
+        backgroundColor: _kBlue.withValues(alpha: 0.06),
+        collapsedBackgroundColor: _kBlue.withValues(alpha: 0.06),
+        iconColor: _kBlue,
+        collapsedIconColor: _kBlue,
         leading: const CircleAvatar(radius: 15, backgroundColor: _kBlue,
             child: Icon(Icons.account_balance_wallet_rounded, size: 16, color: Colors.white)),
-        title: Text(title, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14)),
+        title: Text(title, style: TextStyle(fontWeight: FontWeight.w800, fontSize: 14,
+            color: ac.textMain)),
         trailing: _chip(_eur(total), _kBlue),
-        childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+        childrenPadding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
         children: [
           if (bySource.isNotEmpty) ...[
-            _subLabel('Ανά πηγή εσόδου'),
+            _subLabel(ac, 'Ανά πηγή εσόδου'),
             for (final s in bySource)
-              if (s.value > 0.01) _row(s.key, _eur(s.value)),
+              if (s.value > 0.01) _row(ac, s.key, _eur(s.value)),
           ],
-          if (byCollector.any((c) => (c['total'] as double) > 0.01)) ...[
+          if (byCollector.any((cc) => (cc['total'] as double) > 0.01)) ...[
             const SizedBox(height: 6),
-            _subLabel('Το κρατούν για λογαριασμό του'),
-            for (final c in byCollector)
-              if ((c['total'] as double) > 0.01)
+            _subLabel(ac, 'Το κρατούν για λογαριασμό του'),
+            for (final cc in byCollector)
+              if ((cc['total'] as double) > 0.01)
                 _row(
-                  (c['name'] as String?)?.isNotEmpty == true
-                      ? c['name'] as String : 'Εισπράκτορας',
-                  _eur(c['total'] as double),
+                  ac,
+                  (cc['name'] as String?)?.isNotEmpty == true
+                      ? cc['name'] as String : 'Εισπράκτορας',
+                  _eur(cc['total'] as double),
                 ),
           ],
         ],
@@ -490,7 +509,7 @@ class BillingSettlementPage extends StatelessWidget {
   }
 
   // ─── Κάρτα εισπράκτορα ────────────────────────────────────────────────────
-  Widget _collectorCard(String cid, Map<String, dynamic> data,
+  Widget _collectorCard(AppColors ac, String cid, Map<String, dynamic> data,
       {bool expanded = false}) {
     final name  = (data['name'] as String?)?.trim();
     final total = data['total'] as double;
@@ -502,26 +521,32 @@ class BillingSettlementPage extends StatelessWidget {
     final title = (name == null || name.isEmpty) ? 'Εισπράκτορας' : name;
 
     return _card(
+      ac,
       padding: EdgeInsets.zero,
       child: ExpansionTile(
         initiallyExpanded: expanded,
         shape: const Border(),
+        backgroundColor: _kAmber.withValues(alpha: 0.10),
+        collapsedBackgroundColor: _kAmber.withValues(alpha: 0.10),
+        iconColor: const Color(0xFF9A7000),
+        collapsedIconColor: const Color(0xFF9A7000),
         leading: const CircleAvatar(radius: 15, backgroundColor: _kAmber,
             child: Icon(Icons.person, size: 16, color: Colors.black87)),
-        title: Text(title, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14)),
+        title: Text(title, style: TextStyle(fontWeight: FontWeight.w800, fontSize: 14,
+            color: ac.textMain)),
         trailing: _chip(_eur(total), _kInk),
-        childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+        childrenPadding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
         children: [
           for (final r in byRecipient)
             if ((r.value['total'] as double) > 0.01)
-              _recipientBreakdown(cid, r.key, r.value),
+              _recipientBreakdown(ac, cid, r.key, r.value),
         ],
       ),
     );
   }
 
   Widget _recipientBreakdown(
-      String collectorUid, String rid, Map<String, dynamic> r) {
+      AppColors ac, String collectorUid, String rid, Map<String, dynamic> r) {
     final isMasterRec = r['isMaster'] == true;
     final isOwn       = rid == collectorUid;
     final name        = (r['name'] as String?)?.trim();
@@ -568,7 +593,7 @@ class BillingSettlementPage extends StatelessWidget {
             if (s.value > 0.01)
               Padding(
                 padding: const EdgeInsets.only(left: 8, top: 2),
-                child: _row(s.key, _eur(s.value), small: true),
+                child: _row(ac, s.key, _eur(s.value), small: true),
               ),
         ],
       ),
@@ -576,17 +601,18 @@ class BillingSettlementPage extends StatelessWidget {
   }
 
   // ─── Ιστορικό εκκαθαρίσεων ────────────────────────────────────────────────
-  List<Widget> _historyCards(List<Settlement> sets) {
-    if (sets.isEmpty) return [const _Empty('Καμία εκκαθάριση ακόμα')];
+  List<Widget> _historyCards(AppColors ac, List<Settlement> sets) {
+    if (sets.isEmpty) return [_Empty('Καμία εκκαθάριση ακόμα', ac)];
     final sorted = [...sets]..sort((a, b) => b.createdAt.compareTo(a.createdAt));
     final show = sorted.take(15).toList();
     return [
       _card(
+        ac,
         padding: EdgeInsets.zero,
         child: Column(
           children: [
             for (int i = 0; i < show.length; i++) ...[
-              if (i > 0) Divider(height: 1, color: Colors.grey[200]),
+              if (i > 0) Divider(height: 1, color: ac.divider),
               ListTile(
                 dense: true,
                 leading: const CircleAvatar(radius: 13, backgroundColor: _kGreen,
@@ -595,10 +621,11 @@ class BillingSettlementPage extends StatelessWidget {
                   '${show[i].collectorName.isEmpty ? "Εισπράκτορας" : show[i].collectorName}'
                   ' → '
                   '${show[i].recipientName.isEmpty ? "Παραλήπτης" : show[i].recipientName}',
-                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600,
+                      color: ac.textMain),
                 ),
                 subtitle: Text(_date(show[i].createdAt),
-                    style: TextStyle(fontSize: 11, color: Colors.grey[600])),
+                    style: TextStyle(fontSize: 11, color: ac.textFaint)),
                 trailing: Text(_eur(show[i].amount),
                     style: const TextStyle(
                         fontWeight: FontWeight.w800, color: _kGreen, fontSize: 14)),
@@ -608,7 +635,7 @@ class BillingSettlementPage extends StatelessWidget {
               Padding(
                 padding: const EdgeInsets.all(10),
                 child: Text('… και ${sorted.length - show.length} παλαιότερες',
-                    style: TextStyle(fontSize: 11, color: Colors.grey[500])),
+                    style: TextStyle(fontSize: 11, color: ac.textFaint)),
               ),
           ],
         ),
@@ -617,17 +644,14 @@ class BillingSettlementPage extends StatelessWidget {
   }
 
   // ─── Μικρά κοινά widgets ──────────────────────────────────────────────────
-  Widget _card({required Widget child, EdgeInsetsGeometry? padding}) {
+  Widget _card(AppColors ac, {required Widget child, EdgeInsetsGeometry? padding}) {
     return Container(
       margin: const EdgeInsets.symmetric(vertical: 5),
       padding: padding ?? const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        boxShadow: [
-          BoxShadow(color: Colors.black.withValues(alpha: 0.05),
-              blurRadius: 8, offset: const Offset(0, 2)),
-        ],
+        color: ac.card,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: ac.cardBorder),
       ),
       child: child,
     );
@@ -645,23 +669,25 @@ class BillingSettlementPage extends StatelessWidget {
     );
   }
 
-  Widget _subLabel(String text) => Align(
+  Widget _subLabel(AppColors ac, String text) => Align(
       alignment: Alignment.centerLeft,
       child: Padding(
         padding: const EdgeInsets.only(bottom: 2),
         child: Text(text,
-            style: TextStyle(fontSize: 11, color: Colors.grey[600],
+            style: TextStyle(fontSize: 11, color: ac.textFaint,
                 fontWeight: FontWeight.w600)),
       ));
 
-  Widget _row(String left, String right, {bool small = false}) {
+  Widget _row(AppColors ac, String left, String right, {bool small = false}) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 2),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Expanded(child: Text(left, style: TextStyle(fontSize: small ? 12 : 14))),
-          Text(right, style: TextStyle(fontSize: small ? 12 : 14, fontWeight: FontWeight.w600)),
+          Expanded(child: Text(left,
+              style: TextStyle(fontSize: small ? 12 : 14, color: ac.textMain))),
+          Text(right, style: TextStyle(fontSize: small ? 12 : 14,
+              fontWeight: FontWeight.w600, color: ac.textMain)),
         ],
       ),
     );
@@ -670,16 +696,20 @@ class BillingSettlementPage extends StatelessWidget {
 
 class _Empty extends StatelessWidget {
   final String text;
-  const _Empty(this.text);
+  final AppColors? ac;
+  const _Empty(this.text, [this.ac]);
   @override
-  Widget build(BuildContext context) => Container(
-        margin: const EdgeInsets.symmetric(vertical: 5),
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: Colors.grey.withValues(alpha: 0.2)),
-        ),
-        child: Text(text, style: TextStyle(color: Colors.grey[600])),
-      );
+  Widget build(BuildContext context) {
+    final t = ac ?? AppColors.of(context);
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 5),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: t.card,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: t.cardBorder),
+      ),
+      child: Text(text, style: TextStyle(color: t.textFaint)),
+    );
+  }
 }

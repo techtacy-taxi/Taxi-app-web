@@ -1616,6 +1616,59 @@ class JobService {
   /// Τζίρος + ΠΛΗΘΟΣ ολοκληρωμένων δουλειών ενός οδηγού (live).
   /// Υπολογίζεται από την ίδια πηγή με τον τζίρο (jobs/status==done), οπότε
   /// ακυρώσεις & ολικές διαγραφές το επηρεάζουν αυτόματα — όπως και τον τζίρο.
+  // ─── Τζίρος «κλειδωμένος μέχρι τον προηγούμενο μήνα» — ΜΟΝΙΜΟ, ΟΡΙΣΤΙΚΟ
+  // ποσό (presence.lockedTurnoverThroughLastMonth), γραμμένο server-side
+  // ΜΙΑ φορά τον μήνα (index.js, lockMonthlyTurnover — τρέχει 1η του μήνα).
+  // ΔΕΝ αλλάζει ΠΟΤΕ ξανά μετά το κλείδωμα — ούτε από «Καθαρισμός παλιών
+  // δεδομένων», ούτε από μεταγενέστερη ακύρωση παλιάς δουλειάς. Ο ΤΡΕΧΩΝ
+  // μήνας ΔΕΝ περιλαμβάνεται εδώ — προστίθεται ζωντανά χωριστά
+  // (monthlyTurnoverStatsFor), ώστε ακυρώσεις ΜΕΣΑ στον τρέχοντα μήνα να
+  // αφαιρούνται αμέσως, όπως ζητήθηκε.
+  static Stream<({double turnover, int jobs})> lockedTurnoverThroughLastMonth(
+      String uid) {
+    return _fs.collection('presence').doc(uid).snapshots().map((doc) {
+      final d = doc.data() ?? {};
+      return (
+        turnover:
+            (d['lockedTurnoverThroughLastMonth'] as num?)?.toDouble() ?? 0.0,
+        jobs: (d['lockedTurnoverThroughLastMonthJobs'] as num?)?.toInt() ?? 0,
+      );
+    });
+  }
+
+  // ─── Τζίρος ΜΟΝΟ τρέχοντος μήνα (live query — τα φρέσκα δεδομένα δεν
+  // έχουν προλάβει ακόμα να «καθαριστούν», οπότε το live query είναι ΟΚ εδώ).
+  static Stream<({double turnover, int jobs})> monthlyTurnoverStatsFor(
+      String uid) {
+    final now        = DateTime.now();
+    final monthStart = DateTime(now.year, now.month, 1);
+    final monthEnd    = DateTime(now.year, now.month + 1, 1);
+    return _fs
+        .collection(_jobs)
+        .where('takenBy', isEqualTo: uid)
+        .snapshots()
+        .map((s) {
+      double total = 0;
+      int    count = 0;
+      for (final d in s.docs) {
+        final data = d.data();
+        if (data['status'] != JobStatus.done.name) continue;
+        final doneAt = (data['doneAt'] as Timestamp?)?.toDate() ??
+            (data['scheduledAt'] as Timestamp?)?.toDate() ??
+            (data['createdAt'] as Timestamp?)?.toDate();
+        if (doneAt == null) continue;
+        if (doneAt.isBefore(monthStart) || !doneAt.isBefore(monthEnd)) {
+          continue;
+        }
+        final price = (data['price'] as num?)?.toDouble() ?? 0;
+        final comm  = (data['commission'] as num?)?.toDouble() ?? 0;
+        total += price - (comm < 0 ? comm : 0);
+        count++;
+      }
+      return (turnover: total, jobs: count);
+    });
+  }
+
   static Stream<({double turnover, int jobs})> turnoverStatsFor(String uid) {
     return _fs
         .collection(_jobs)
@@ -1634,6 +1687,147 @@ class JobService {
         count++;
       }
       return (turnover: total, jobs: count);
+    });
+  }
+
+  // ─── «Τα δικά μου» (admin/master): τζίρος ΤΡΕΧΟΝΤΟΣ μήνα από δουλειές
+  // που ΔΗΜΙΟΥΡΓΗΣΕ ο ίδιος (createdBy == uid) — είτε χειροκίνητα είτε από
+  // τη ΔΙΚΗ ΤΟΥ online φόρμα (η φόρμα αποθηκεύει ownerUid → μετατρέπεται σε
+  // createdBy όταν η δουλειά περάσει από saved_jobs σε jobs, βλ.
+  // saved_job_service.dart). Ανεξάρτητο από ποιος την οδήγησε/ποια ομάδα.
+  static Stream<({double turnover, int jobs})> myCreatedTurnoverThisMonth(
+      String uid) {
+    final now        = DateTime.now();
+    final monthStart = DateTime(now.year, now.month, 1);
+    final monthEnd    = DateTime(now.year, now.month + 1, 1);
+    return _fs
+        .collection(_jobs)
+        .where('createdBy', isEqualTo: uid)
+        .snapshots()
+        .map((s) {
+      double total = 0;
+      int    count = 0;
+      for (final d in s.docs) {
+        final data = d.data();
+        if (data['status'] != JobStatus.done.name) continue;
+        // Μήνας ολοκλήρωσης — προτιμάται το doneAt· αν λείπει (παλιά
+        // δεδομένα), πέφτει πίσω στο scheduledAt/createdAt.
+        final doneAt = (data['doneAt'] as Timestamp?)?.toDate() ??
+            (data['scheduledAt'] as Timestamp?)?.toDate() ??
+            (data['createdAt'] as Timestamp?)?.toDate();
+        if (doneAt == null) continue;
+        if (doneAt.isBefore(monthStart) || !doneAt.isBefore(monthEnd)) {
+          continue;
+        }
+        final price = (data['price'] as num?)?.toDouble() ?? 0;
+        final comm  = (data['commission'] as num?)?.toDouble() ?? 0;
+        total += price - (comm < 0 ? comm : 0);
+        count++;
+      }
+      return (turnover: total, jobs: count);
+    });
+  }
+
+  // ─── «Τα δικά μου»: πόσα ΜΟΥ ΟΦΕΙΛΟΝΤΑΙ συνολικά (ΟΛΩΝ των εποχών — παλιοί
+  // ανεξόφλητοι μήνες παραμένουν ορατοί, ΔΕΝ είναι μόνο τρέχων μήνας).
+  // Περιλαμβάνει: προμήθειες πηγής (source_commission) από οδηγούς μέσα ΚΑΙ
+  // έξω από την ομάδα του, ΚΑΙ (μόνο για master) προμήθειες app + συνδρομές
+  // υπηρεσιών (ημερολόγιο/online φόρμα κ.λπ. — recipientUid == 'MASTER').
+  static Stream<double> myReceivablesAllTime(String uid,
+      {required bool isMaster}) {
+    final recipientKey = isMaster ? kMasterRecipient : uid;
+    // Master: βλέπει ΚΑΙ τα δικά του source-commission (πραγματικό uid) ΚΑΙ
+    // τα app/subscription (sentinel 'MASTER') — δύο ξεχωριστά queries.
+    if (isMaster) {
+      final ownSourceQ = _fs
+          .collection(_billingTx)
+          .where('recipientUid', isEqualTo: uid);
+      final masterCatchAllQ = _fs
+          .collection(_billingTx)
+          .where('recipientUid', isEqualTo: kMasterRecipient);
+      return ownSourceQ.snapshots().asyncMap((ownSnap) async {
+        final catchAllSnap = await masterCatchAllQ.get();
+        double total = 0;
+        for (final d in [...ownSnap.docs, ...catchAllSnap.docs]) {
+          final data = d.data();
+          if (data['voided'] == true) continue;
+          final amount = (data['amount'] as num?)?.toDouble() ?? 0;
+          total += data['type'] == 'payment' ? -amount : amount;
+        }
+        return total;
+      });
+    }
+    return _fs
+        .collection(_billingTx)
+        .where('recipientUid', isEqualTo: recipientKey)
+        .snapshots()
+        .map((s) {
+      double total = 0;
+      for (final d in s.docs) {
+        final data = d.data();
+        if (data['voided'] == true) continue;
+        final amount = (data['amount'] as num?)?.toDouble() ?? 0;
+        total += data['type'] == 'payment' ? -amount : amount;
+      }
+      return total;
+    });
+  }
+
+  // ─── Δουλειές «εκτός ομάδας»: κάποιος δημιούργησε μια δουλειά (πηγή
+  // προμήθειας = recipientUid) αλλά την ανέλαβε οδηγός που ΔΕΝ ανήκει στην
+  // ομάδα/διαχείριση του δημιουργού (collectorUid) — π.χ. δεν βρέθηκε
+  // διαθέσιμος δικός του οδηγός και την πήρε οδηγός άλλης ομάδας.
+  // Επιστρέφει: recipientUid → λίστα από {uid, name, groupName, amount}.
+  // Ο 'MASTER' sentinel (app commission/συνδρομές) ΔΕΝ μπαίνει εδώ — αυτές
+  // ανήκουν πάντα στον master ούτως ή άλλως, δεν είναι «εκτός ομάδας» θέμα.
+  static Stream<Map<String, List<Map<String, dynamic>>>>
+      crossGroupReceivablesStream() {
+    return _fs.collection(_billingTx).snapshots().map((s) {
+      // Συγκέντρωση καθαρού υπολοίπου ανά (recipientUid, driverUid).
+      final byPair = <String, Map<String, dynamic>>{};
+      for (final d in s.docs) {
+        final data = d.data();
+        if (data['voided'] == true) continue;
+        if (data['type'] != 'charge' && data['type'] != 'payment') continue;
+        final recipientUid  = data['recipientUid']  as String? ?? '';
+        final collectorUid  = data['collectorUid']  as String? ?? '';
+        if (recipientUid.isEmpty) continue;
+        if (recipientUid == kMasterRecipient) continue; // βλ. σχόλιο πάνω
+        if (recipientUid == collectorUid) continue;      // ίδια ομάδα — όχι cross
+        final driverUid  = data['uid']     as String? ?? '';
+        final driverName = data['uidName'] as String? ?? '';
+        final groupName  = (data['collectorName'] as String?)?.isNotEmpty == true
+            ? data['collectorName'] as String
+            : '—';
+        final key = '$recipientUid|$driverUid';
+        final amount = (data['amount'] as num?)?.toDouble() ?? 0;
+        final signed = data['type'] == 'payment' ? -amount : amount;
+        final e = byPair.putIfAbsent(key, () => {
+              'recipientUid': recipientUid,
+              'uid':          driverUid,
+              'name':         driverName,
+              'groupName':    groupName,
+              'amount':       0.0,
+            });
+        e['amount'] = (e['amount'] as double) + signed;
+      }
+      // Ομαδοποίηση ανά recipientUid, μόνο θετικά υπόλοιπα (ανεξόφλητα).
+      final out = <String, List<Map<String, dynamic>>>{};
+      for (final e in byPair.values) {
+        final amount = e['amount'] as double;
+        if (amount <= 0.01) continue;
+        out.putIfAbsent(e['recipientUid'] as String, () => []).add({
+          'uid':       e['uid'],
+          'name':      e['name'],
+          'groupName': e['groupName'],
+          'amount':    amount,
+        });
+      }
+      for (final list in out.values) {
+        list.sort((a, b) =>
+            (b['amount'] as double).compareTo(a['amount'] as double));
+      }
+      return out;
     });
   }
 
@@ -1728,9 +1922,18 @@ class JobService {
         orderedGroupIds.add(d.id);
         result[d.id] = {
           'name':         d.data()['name'] ?? 'Ομάδα',
+          // Ποιος admin/master «κατέχει» αυτή την ομάδα — χρησιμοποιείται
+          // για να φιλτράρουμε τις «εκτός ομάδας» οφειλές στη σελίδα ομάδας.
+          'ownerUid':     (d.data()['createdBy'] as String?) ?? '',
           'charges':      0.0,
+          // «Από πάντα» — γεμίζεται παρακάτω: κλειδωμένο (μέχρι τον
+          // προηγούμενο μήνα) + ζωντανό τρέχοντος μήνα.
           'turnover':     0.0,
           'turnoverJobs': 0,
+          // Μόνο ΤΡΕΧΟΝΤΟΣ μήνα — live από τα jobs (φρέσκα, δεν έχουν
+          // προλάβει να καθαριστούν).
+          'monthTurnover':     0.0,
+          'monthTurnoverJobs': 0,
           'payments':     0.0,
           // Σύνολα ΤΡΕΧΟΝΤΟΣ μήνα — για το «πληρώθηκαν Χ από Υ του μήνα».
           'monthCharges':  0.0,
@@ -1760,11 +1963,20 @@ class JobService {
               'charges':      0.0,
               'turnover':     0.0,
               'turnoverJobs': 0,
+              'monthTurnover':     0.0,
+              'monthTurnoverJobs': 0,
               'payments':     0.0,
             });
       }
 
-      // 2. Ολοκληρωμένες δουλειές → τζίρος + χάρτης jobId→groupId
+      // 2. Ολοκληρωμένες δουλειές → μηνιαίος τζίρος (live) + χάρτης jobId→groupId.
+      // ΣΗΜΕΙΩΣΗ: ο τζίρος «από πάντα» ΔΕΝ υπολογίζεται πια από εδώ (θα
+      // μειωνόταν κάθε φορά που τρέχει το «Καθαρισμός παλιών δεδομένων») —
+      // έρχεται παρακάτω: κλειδωμένο μέχρι τον προηγούμενο μήνα
+      // (presence.lockedTurnoverThroughLastMonth) + ζωντανό τρέχοντος μήνα.
+      final now        = DateTime.now();
+      final monthStart = DateTime(now.year, now.month, 1);
+      final monthEnd    = DateTime(now.year, now.month + 1, 1);
       final jobIdToGroup = <String, String>{};
       final doneSnap = await _fs
           .collection(_jobs)
@@ -1778,17 +1990,70 @@ class JobService {
         if (uid == null || uid.isEmpty) continue;
         final g = attributed(uid, jobGroup);
         if (g == null) continue;
+        final doneAt = (data['doneAt'] as Timestamp?)?.toDate() ??
+            (data['scheduledAt'] as Timestamp?)?.toDate();
+        if (doneAt == null) continue;
+        if (doneAt.isBefore(monthStart) || !doneAt.isBefore(monthEnd)) {
+          continue; // εκτός τρέχοντος μήνα — μόνο αυτό μας ενδιαφέρει εδώ
+        }
         final price = (data['price'] as num?)?.toDouble() ?? 0;
         final comm  = (data['commission'] as num?)?.toDouble() ?? 0;
         // Αρνητικό γιαούρτι → προστίθεται στον τζίρο (ο οδηγός το εισέπραξε).
         final effPrice = price - (comm < 0 ? comm : 0);
-        result[g]!['turnover'] =
-            (result[g]!['turnover'] as double) + effPrice;
-        result[g]!['turnoverJobs'] =
-            (result[g]!['turnoverJobs'] as int) + 1;
+        result[g]!['monthTurnover'] =
+            (result[g]!['monthTurnover'] as double) + effPrice;
+        result[g]!['monthTurnoverJobs'] =
+            (result[g]!['monthTurnoverJobs'] as int) + 1;
         final de = driverOf(g, uid, data['takenByName'] ?? '');
-        de['turnover'] = (de['turnover'] as double) + effPrice;
-        de['turnoverJobs'] = (de['turnoverJobs'] as int) + 1;
+        de['monthTurnover'] = (de['monthTurnover'] as double) + effPrice;
+        de['monthTurnoverJobs'] = (de['monthTurnoverJobs'] as int) + 1;
+      }
+
+      // 2β. Τζίρος «από πάντα» = ΚΛΕΙΔΩΜΕΝΟ ποσό μέχρι τον προηγούμενο μήνα
+      // (presence.lockedTurnoverThroughLastMonth — μόνιμο, ΔΕΝ επηρεάζεται
+      // από διαγραφή παλιών jobs) + ο ΤΡΕΧΩΝ μήνας (ήδη υπολογισμένος
+      // ζωντανά παραπάνω σε monthTurnover — ώστε ακύρωση ΜΕΣΑ στον τρέχοντα
+      // μήνα να αφαιρείται αμέσως, πριν κλειδώσει το επόμενο 1ο του μήνα).
+      final driverUids = driverGroups.keys.toList();
+      if (driverUids.isNotEmpty) {
+        // Firestore whereIn έχει όριο 30 — σπάμε σε παρτίδες.
+        for (var i = 0; i < driverUids.length; i += 30) {
+          final batch = driverUids.sublist(
+              i, i + 30 > driverUids.length ? driverUids.length : i + 30);
+          final presSnap = await _fs
+              .collection('presence')
+              .where(FieldPath.documentId, whereIn: batch)
+              .get();
+          for (final pd in presSnap.docs) {
+            final uid  = pd.id;
+            final data = pd.data();
+            final locked =
+                (data['lockedTurnoverThroughLastMonth'] as num?)
+                    ?.toDouble() ?? 0.0;
+            final lockedJobs =
+                (data['lockedTurnoverThroughLastMonthJobs'] as num?)
+                    ?.toInt() ?? 0;
+            final presName =
+                '${data['displayName'] ?? ''} ${data['lastName'] ?? ''}'
+                    .trim();
+            for (final g in driverGroups[uid] ?? const <String>[]) {
+              final de = driverOf(g, uid, presName);
+              if ((de['name'] as String).isEmpty && presName.isNotEmpty) {
+                de['name'] = presName;
+              }
+              // «Από πάντα» = κλειδωμένο + ό,τι ήδη μαζεύτηκε ζωντανά αυτόν
+              // τον μήνα (de['monthTurnover'] υπολογίστηκε στο βήμα 2).
+              final total = locked + (de['monthTurnover'] as double);
+              final totalJobs = lockedJobs + (de['monthTurnoverJobs'] as int);
+              de['turnover']     = total;
+              de['turnoverJobs'] = totalJobs;
+              result[g]!['turnover'] =
+                  (result[g]!['turnover'] as double) + total;
+              result[g]!['turnoverJobs'] =
+                  (result[g]!['turnoverJobs'] as int) + totalJobs;
+            }
+          }
+        }
       }
 
       // 3. billing_tx → χρεώσεις / πληρωμές
