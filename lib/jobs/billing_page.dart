@@ -15,6 +15,7 @@ import '../app_theme.dart';
 import 'job_details_sheet.dart';
 import 'job_model.dart';
 import 'job_service.dart';
+import 'job_shared_widgets.dart';
 
 const _purple = Color(0xFF5E35B1);
 // Μπλε = ο διαχειριστής χρωστάει στον οδηγό (αρνητική οφειλή).
@@ -955,7 +956,7 @@ class _GroupListViewState extends State<_GroupListView> {
               ),
               const SizedBox(height: 16),
               if (entries.isNotEmpty)
-                const Padding(
+                Padding(
                   padding: EdgeInsets.only(bottom: 8, left: 2),
                   child: Text('Ομάδες',
                       style: TextStyle(fontSize: 12, color: c.textFaint)),
@@ -1082,7 +1083,7 @@ class _GroupListViewState extends State<_GroupListView> {
                 );
               }),
               if (entries.isEmpty)
-                const Padding(
+                Padding(
                   padding: EdgeInsets.all(40),
                   child: Center(child: Text('Δεν υπάρχουν ομάδες',
                       style: TextStyle(color: c.textFaint))),
@@ -1150,7 +1151,7 @@ class _CrossGroupSection extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Padding(
+              Padding(
                 padding: EdgeInsets.only(bottom: 8, left: 2),
                 child: Text('Δουλειές εκτός ομάδας',
                     style: TextStyle(fontSize: 12, color: c.textFaint)),
@@ -1402,7 +1403,7 @@ class _GroupDriversView extends StatelessWidget {
           ),
           const SizedBox(height: 16),
           if (drivers.isNotEmpty)
-            const Padding(
+            Padding(
               padding: EdgeInsets.only(bottom: 8, left: 2),
               child: Text('Οδηγοί ομάδας', style: TextStyle(fontSize: 12, color: c.textFaint)),
             ),
@@ -1490,7 +1491,7 @@ class _GroupDriversView extends StatelessWidget {
             );
           }),
           if (drivers.isEmpty)
-            const Padding(
+            Padding(
               padding: EdgeInsets.all(40),
               child: Center(child: Text('Δεν υπάρχουν οδηγοί',
                   style: TextStyle(color: c.textFaint))),
@@ -1579,8 +1580,6 @@ class _DriverBillingView extends StatelessWidget {
   final String userName;
   final String masterUid;
   final bool   canManage;
-  // Προσωπική όψη admin/master: κρύβει αυτο-οφειλές (και App/συνδρομή για master)
-  final bool   excludeOwnRecipient;
   final bool   isMaster;
 
   const _DriverBillingView({
@@ -1614,7 +1613,7 @@ class _DriverBillingView extends StatelessWidget {
         final lifeJobs     = lockedJobs + monthJobsN;
         return StreamBuilder<List<MonthlyBilling>>(
           stream: JobService.monthlyBillingFor(uid,
-              excludeOwnRecipient: excludeOwnRecipient, isMaster: isMaster),
+              isMaster: isMaster),
           builder: (context, snap) {
             if (!snap.hasData) {
               return const Center(
@@ -1673,7 +1672,7 @@ class _DriverBillingView extends StatelessWidget {
                         fontWeight: FontWeight.bold, fontSize: 15)),
                 const SizedBox(height: 8),
                 if (months.isEmpty)
-                  const Padding(
+                  Padding(
                     padding: EdgeInsets.all(30),
                     child: Center(child: Text('Δεν υπάρχουν χρεώσεις',
                         style: TextStyle(color: c.textFaint))),
@@ -1930,7 +1929,9 @@ class _DriverBillingView extends StatelessWidget {
   }) {
     return showDialog<bool>(
       context: context,
-      builder: (ctx) => Dialog(
+      builder: (ctx) {
+        final c = AppColors.of(context);
+        return Dialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         backgroundColor: c.card,
         clipBehavior: Clip.antiAlias,
@@ -2000,7 +2001,8 @@ class _DriverBillingView extends StatelessWidget {
             ),
           ],
         ),
-      ),
+      );
+      },
     );
   }
 
@@ -2849,71 +2851,6 @@ class _BigStat extends StatelessWidget {
                 fontSize: compact ? 22 : 40,
                 fontWeight: FontWeight.bold)),
       ]),
-    );
-  }
-}
-
-// Μικρό κουτάκι (π.χ. Τζίρος)
-class _SmallStat extends StatelessWidget {
-  final String    label;
-  final double    amount;
-  final Color     color;
-  final int?      count; // προαιρετικό: πλήθος δουλειών που έβγαλαν τον τζίρο
-  final IconData  icon = Icons.trending_up_rounded;
-
-  const _SmallStat({
-    required this.label,
-    required this.amount,
-    required this.color,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final c = AppColors.of(context);
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 12),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.10),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: color.withValues(alpha: 0.3)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(children: [
-            Icon(icon, size: 16, color: color),
-            const SizedBox(width: 6),
-            Expanded(
-              child: Text(label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                      color: color, fontSize: 11.5,
-                      fontWeight: FontWeight.w600)),
-            ),
-          ]),
-          const SizedBox(height: 6),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.baseline,
-            textBaseline: TextBaseline.alphabetic,
-            children: [
-              Text('${amount.toStringAsFixed(2)}€',
-                  style: TextStyle(
-                      color: color, fontSize: 19,
-                      fontWeight: FontWeight.bold)),
-              if (count != null) ...[
-                const SizedBox(width: 8),
-                Text('• από $count ${count == 1 ? "δουλειά" : "δουλειές"}',
-                    style: TextStyle(
-                        color: color.withValues(alpha: 0.85),
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600)),
-              ],
-            ],
-          ),
-        ],
-      ),
     );
   }
 }
