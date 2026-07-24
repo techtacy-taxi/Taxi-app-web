@@ -173,10 +173,15 @@ class _JobsCalendarPageState extends State<JobsCalendarPage> {
       for (final doc in snap.docs) {
         final job = Job.fromDoc(doc);
         if (!_seesAllOrgJobs && job.takenBy != widget.uid) continue;
-        // Admin (ΟΧΙ master): βλέπει ΜΟΝΟ δουλειές που δημιούργησε ο ίδιος —
-        // ποτέ δουλειές άλλου admin/tenant, ανεξαρτήτως ποιος τις ανέλαβε ή
-        // πού κατέληξαν (αποθηκευμένη/ανάληψη/ολοκληρωμένη/ακυρωμένη).
-        if (widget.isAdmin && !widget.isMaster && job.createdBy != widget.uid) {
+        // Admin (ΟΧΙ master): βλέπει δουλειές που είναι ΔΙΚΕΣ ΤΟΥ με ΔΥΟ
+        // τρόπους — ποτέ δουλειές άλλου admin που δεν τον αφορούν:
+        //   • τις ΔΗΜΙΟΥΡΓΗΣΕ ο ίδιος (createdBy), ή
+        //   • τις ΑΝΕΛΑΒΕ ο ίδιος (takenBy) — ο admin είναι ΚΑΙ οδηγός, οπότε
+        //     μπορεί να πάρει δουλειά που έβγαλε ΑΛΛΟΣ admin.
+        // Πριν κοιτούσαμε ΜΟΝΟ το createdBy, γι' αυτό μια δουλειά που ανέλαβε
+        // ο ίδιος από άλλον admin ΔΕΝ εμφανιζόταν ποτέ στο ημερολόγιό του.
+        if (widget.isAdmin && !widget.isMaster &&
+            job.createdBy != widget.uid && job.takenBy != widget.uid) {
           continue;
         }
         // Επιτρεπόμενες καταστάσεις: admin/master βλέπει ό,τι είναι ακόμα
@@ -232,7 +237,9 @@ class _JobsCalendarPageState extends State<JobsCalendarPage> {
         if (job.scheduledAt != null) continue; // ήδη μετρήθηκε πάνω
         if (job.takenAt == null) continue;
         if (!_seesAllOrgJobs && job.takenBy != widget.uid) continue;
-        if (widget.isAdmin && !widget.isMaster && job.createdBy != widget.uid) {
+        // Βλ. σχόλιο πάνω: δική του = τη δημιούργησε Ή την ανέλαβε.
+        if (widget.isAdmin && !widget.isMaster &&
+            job.createdBy != widget.uid && job.takenBy != widget.uid) {
           continue;
         }
         final _EntryKind kind = job.status == JobStatus.done
