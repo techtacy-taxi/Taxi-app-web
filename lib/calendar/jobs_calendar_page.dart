@@ -154,10 +154,16 @@ class _JobsCalendarPageState extends State<JobsCalendarPage> {
     // Ο admin βλέπει ΜΟΝΟ ό,τι δημιούργησε ο ίδιος (createdBy == uid) —
     // ανεξαρτήτως ποιος την ανέλαβε/ολοκλήρωσε. Ο master βλέπει τα πάντα, με
     // δυνατότητα (μάτι) να δει μόνο τις δικές του (createdBy == uid).
+    // ⚠️ ΠΡΟΣΟΧΗ: ΔΕΝ φιλτράρουμε εδώ με tenantId, γιατί το Job.toMap() ΔΕΝ
+    // γράφει tenantId — οι δουλειές της εφαρμογής ΔΕΝ έχουν το πεδίο, και το
+    // Firestore δεν ταιριάζει missing πεδίο με ==, οπότε θα κρύβαμε ΤΑ ΠΑΝΤΑ.
+    // (Πρέπει πρώτα να γράφεται το tenantId στη δημιουργία + backfill.)
     Query<Map<String, dynamic>> q = FirebaseFirestore.instance
         .collection('jobs')
-        .where('scheduledAt', isGreaterThanOrEqualTo: Timestamp.fromDate(monthStart))
+        .where('scheduledAt',
+            isGreaterThanOrEqualTo: Timestamp.fromDate(monthStart))
         .where('scheduledAt', isLessThan: Timestamp.fromDate(monthEnd));
+    {
 
     // ΣΗΜΕΙΩΣΗ: οι ΑΜΕΣΕΣ δουλειές (χωρίς scheduledAt) δεν έχουν ημερομηνία
     // ραντεβού — τις παίρνουμε ξεχωριστά μέσω takenAt/createdAt παρακάτω.
@@ -208,14 +214,13 @@ class _JobsCalendarPageState extends State<JobsCalendarPage> {
 
       // Άμεσες δουλειές (χωρίς scheduledAt) — μόνο για ΤΟΝ ΤΡΕΧΟΝΤΑ μήνα,
       // ταξινομημένες με βάση την ημέρα ανάληψης (takenAt) ή δημιουργίας.
+      final immBase = FirebaseFirestore.instance.collection('jobs');
       final immediateQuery = _seesAllOrgJobs
-          ? FirebaseFirestore.instance
-              .collection('jobs')
+          ? immBase
               .where('takenAt',
                   isGreaterThanOrEqualTo: Timestamp.fromDate(monthStart))
               .where('takenAt', isLessThan: Timestamp.fromDate(monthEnd))
-          : FirebaseFirestore.instance
-              .collection('jobs')
+          : immBase
               .where('takenBy', isEqualTo: widget.uid)
               .where('takenAt',
                   isGreaterThanOrEqualTo: Timestamp.fromDate(monthStart))
@@ -287,6 +292,7 @@ class _JobsCalendarPageState extends State<JobsCalendarPage> {
       }
       return entries;
     });
+    }
   }
 
   // ── Χρώματα ──────────────────────────────────────────────────────────────
@@ -353,6 +359,42 @@ class _JobsCalendarPageState extends State<JobsCalendarPage> {
       body: StreamBuilder<List<_CalEntry>>(
         stream: _monthEntries(),
         builder: (context, snap) {
+          // ⚠️ ΚΡΙΣΙΜΟ: μέχρι τώρα ΔΕΝ υπήρχε κανένας χειρισμός σφάλματος —
+          // αν έσκαγε το query (π.χ. λείπει composite index, ή permission-
+          // denied), το ημερολόγιο εμφανιζόταν απλώς ΑΔΕΙΟ, χωρίς καμία
+          // ένδειξη. Γι' αυτό «δεν βλέπει τις δουλειές του» χωρίς εξήγηση.
+          if (snap.hasError) {
+            final msg = snap.error.toString();
+            final needsIndex = msg.contains('requires an index') ||
+                msg.contains('FAILED_PRECONDITION');
+            return Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.error_outline_rounded,
+                        size: 42, color: c.amberDeep),
+                    const SizedBox(height: 12),
+                    Text(
+                      needsIndex
+                          ? 'Λείπει ένα ευρετήριο (index) της βάσης.\n'
+                              'Χρειάζεται δημιουργία μία φορά — δείξε αυτό το '
+                              'μήνυμα στον διαχειριστή.'
+                          : 'Δεν ήταν δυνατή η φόρτωση του ημερολογίου.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 14, color: c.textMain),
+                    ),
+                    const SizedBox(height: 10),
+                    SelectableText(
+                      msg,
+                      style: TextStyle(fontSize: 10.5, color: c.textFaint),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          }
           final all = snap.data ?? const <_CalEntry>[];
           final byDay = <DateTime, List<_CalEntry>>{};
           for (final e in all) {

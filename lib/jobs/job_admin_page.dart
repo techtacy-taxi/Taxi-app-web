@@ -978,6 +978,23 @@ class _HistoryTabState extends State<_HistoryTab> {
   Future<void> _loadSummary({bool silent = false}) async {
     setState(() { if (!silent) _loading = true; _error = ''; });
     try {
+      // ── ΟΔΗΓΟΣ: βλέπει ΜΟΝΟ τις ΔΙΚΕΣ ΤΟΥ ολοκληρωμένες δουλειές ──────────
+      // Πριν, το ιστορικό του οδηγού φιλτραριζόταν κατά ΟΜΑΔΑ (userGroupIds):
+      //   • αν ανήκε σε ομάδα → έβλεπε δουλειές ΟΛΩΝ των συναδέλφων του
+      //   • αν ΔΕΝ ανήκε σε ομάδα → groupSet έμενε null και το φίλτρο χανόταν
+      //     τελείως, οπότε δεν έβλεπε σωστά τις δικές του.
+      // Τώρα ο οδηγός δένεται πάντα στο δικό του uid.
+      final bool isPlainDriver = !widget.isAdmin && !widget.isMaster;
+      if (isPlainDriver) {
+        final s = await JobService.summaryForPeriod(
+          from:      _from,
+          to:        _to,
+          driverUid: widget.adminUid, // = το uid του ίδιου του οδηγού
+        );
+        if (mounted) setState(() { _summary = s; _loading = false; });
+        return;
+      }
+
       // Σύνολο ομάδων προς φιλτράρισμα
       List<String>? groupSet;
       if (_filterDriverUid != null) {

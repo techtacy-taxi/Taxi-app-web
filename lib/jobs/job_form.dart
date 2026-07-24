@@ -584,8 +584,9 @@ class _JobFormPageState extends State<JobFormPage> {
     // Σιγουρέψου ότι υπάρχει η πηγή Standard Rate
     await JobService.ensureStandardRate();
 
-    final snap = await FirebaseFirestore.instance
-        .collection('sources')
+    // Tenant-scoped (βλ. JobService.tenantScoped): χωρίς φίλτρο tenantId το
+    // query απορρίπτεται ΟΛΟΚΛΗΡΟ για κάθε μη super-admin → «καμία πηγή».
+    final snap = await (await JobService.tenantScoped('sources'))
         .orderBy('name')
         .get();
     var all = snap.docs.map((d) => JobSource.fromDoc(d)).toList();

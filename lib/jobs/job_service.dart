@@ -115,9 +115,9 @@ class JobService {
 
     controller = StreamController<List<Job>>(
       onListen: () async {
-        // Tenant-scoped (βλ. tenantScoped): χωρίς φίλτρο tenantId το query
-        // απορρίπτεται ΟΛΟΚΛΗΡΟ για κάθε μη super-admin.
-        final q = await tenantScoped(_jobs);
+        // ⚠️ ΧΩΡΙΣ φίλτρο tenantId: το Job.toMap() ΔΕΝ γράφει tenantId, οπότε
+        // φίλτρο == θα έκρυβε ΤΑ ΠΑΝΤΑ (missing πεδίο δεν ταιριάζει με ==).
+        final q = _fs.collection(_jobs);
         sub = q
             .where('status', isEqualTo: JobStatus.open.name)
             .orderBy('createdAt', descending: true)
@@ -201,7 +201,8 @@ class JobService {
     StreamSubscription? sub;
     ctl = StreamController<List<Job>>(
       onListen: () async {
-        final q = await tenantScoped(_jobs);
+        // ⚠️ ΧΩΡΙΣ φίλτρο tenantId — βλ. σχόλιο στο openJobsFor.
+        final q = _fs.collection(_jobs);
         sub = q
             .orderBy('createdAt', descending: true)
             .limit(limit)
@@ -2186,7 +2187,9 @@ class JobService {
     StreamSubscription? sub;
     ctl = StreamController<List<BillingTx>>(
       onListen: () async {
-        final q = await tenantScoped(_billingTx);
+        // ⚠️ ΧΩΡΙΣ φίλτρο: τα billing_tx ΔΕΝ γράφουν tenantId (βλ. σχόλιο
+        // στο tenantScoped) — φίλτρο == θα έκρυβε ΤΑ ΠΑΝΤΑ.
+        final q = _fs.collection(_billingTx);
         sub = q.snapshots().listen((s) {
           final list = s.docs.map((d) => BillingTx.fromDoc(d)).toList()
             ..removeWhere((t) => t.voided);
@@ -2341,7 +2344,8 @@ class JobService {
     StreamSubscription? sub;
     ctl = StreamController<List<Settlement>>(
       onListen: () async {
-        final q = await tenantScoped(_settlements);
+        // ⚠️ ΧΩΡΙΣ φίλτρο — τα settlements ΔΕΝ γράφουν tenantId.
+        final q = _fs.collection(_settlements);
         sub = q.snapshots().listen((s) {
           if (!ctl.isClosed) {
             ctl.add(s.docs.map((d) => Settlement.fromDoc(d)).toList());
