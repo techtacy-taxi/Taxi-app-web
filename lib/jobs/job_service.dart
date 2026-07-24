@@ -222,7 +222,14 @@ class JobService {
 
   // Δημιουργία νέας δουλειάς
   static Future<String> createJob(Job job) async {
-    final ref = await _fs.collection(_jobs).add(job.toMap());
+    // ⚠️ ΚΡΙΣΙΜΟ (firestore.rules → jobs/allow create → sameTenantAsNewDoc):
+    // ο κανόνας απαιτεί το ΝΕΟ doc να έχει tenantId ίδιο με του δημιουργού.
+    // Το Job.toMap() ΔΕΝ γράφει tenantId, οπότε το Firestore το θεωρούσε
+    // 'default' → κάθε admin εκτός super-admin έπαιρνε permission-denied και
+    // ΔΕΝ μπορούσε να δημιουργήσει καμία δουλειά. (Ο super-admin περνούσε
+    // λόγω masterEmail() στα rules, γι' αυτό «σε εμένα δούλευε».)
+    final data = job.toMap()..['tenantId'] = await myTenantId();
+    final ref = await _fs.collection(_jobs).add(data);
     return ref.id;
   }
 
@@ -238,11 +245,15 @@ class JobService {
   }) async {
     final batchId = _fs.collection(_jobs).doc().id; // τυχαίο μοναδικό id
     final wb = _fs.batch();
+    // Βλ. σχόλιο στο createJob: τα rules απαιτούν tenantId σε ΚΑΘΕ νέο doc
+    // (jobs ΚΑΙ job_batches) — αλλιώς permission-denied για κάθε μη
+    // super-admin.
+    final tid = await myTenantId();
     double total = 0;
     String? vType;
     for (final j in jobs) {
       final ref = _fs.collection(_jobs).doc();
-      final map = j.toMap();
+      final map = j.toMap()..['tenantId'] = tid;
       // Επιβολή: αποκλειστική αποστολή σε αυτόν τον 1 οδηγό
       map['targetUids']      = [driverUid];
       map['targetNames']     = [driverName];
@@ -271,6 +282,7 @@ class JobService {
       'count':       jobs.length,
       'totalPrice':  total,
       'vehicleType': vType ?? 'any',
+      'tenantId':    tid,
       'createdAt':   FieldValue.serverTimestamp(),
     });
     await wb.commit();
@@ -291,9 +303,11 @@ class JobService {
     bool                 exclusive   = false,
   }) async {
     final wb = _fs.batch();
+    // Βλ. createJob: τα rules απαιτούν tenantId σε κάθε νέο job doc.
+    final tid = await myTenantId();
     for (final j in jobs) {
       final ref = _fs.collection(_jobs).doc();
-      final map = j.toMap();
+      final map = j.toMap()..['tenantId'] = tid;
       map['groupId']         = targetUids.isEmpty ? groupId : null;
       map['targetUids']      = targetUids;
       map['targetNames']     = targetNames;

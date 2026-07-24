@@ -1295,7 +1295,7 @@ class _JobFormPageState extends State<JobFormPage> {
     }
     if (m > 60) {
       final h = m ~/ 60, r = m % 60;
-      return '$hω $rλ';
+      return '${h}ω ${r}λ';
     }
     return '$m λεπτά';
   }

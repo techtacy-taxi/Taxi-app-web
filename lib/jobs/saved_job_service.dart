@@ -22,6 +22,7 @@
 //   • master → όλες, με φίλτρα (ποιος έφτιαξε / μόνο δικές του)
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'job_model.dart';
 
 // ─── Μία «στάση» μέσα σε μια ενωμένη δουλειά Shuttle ────────────────────────
@@ -238,6 +239,20 @@ class SavedJob {
 
 class SavedJobService {
   static final _fs    = FirebaseFirestore.instance;
+
+  /// tenantId του τρέχοντος χρήστη — ενσωματωμένο εδώ (ΟΧΙ κλήση στο
+  /// JobService) ώστε να αποφύγουμε κυκλικό import.
+  static Future<String> _myTenantId() async {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return 'default';
+    try {
+      final doc = await _fs.collection('presence').doc(uid).get();
+      return (doc.data()?['tenantId'] as String?) ?? 'default';
+    } catch (_) {
+      return 'default';
+    }
+  }
+
   static const _coll  = 'saved_jobs';
 
   /// Αποθηκεύει νέα δουλειά-προσχέδιο. Παίρνει το Job.toMap() (ώστε η μετατροπή
@@ -254,6 +269,11 @@ class SavedJobService {
     map['ownerName'] = ownerName;
     map['savedAt']   = FieldValue.serverTimestamp();
     map['autoReturned'] = autoReturned;
+    // ⚠️ ΚΡΙΣΙΜΟ (firestore.rules → saved_jobs/allow create →
+    // sameTenantAsNewDoc): κάθε ΝΕΟ doc πρέπει να έχει tenantId ίδιο με του
+    // δημιουργού. Χωρίς αυτό το Firestore το θεωρεί 'default' και κάθε admin
+    // εκτός super-admin έπαιρνε permission-denied στο κουμπί «Αποθήκευση».
+    map['tenantId']  = await _myTenantId();
     if (calendarEventId != null && calendarEventId.isNotEmpty) {
       map['calendarEventId'] = calendarEventId;
     }
