@@ -39,6 +39,7 @@ import 'package:flutter/services.dart' show rootBundle;
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 
 import '../jobs/job_shared_widgets.dart';
+import '../app_theme.dart';
 
 const Color _kAmber     = Color(0xFFFFB300);
 const Color _kAmberDark = Color(0xFF5A3D00);
@@ -221,6 +222,10 @@ class PricingZonesPage extends StatefulWidget {
 }
 
 class _PricingZonesPageState extends State<PricingZonesPage> {
+  // Ενιαία πρόσβαση στα χρώματα θέματος — διαθέσιμη σε όλη την κλάση αφού
+  // το `context` υπάρχει πάντα σε ένα State<T>. Ίδιο μοτίβο με τη σελίδα
+  // Ρυθμίσεις Online Φόρμας.
+  AppColors get c => AppColors.of(context);
   final _db = FirebaseFirestore.instance;
   GoogleMapController? _mapCtrl;
   String? _selectedZoneId; // != null: επεξεργασία υπάρχουσας ζώνης
@@ -480,11 +485,11 @@ class _PricingZonesPageState extends State<PricingZonesPage> {
     final viewingOther = _viewingAsTenantId != null;
     return Container(
       width: double.infinity,
-      color: viewingOther ? Colors.deepPurple.shade50 : Colors.grey.shade100,
+      color: viewingOther ? Colors.deepPurple.shade50 : c.scaffold,
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       child: Row(children: [
         Icon(Icons.swap_horiz_rounded, size: 18,
-            color: viewingOther ? Colors.deepPurple : Colors.grey[700]),
+            color: viewingOther ? Colors.deepPurple : c.textFaint),
         const SizedBox(width: 8),
         Expanded(
           child: DropdownButtonHideUnderline(
@@ -970,10 +975,10 @@ class _PricingZonesPageState extends State<PricingZonesPage> {
       length: 2,
       child: Column(
         children: [
-          const TabBar(
-            labelColor: Colors.black87,
+          TabBar(
+            labelColor: c.textMain,
             indicatorColor: _kAmber,
-            tabs: [Tab(text: 'Διαδρομές'), Tab(text: 'Δυναμικός τύπος')],
+            tabs: const [Tab(text: 'Διαδρομές'), Tab(text: 'Δυναμικός τύπος')],
           ),
           Expanded(
             child: TabBarView(

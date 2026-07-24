@@ -19,6 +19,7 @@ import 'job_model.dart';
 import 'job_service.dart';
 import 'job_shared_widgets.dart';
 import 'places_service.dart';
+import '../app_theme.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ClientsTab
@@ -78,6 +79,7 @@ class _ClientsTabState extends State<ClientsTab> {
 
   @override
   Widget build(BuildContext context) {
+    final ac = AppColors.of(context);
     if (!_tenantLoaded) {
       return const Center(child: CircularProgressIndicator());
     }
@@ -104,15 +106,17 @@ class _ClientsTabState extends State<ClientsTab> {
             child: Row(children: [
               Expanded(
                 child: TextField(
+                  style: TextStyle(color: ac.textMain),
                   decoration: InputDecoration(
                     hintText:   'Αναζήτηση πελάτη...',
-                    prefixIcon: const Icon(Icons.search_rounded),
+                    hintStyle:  TextStyle(color: ac.textFaint),
+                    prefixIcon: Icon(Icons.search_rounded, color: ac.textFaint),
                     filled:     true,
-                    fillColor:  Colors.white,
+                    fillColor:  ac.card,
                     isDense:    true,
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide(color: Colors.grey.shade300),
+                      borderSide: BorderSide(color: ac.cardBorder),
                     ),
                   ),
                   onChanged: (v) => setState(() => _query = v),
@@ -132,12 +136,12 @@ class _ClientsTabState extends State<ClientsTab> {
                       padding: const EdgeInsets.all(11),
                       decoration: BoxDecoration(
                         color: _hideOthers
-                            ? Colors.white
+                            ? ac.card
                             : Colors.amber.shade100,
                         borderRadius: BorderRadius.circular(10),
                         border: Border.all(
                             color: _hideOthers
-                                ? Colors.grey.shade300
+                                ? ac.cardBorder
                                 : Colors.amber.shade400),
                       ),
                       child: Icon(
@@ -146,7 +150,7 @@ class _ClientsTabState extends State<ClientsTab> {
                             : Icons.visibility_rounded,
                         size: 20,
                         color: _hideOthers
-                            ? Colors.grey.shade600
+                            ? ac.textFaint
                             : Colors.amber.shade900,
                       ),
                     ),
@@ -167,7 +171,7 @@ class _ClientsTabState extends State<ClientsTab> {
                           _query.isEmpty
                               ? 'Δεν υπάρχουν πελάτες ακόμα'
                               : 'Κανένας πελάτης',
-                          style: const TextStyle(color: Colors.grey)),
+                          style: TextStyle(color: ac.textFaint)),
                     ),
                   ),
                 ...clients.map((c) => _ClientCard(
@@ -299,23 +303,17 @@ class _ClientCardState extends State<_ClientCard>
 
   @override
   Widget build(BuildContext context) {
+    final ac = AppColors.of(context);
     final color = _avatarColor;
     final routeCount = client.routes.length;
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: ac.card,
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
-            color: _expanded ? color.withValues(alpha: 0.5) : Colors.grey.shade200,
+            color: _expanded ? color.withValues(alpha: 0.5) : ac.cardBorder,
             width: _expanded ? 1.4 : 1),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: _expanded ? 0.06 : 0.03),
-            blurRadius: _expanded ? 14 : 6,
-            offset: const Offset(0, 3),
-          ),
-        ],
       ),
       clipBehavior: Clip.antiAlias,
       child: Column(children: [
@@ -352,8 +350,9 @@ class _ClientCardState extends State<_ClientCard>
                       Flexible(
                         child: Text(client.name,
                             maxLines: 1, overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                                fontWeight: FontWeight.bold, fontSize: 16.5)),
+                            style: TextStyle(
+                                fontWeight: FontWeight.bold, fontSize: 16.5,
+                                color: ac.textMain)),
                       ),
                       if (client.hasShuttleBus) ...[
                         const SizedBox(width: 6),
@@ -384,7 +383,7 @@ class _ClientCardState extends State<_ClientCard>
                     const SizedBox(height: 2),
                     Row(children: [
                       Icon(Icons.route_rounded,
-                          size: 13, color: Colors.grey.shade500),
+                          size: 13, color: ac.textFaint),
                       const SizedBox(width: 4),
                       Text(
                           routeCount == 0
@@ -395,7 +394,7 @@ class _ClientCardState extends State<_ClientCard>
                           style: TextStyle(
                               fontSize: 12.5,
                               fontWeight: FontWeight.w500,
-                              color: Colors.grey[600])),
+                              color: ac.textFaint)),
                     ]),
                   ],
                 ),

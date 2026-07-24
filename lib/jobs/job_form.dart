@@ -17,6 +17,7 @@ import 'job_model.dart';
 import 'client_model.dart';
 import 'job_service.dart';
 import 'job_shared_widgets.dart';
+import '../app_theme.dart';
 import 'saved_job_service.dart';
 import 'places_service.dart';
 import '../widgets/vehicle_type_icon.dart';
@@ -584,9 +585,8 @@ class _JobFormPageState extends State<JobFormPage> {
     // Σιγουρέψου ότι υπάρχει η πηγή Standard Rate
     await JobService.ensureStandardRate();
 
-    // Tenant-scoped (βλ. JobService.tenantScoped): χωρίς φίλτρο tenantId το
-    // query απορρίπτεται ΟΛΟΚΛΗΡΟ για κάθε μη super-admin → «καμία πηγή».
-    final snap = await (await JobService.tenantScoped('sources'))
+    final snap = await FirebaseFirestore.instance
+        .collection('sources')
         .orderBy('name')
         .get();
     var all = snap.docs.map((d) => JobSource.fromDoc(d)).toList();
@@ -1406,8 +1406,12 @@ class _JobFormPageState extends State<JobFormPage> {
 
   @override
   Widget build(BuildContext context) {
+    // Τοπική μεταβλητή (ΟΧΙ class-wide getter) με το όνομα `ac` αντί για `c`
+    // — υπάρχουν ήδη 2 μέθοδοι σε αυτή την κλάση που χρησιμοποιούν το `c`
+    // για αποτέλεσμα υπολογισμού τιμής (calculateFor), όχι για χρώμα.
+    final ac = AppColors.of(context);
     return Scaffold(
-      backgroundColor: const Color(0xFFF8F8F8),
+      backgroundColor: ac.scaffold,
       appBar: AppBar(
         title: Text(
             widget.isSavedDraft
@@ -2235,7 +2239,9 @@ class _JobFormPageState extends State<JobFormPage> {
               backgroundColor: Colors.amber,
               foregroundColor: Colors.black,
               padding: const EdgeInsets.symmetric(vertical: 16),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+              // Σχήμα: αφαιρέθηκε το δικό του borderRadius(14) — ακολουθεί
+              // πλέον το καθολικό στυλ κουμπιών της εφαρμογής (24, ορισμένο
+              // μία φορά στο app_theme.dart), ίδιο με όλα τα άλλα κουμπιά.
             ),
             icon: Icon(widget.editJob != null && widget.editJob!.takenBy == null
                 ? Icons.campaign_rounded
@@ -2258,8 +2264,7 @@ class _JobFormPageState extends State<JobFormPage> {
                 foregroundColor: const Color(0xFF1565C0),
                 side: const BorderSide(color: Color(0xFF1565C0)),
                 padding: const EdgeInsets.symmetric(vertical: 16),
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14)),
+                // Σχήμα: ίδιο σκεπτικό — ακολουθεί το καθολικό στυλ (24).
               ),
               icon: const Icon(Icons.bookmark_add_rounded),
               label: Text(

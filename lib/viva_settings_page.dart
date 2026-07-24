@@ -22,6 +22,8 @@ import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
 
+import 'app_theme.dart';
+
 // ── Χρώμα «φυστικί» — ίδιο με το φόντο του μενού (βλ. εικόνα μενού) ────────
 const Color kPistachio       = Color(0xFFF3ECD9); // φόντο πάνω μπάρα προειδοποίησης
 const Color kPistachioAccent = Colors.teal; // κουμπί Αποθήκευση + διακόπτης — ίδιο με την πάνω μπάρα
@@ -35,6 +37,9 @@ class VivaSettingsPage extends StatefulWidget {
 }
 
 class _VivaSettingsPageState extends State<VivaSettingsPage> {
+  // Ενιαία πρόσβαση στα χρώματα θέματος — διαθέσιμη σε ΟΛΗ την κλάση αφού
+  // το `context` υπάρχει πάντα σε ένα State<T>. Καμία αλλαγή αλλού χρειάζεται.
+  AppColors get c => AppColors.of(context);
   String _tenantId = 'default';
   String _tenantName = 'Ο δικός μου λογαριασμός';
   bool _tenantResolved = false;
@@ -673,7 +678,7 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
             ],
           ),
         ),
-        backgroundColor: const Color(0xFFF3F5F7),
+        backgroundColor: c.scaffold,
         body: SafeArea(
           child: Column(
             children: [
@@ -734,7 +739,7 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
   // διακριτική σκιά. Ένα σημείο αλλαγής για ΟΛΑ τα tabs.
   Widget _tabWrap({required Widget child}) {
     return Container(
-      color: const Color(0xFFF3F5F7),
+      color: c.scaffold,
       child: SingleChildScrollView(
         padding: EdgeInsets.fromLTRB(14, 14, 14,
             14 + MediaQuery.of(context).viewPadding.bottom),
@@ -742,16 +747,9 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
           width: double.infinity,
           padding: const EdgeInsets.fromLTRB(18, 18, 18, 20),
           decoration: BoxDecoration(
-            color: Colors.white,
+            color: c.card,
             borderRadius: BorderRadius.circular(18),
-            border: Border.all(color: Colors.grey.shade200),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.05),
-                blurRadius: 14,
-                offset: const Offset(0, 4),
-              ),
-            ],
+            border: Border.all(color: c.cardBorder),
           ),
           child: child,
         ),
@@ -763,11 +761,11 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
-      color: Colors.teal.withValues(alpha: 0.06),
+      color: Colors.teal.withValues(alpha: 0.08),
       child: Row(children: [
         Icon(Icons.swap_horiz_rounded, size: 18, color: Colors.teal[700]),
         const SizedBox(width: 8),
-        const Text('Προβολή για:', style: TextStyle(fontSize: 12.5)),
+        Text('Προβολή για:', style: TextStyle(fontSize: 12.5, color: c.textMain)),
         const SizedBox(width: 8),
         Expanded(
           child: _loadingTenants
@@ -776,18 +774,20 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
                   child: DropdownButton<String>(
                     isExpanded: true,
                     value: _tenantId,
+                    dropdownColor: c.card,
                     items: [
-                      const DropdownMenuItem(
+                      DropdownMenuItem(
                         value: 'default',
                         child: Text('Ο δικός μου λογαριασμός',
-                            style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+                            style: TextStyle(fontSize: 13,
+                                fontWeight: FontWeight.bold, color: c.textMain)),
                       ),
                       ..._allTenants.map((t) => DropdownMenuItem<String>(
                             value: t['tenantId'] as String,
                             child: Text(
                                 (t['businessName'] as String?) ?? t['tenantId'] as String,
                                 overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(fontSize: 13)),
+                                style: TextStyle(fontSize: 13, color: c.textMain)),
                           )),
                     ],
                     onChanged: (v) {
@@ -1453,12 +1453,12 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
           Container(
             width: 18, height: 18,
             margin: const EdgeInsets.only(top: 1),
-            decoration: BoxDecoration(color: Colors.green.shade700, shape: BoxShape.circle),
+            decoration: const BoxDecoration(color: Colors.green, shape: BoxShape.circle),
             alignment: Alignment.center,
             child: Text(number, style: const TextStyle(fontSize: 10, color: Colors.white, fontWeight: FontWeight.bold)),
           ),
           const SizedBox(width: 8),
-          Expanded(child: Text(text, style: TextStyle(fontSize: 11.5, color: Colors.green.shade900))),
+          Expanded(child: Text(text, style: TextStyle(fontSize: 11.5, color: c.textMain))),
         ],
       ),
     );
@@ -1473,12 +1473,12 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
           Container(
             width: 18, height: 18,
             margin: const EdgeInsets.only(top: 1),
-            decoration: BoxDecoration(color: Colors.blue.shade700, shape: BoxShape.circle),
+            decoration: const BoxDecoration(color: Colors.blue, shape: BoxShape.circle),
             alignment: Alignment.center,
             child: Text(number, style: const TextStyle(fontSize: 10, color: Colors.white, fontWeight: FontWeight.bold)),
           ),
           const SizedBox(width: 8),
-          Expanded(child: Text(text, style: TextStyle(fontSize: 11.5, color: Colors.blue.shade900))),
+          Expanded(child: Text(text, style: TextStyle(fontSize: 11.5, color: c.textMain))),
         ],
       ),
     );
@@ -1890,9 +1890,9 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
     return Container(
       width: double.infinity,
       decoration: BoxDecoration(
-        color: Colors.grey.shade50,
+        color: c.scaffold,
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: Colors.grey.shade300),
+        border: Border.all(color: c.cardBorder),
       ),
       child: Theme(
         // Αφαιρούμε τις προεπιλεγμένες γραμμές διαχωρισμού του ExpansionTile
@@ -1901,9 +1901,9 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
         child: ExpansionTile(
           tilePadding: const EdgeInsets.symmetric(horizontal: 12),
           childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-          leading: Icon(Icons.info_outline_rounded, size: 16, color: Colors.grey[700]),
-          title: const Text('Πώς ρυθμίζεις το Webhook & το Source Code',
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12.5)),
+          leading: Icon(Icons.info_outline_rounded, size: 16, color: c.textFaint),
+          title: Text('Πώς ρυθμίζεις το Webhook & το Source Code',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12.5, color: c.textMain)),
           children: [
             const Align(
               alignment: Alignment.centerLeft,
@@ -1972,14 +1972,14 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
                 width: double.infinity,
                 padding: const EdgeInsets.all(8),
                 decoration: BoxDecoration(
-                  color: Colors.amber.shade50,
+                  color: c.amberSoft,
                   borderRadius: BorderRadius.circular(8),
                 ),
-                child: const Text(
+                child: Text(
                   'Αν το κάνεις εσύ για λογαριασμό κάποιου tenant, ακολούθησε τα '
                   'ίδια 2 βήματα μέσα στο δικό ΤΟΥ Viva dashboard (όχι στο δικό '
                   'σου) — το webhook URL του θα έχει το δικό του tenantId.',
-                  style: TextStyle(fontSize: 11.5),
+                  style: TextStyle(fontSize: 11.5, color: c.amberDeep),
                 ),
               ),
             ],
@@ -1994,19 +1994,19 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
     return Container(
       width: double.infinity,
       decoration: BoxDecoration(
-        color: Colors.blue.shade50,
+        color: c.blueSoft,
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: Colors.blue.shade200),
+        border: Border.all(color: c.blueSoft),
       ),
       child: Theme(
         data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
         child: ExpansionTile(
           tilePadding: const EdgeInsets.symmetric(horizontal: 12),
           childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-          leading: Icon(Icons.map_rounded, size: 16, color: Colors.blue[700]),
+          leading: Icon(Icons.map_rounded, size: 16, color: c.blueDeep),
           title: Text('Πώς φτιάχνεις ασφαλές Google Maps κλειδί',
               style: TextStyle(
-                  fontWeight: FontWeight.bold, fontSize: 12.5, color: Colors.blue[900])),
+                  fontWeight: FontWeight.bold, fontSize: 12.5, color: c.blueDeep)),
           children: [
             const Align(
               alignment: Alignment.centerLeft,
@@ -2035,11 +2035,11 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
             Container(
               padding: const EdgeInsets.all(8),
               decoration: BoxDecoration(
-                color: Colors.grey.shade100,
+                color: c.card,
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Row(children: [
-                Icon(Icons.my_location_rounded, size: 14, color: Colors.grey[700]),
+                Icon(Icons.my_location_rounded, size: 14, color: c.textFaint),
                 const SizedBox(width: 6),
                 Expanded(
                   child: Text(
@@ -2048,7 +2048,7 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
                     'δωρεάν, χωρίς Google API key. Μην μπερδεύεις με το '
                     'ξεχωριστό (και εδώ άχρηστο) προϊόν "Geolocation API" της '
                     'Google — δεν χρειάζεται καθόλου για τη φόρμα.',
-                    style: TextStyle(fontSize: 11, color: Colors.grey[700]),
+                    style: TextStyle(fontSize: 11, color: c.textFaint),
                   ),
                 ),
               ]),
@@ -2113,7 +2113,7 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
             ),
             const SizedBox(height: 4),
             Text('Πάτα Save. Χρειάζεται συνήθως 5 λεπτά για να ενεργοποιηθεί.',
-                style: TextStyle(fontSize: 11, color: Colors.grey[600])),
+                style: TextStyle(fontSize: 11, color: c.textFaint)),
           ],
         ),
       ),

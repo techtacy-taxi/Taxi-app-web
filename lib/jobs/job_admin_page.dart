@@ -17,6 +17,7 @@ import 'job_shared_widgets.dart';
 import 'saved_jobs_tab.dart';
 import '../voice/voice_models.dart';
 import '../voice/share_service.dart';
+import '../app_theme.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // JobAdminPage
@@ -1335,6 +1336,7 @@ class _SourcesTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final ac = AppColors.of(context);
     return StreamBuilder<List<JobSource>>(
       // Master βλέπει όλες τις πηγές, admin μόνο τις δικές του
       stream: JobService.sources(createdBy: isMaster ? null : adminUid),
@@ -1346,9 +1348,9 @@ class _SourcesTab extends StatelessWidget {
             ...sources.map((s) => _SourceCard(
                 source: s, adminUid: adminUid, isMaster: isMaster)),
             if (sources.isEmpty)
-              const Center(child: Padding(padding: EdgeInsets.all(40),
+              Center(child: Padding(padding: const EdgeInsets.all(40),
                   child: Text('Δεν υπάρχουν πηγές',
-                      style: TextStyle(color: Colors.grey)))),
+                      style: TextStyle(color: ac.textFaint)))),
             const SizedBox(height: 80),
             FilledButton.icon(
               onPressed: () => _showSourceDialog(context,
@@ -1375,11 +1377,12 @@ class _SourceCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final ac = AppColors.of(context);
     return Card(
       margin: const EdgeInsets.only(bottom: 10),
-      elevation: 0, color: Colors.white,
+      elevation: 0, color: ac.card,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14),
-          side: BorderSide(color: Colors.grey.shade200)),
+          side: BorderSide(color: ac.cardBorder)),
       child: ListTile(
         leading: Container(
           width: 40, height: 40,
@@ -1389,7 +1392,7 @@ class _SourceCard extends StatelessWidget {
               color: Colors.orange, size: 22),
         ),
         title: Text(source.name,
-            style: const TextStyle(fontWeight: FontWeight.w600)),
+            style: TextStyle(fontWeight: FontWeight.w600, color: ac.textMain)),
         subtitle: Column(crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
@@ -1416,7 +1419,7 @@ class _SourceCard extends StatelessWidget {
         ),
         trailing: Row(mainAxisSize: MainAxisSize.min, children: [
           IconButton(
-            icon: const Icon(Icons.edit_rounded, size: 18, color: Colors.grey),
+            icon: Icon(Icons.edit_rounded, size: 18, color: ac.textFaint),
             onPressed: () => _showSourceDialog(context,
                 adminUid: adminUid, source: source, isMaster: isMaster),
           ),
