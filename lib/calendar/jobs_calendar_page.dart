@@ -291,11 +291,17 @@ class _JobsCalendarPageState extends State<JobsCalendarPage> {
       }
 
       entries.sort((a, b) => a.day.compareTo(b.day));
-      // Μάτι σβηστό (ΜΟΝΟ master): κράτα ΜΟΝΟ τις δουλειές που δημιούργησε
-      // ο ίδιος ο master — ΟΧΙ αυτές που έτυχε να οδηγήσει ο ίδιος. Το
-      // "δικές μου" σημαίνει «δικές μου επιχείρησης», όχι «οδήγησα εγώ».
+      // Μάτι σβηστό (ΜΟΝΟ master): κράτα ό,τι είναι ΔΙΚΟ ΤΟΥ με ΔΥΟ τρόπους:
+      //   • το ΔΗΜΙΟΥΡΓΗΣΕ ο ίδιος (createdBy) — «δική μου επιχείρηση», ή
+      //   • το ΑΝΕΛΑΒΕ ο ίδιος (takenBy) — ο master είναι ΚΑΙ οδηγός, οπότε
+      //     μπορεί να πάρει δουλειά που έβγαλε άλλος admin.
+      // Πριν κοιτούσαμε ΜΟΝΟ το createdBy, οπότε δουλειά που οδήγησε ο ίδιος
+      // αλλά την είχε βγάλει άλλος admin ΔΕΝ φαινόταν με κλειστό μάτι.
       if (widget.isMaster && _onlyMine) {
-        return entries.where((e) => e.job.createdBy == widget.uid).toList();
+        return entries
+            .where((e) =>
+                e.job.createdBy == widget.uid || e.job.takenBy == widget.uid)
+            .toList();
       }
       return entries;
     });
