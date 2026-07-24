@@ -154,16 +154,17 @@ class _JobsCalendarPageState extends State<JobsCalendarPage> {
     // Ο admin βλέπει ΜΟΝΟ ό,τι δημιούργησε ο ίδιος (createdBy == uid) —
     // ανεξαρτήτως ποιος την ανέλαβε/ολοκλήρωσε. Ο master βλέπει τα πάντα, με
     // δυνατότητα (μάτι) να δει μόνο τις δικές του (createdBy == uid).
-    // ⚠️ ΠΡΟΣΟΧΗ: ΔΕΝ φιλτράρουμε εδώ με tenantId, γιατί το Job.toMap() ΔΕΝ
-    // γράφει tenantId — οι δουλειές της εφαρμογής ΔΕΝ έχουν το πεδίο, και το
-    // Firestore δεν ταιριάζει missing πεδίο με ==, οπότε θα κρύβαμε ΤΑ ΠΑΝΤΑ.
-    // (Πρέπει πρώτα να γράφεται το tenantId στη δημιουργία + backfill.)
-    Query<Map<String, dynamic>> q = FirebaseFirestore.instance
-        .collection('jobs')
-        .where('scheduledAt',
-            isGreaterThanOrEqualTo: Timestamp.fromDate(monthStart))
-        .where('scheduledAt', isLessThan: Timestamp.fromDate(monthEnd));
-    {
+    // Tenant-scoped. ΑΠΑΡΑΙΤΗΤΟ: τα firestore.rules απορρίπτουν ΟΛΟΚΛΗΡΟ
+    // query που θα μπορούσε να επιστρέψει doc άλλου tenant → permission
+    // denied (κενό/σφάλμα ημερολόγιο) για κάθε μη super-admin.
+    // ΠΡΟΫΠΟΘΕΣΗ: να έχει τρέξει το backfillTenantIds ΜΙΑ φορά, ώστε τα
+    // παλιά docs να έχουν tenantId (αλλιώς το == δεν τα ταιριάζει).
+    return Stream.fromFuture(JobService.tenantScoped('jobs'))
+        .asyncExpand((base) {
+      final q = base
+          .where('scheduledAt',
+              isGreaterThanOrEqualTo: Timestamp.fromDate(monthStart))
+          .where('scheduledAt', isLessThan: Timestamp.fromDate(monthEnd));
 
     // ΣΗΜΕΙΩΣΗ: οι ΑΜΕΣΕΣ δουλειές (χωρίς scheduledAt) δεν έχουν ημερομηνία
     // ραντεβού — τις παίρνουμε ξεχωριστά μέσω takenAt/createdAt παρακάτω.
@@ -219,7 +220,7 @@ class _JobsCalendarPageState extends State<JobsCalendarPage> {
 
       // Άμεσες δουλειές (χωρίς scheduledAt) — μόνο για ΤΟΝ ΤΡΕΧΟΝΤΑ μήνα,
       // ταξινομημένες με βάση την ημέρα ανάληψης (takenAt) ή δημιουργίας.
-      final immBase = FirebaseFirestore.instance.collection('jobs');
+      final immBase = await JobService.tenantScoped('jobs');
       final immediateQuery = _seesAllOrgJobs
           ? immBase
               .where('takenAt',
@@ -305,7 +306,7 @@ class _JobsCalendarPageState extends State<JobsCalendarPage> {
       }
       return entries;
     });
-    }
+    });
   }
 
   // ── Χρώματα ──────────────────────────────────────────────────────────────

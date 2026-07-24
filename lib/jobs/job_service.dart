@@ -115,9 +115,9 @@ class JobService {
 
     controller = StreamController<List<Job>>(
       onListen: () async {
-        // ⚠️ ΧΩΡΙΣ φίλτρο tenantId: το Job.toMap() ΔΕΝ γράφει tenantId, οπότε
-        // φίλτρο == θα έκρυβε ΤΑ ΠΑΝΤΑ (missing πεδίο δεν ταιριάζει με ==).
-        final q = _fs.collection(_jobs);
+        // Tenant-scoped (βλ. tenantScoped). Προϋποθέτει ότι έχει τρέξει το
+        // backfillTenantIds ΜΙΑ φορά, ώστε τα παλιά docs να έχουν tenantId.
+        final q = await tenantScoped(_jobs);
         sub = q
             .where('status', isEqualTo: JobStatus.open.name)
             .orderBy('createdAt', descending: true)
@@ -201,8 +201,8 @@ class JobService {
     StreamSubscription? sub;
     ctl = StreamController<List<Job>>(
       onListen: () async {
-        // ⚠️ ΧΩΡΙΣ φίλτρο tenantId — βλ. σχόλιο στο openJobsFor.
-        final q = _fs.collection(_jobs);
+        // Tenant-scoped — βλ. σχόλιο στο openJobsFor.
+        final q = await tenantScoped(_jobs);
         sub = q
             .orderBy('createdAt', descending: true)
             .limit(limit)
