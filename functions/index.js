@@ -2310,6 +2310,77 @@ exports.lockMonthlyTurnover = onSchedule(
 // Χειροκίνητο (μόνο master) — για δοκιμή ή αν χρειαστεί επανεκτέλεση/backfill
 // παλιότερων μηνών (κάλεσέ το με monthOverride: "YYYY-MM" αν χρειαστεί —
 // βλ. TODO μελλοντικά· προς το παρόν κλειδώνει πάντα τον ΠΡΟΗΓΟΥΜΕΝΟ μήνα).
+// ─── BACKFILL tenantId (μία φορά, μόνο master) ──────────────────────────────
+// ΓΙΑΤΙ ΥΠΑΡΧΕΙ: τα firestore.rules απαιτούν κάθε doc να έχει tenantId ίδιο με
+// του χρήστη (sameTenantAsResource). Τα ΠΑΛΙΑ έγγραφα (πριν το multi-tenant)
+// ΔΕΝ έχουν καθόλου το πεδίο → το Firestore τα θεωρεί 'default' → κάθε admin
+// εκτός super-admin έπαιρνε permission-denied ΚΑΙ στην ανάγνωση (κενό/σφάλμα
+// ημερολόγιο, χρεώσεις, ιστορικό) ΚΑΙ στη δημιουργία.
+//
+// ΤΙ ΚΑΝΕΙ: για κάθε collection, βρίσκει τα docs ΧΩΡΙΣ tenantId και τους
+// γράφει τον σωστό tenant, βάσει του δημιουργού τους (createdBy/ownerUid/uid),
+// διαβάζοντας το presence/{uid}.tenantId. Αν δεν βρεθεί → 'default'.
+//
+// ΑΣΦΑΛΕΙΑ: idempotent (τρέχει όσες φορές θες), αγγίζει ΜΟΝΟ docs που δεν
+// έχουν ήδη tenantId, και δεν αλλάζει κανένα άλλο πεδίο.
+exports.backfillTenantIds = onCall(
+  { memory: "512MiB", timeoutSeconds: 540 },
+  async (request) => {
+    const uid = request.auth && request.auth.uid;
+    if (!uid) throw new HttpsError("unauthenticated", "Απαιτείται σύνδεση.");
+    const db = getFirestore();
+    const me = await db.collection("presence").doc(uid).get();
+    if (!me.exists || me.data().master !== true) {
+      throw new HttpsError("permission-denied", "Μόνο για τον master.");
+    }
+
+    // Χάρτης uid → tenantId (μία ανάγνωση, όχι ανά doc).
+    const presSnap = await db.collection("presence").get();
+    const tenantOf = new Map();
+    presSnap.forEach((d) => {
+      tenantOf.set(d.id, (d.data().tenantId || "default"));
+    });
+
+    // Ποιο πεδίο δείχνει τον «ιδιοκτήτη» σε κάθε collection, κατά σειρά.
+    const COLLECTIONS = [
+      { name: "jobs",        ownerFields: ["createdBy", "takenBy"] },
+      { name: "saved_jobs",  ownerFields: ["ownerUid", "createdBy"] },
+      { name: "billing_tx",  ownerFields: ["recipientUid", "collectorUid", "uid"] },
+      { name: "settlements", ownerFields: ["collectorUid", "recipientUid", "createdBy"] },
+      { name: "job_batches", ownerFields: ["driverUid"] },
+      { name: "clients",     ownerFields: ["createdBy"] },
+      { name: "sources",     ownerFields: ["createdBy"] },
+    ];
+
+    const report = {};
+    for (const col of COLLECTIONS) {
+      const snap = await db.collection(col.name).get();
+      let updated = 0, skipped = 0;
+      let wb = db.batch();
+      let n = 0;
+      for (const doc of snap.docs) {
+        const d = doc.data();
+        if (d.tenantId) { skipped++; continue; } // έχει ήδη — μην αγγίξεις
+        let tid = "default";
+        for (const fld of col.ownerFields) {
+          const ownerUid = d[fld];
+          if (ownerUid && tenantOf.has(ownerUid)) {
+            tid = tenantOf.get(ownerUid);
+            break;
+          }
+        }
+        wb.update(doc.ref, { tenantId: tid });
+        updated++; n++;
+        if (n >= 400) { await wb.commit(); wb = db.batch(); n = 0; }
+      }
+      if (n > 0) await wb.commit();
+      report[col.name] = { updated, skipped, total: snap.size };
+      console.log(`backfillTenantIds: ${col.name} → ${updated} updated, ${skipped} already had it`);
+    }
+    return { ok: true, report };
+  }
+);
+
 exports.lockMonthlyTurnoverNow = onCall(async (request) => {
   const uid = request.auth && request.auth.uid;
   if (!uid) throw new HttpsError("unauthenticated", "Απαιτείται σύνδεση.");

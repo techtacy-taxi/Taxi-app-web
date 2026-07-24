@@ -110,6 +110,62 @@ class BillingPage extends StatelessWidget {
   // ─── Μηνιαία αναφορά PDF (χειροκίνητη παραγωγή — μόνο master) ─────────────
 
   /// Κλειδί "YYYY-MM" του μήνα που είναι [back] μήνες πριν από τον τρέχοντα.
+  /// Τρέχει ΜΙΑ φορά το backfillTenantIds — γράφει tenantId στα παλιά
+  /// έγγραφα ώστε οι admins με δικό τους tenant να μη βλέπουν πλέον
+  /// «permission denied» (ημερολόγιο/χρεώσεις/ιστορικό). Idempotent.
+  static Future<void> _runTenantBackfill(BuildContext context) async {
+    final c = AppColors.of(context);
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: c.card,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Text('Σύνδεση παλιών δεδομένων',
+            style: TextStyle(color: c.textMain)),
+        content: Text(
+          'Θα γραφτεί το tenantId σε όσα παλιά έγγραφα δεν το έχουν '
+          '(δουλειές, αποθηκευμένες, χρεώσεις, πελάτες, πηγές).\n\n'
+          'Ασφαλές: δεν αλλάζει κανένα άλλο πεδίο και μπορεί να ξανατρέξει.',
+          style: TextStyle(fontSize: 13, color: c.textFaint),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Άκυρο')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Εκτέλεση')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.showSnackBar(const SnackBar(
+      content: Text('Εκτελείται… μπορεί να πάρει ένα λεπτό'),
+      duration: Duration(minutes: 2),
+    ));
+    try {
+      final res = await FirebaseFunctions.instanceFor(region: 'us-central1')
+          .httpsCallable('backfillTenantIds')
+          .call();
+      final report = (res.data as Map)['report'] as Map? ?? {};
+      final lines = report.entries
+          .map((e) => '${e.key}: ${(e.value as Map)['updated']} διορθώθηκαν')
+          .join('\n');
+      messenger.hideCurrentSnackBar();
+      messenger.showSnackBar(SnackBar(
+        backgroundColor: Colors.green.shade700,
+        duration: const Duration(seconds: 10),
+        content: Text('Ολοκληρώθηκε\n$lines'),
+      ));
+    } catch (e) {
+      messenger.hideCurrentSnackBar();
+      messenger.showSnackBar(SnackBar(
+        backgroundColor: Colors.red.shade700,
+        content: Text('Σφάλμα: $e'),
+      ));
+    }
+  }
+
   static String _monthKeyAgo(int back) {
     final now = DateTime.now();
     final d   = DateTime(now.year, now.month - back, 1);
@@ -742,6 +798,7 @@ class _BillingSettingsPage extends StatelessWidget {
       ),
       body: _BillingToolsBar(
         isMaster: isMaster,
+        onBackfill: () => BillingPage._runTenantBackfill(context),
         onHomeOwners: () =>
             BillingPage._showHomeOwnersBillingDialog(context),
         onDriveFolder: () => BillingPage._openReportsFolder(context),
@@ -769,6 +826,7 @@ class _BillingSettingsPage extends StatelessWidget {
 //   • Εκκαθαρίσεις → master ΚΑΙ admin
 class _BillingToolsBar extends StatelessWidget {
   final bool         isMaster;
+  final VoidCallback onBackfill;
   final VoidCallback onHomeOwners;
   final VoidCallback onDriveFolder;
   final VoidCallback onMonthlyReport;
@@ -777,6 +835,7 @@ class _BillingToolsBar extends StatelessWidget {
 
   const _BillingToolsBar({
     required this.isMaster,
+    required this.onBackfill,
     required this.onHomeOwners,
     required this.onDriveFolder,
     required this.onMonthlyReport,
@@ -824,6 +883,16 @@ class _BillingToolsBar extends StatelessWidget {
                 title: 'Καθαρισμός παλιών δεδομένων',
                 subtitle: 'Διαγραφή παλιών, εξοφλημένων εγγραφών',
                 onTap: onPurge,
+              ),
+              _divider(c),
+            ],
+            if (isMaster) ...[
+              _toolRow(c,
+                icon: Icons.build_circle_rounded,
+                title: 'Σύνδεση παλιών δεδομένων με tenant',
+                subtitle: 'Τρέξε ΜΙΑ φορά — διορθώνει «permission denied» '
+                    'σε admins με δικό τους tenant',
+                onTap: onBackfill,
               ),
               _divider(c),
             ],
