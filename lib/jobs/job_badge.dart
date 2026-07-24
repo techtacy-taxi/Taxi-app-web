@@ -15,6 +15,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../models.dart';
+import '../app_theme.dart';
 import '../masters/masters_admin_page.dart';
 import '../notifications_service.dart';
 import '../alert_gate.dart';
@@ -201,40 +202,93 @@ class _JobListenerState extends State<JobListener> with WidgetsBindingObserver {
     final ctx0 = _rootCtx;
     if (ctx0 == null) return;
     _upgradeDialogShowing = true;
+    final c = AppColors.of(ctx0);
     await showDialog<void>(
       context: ctx0,
       barrierDismissible: false,
       builder: (ctx) => PopScope(
         canPop: false,
-        child: AlertDialog(
-        shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(20)),
-        title: Row(children: const [
-          Icon(Icons.system_update_rounded, color: Colors.amber, size: 28),
-          SizedBox(width: 10),
-          Expanded(child: Text('Καινούργια Έκδοση',
-              style: TextStyle(fontWeight: FontWeight.bold))),
-        ]),
-        content: const Text(
-          'Παρακαλώ αναβαθμιστείτε στην καινούργια έκδοση της '
-          'εφαρμογής που θα βρείτε εδώ.',
-          style: TextStyle(fontSize: 15),
-        ),
-        actions: [
-          AppButtonTonal(label: 'Αργότερα', onPressed: () => Navigator.pop(ctx)),
-          AppButton(
-            label: 'Έλεγχος αναβαθμίσεων',
-            icon: Icons.download_rounded,
-            color: Colors.amber,
-            onPressed: () async {
-              Navigator.pop(ctx);
-              final uri = Uri.parse(kUpdateUrl);
-              if (await canLaunchUrl(uri)) {
-                await launchUrl(uri, mode: LaunchMode.externalApplication);
-              }
-            },
+        child: Dialog(
+          backgroundColor: c.card,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          clipBehavior: Clip.antiAlias,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Γεμάτη έγχρωμη μπάρα header — ίδιο μοτίβο με τα υπόλοιπα
+              // dialogs της εφαρμογής (πληρωμές, εργαλεία master κ.λπ.).
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+                color: c.amberSoft,
+                child: Row(children: [
+                  Icon(Icons.system_update_rounded, color: c.amberDeep, size: 22),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text('Καινούργια Έκδοση',
+                        style: TextStyle(
+                            fontWeight: FontWeight.bold, fontSize: 16,
+                            color: c.amberDeep)),
+                  ),
+                ]),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(18, 16, 18, 18),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Παρακαλώ αναβαθμιστείτε στην καινούργια έκδοση της '
+                      'εφαρμογής που θα βρείτε εδώ.',
+                      style: TextStyle(fontSize: 14.5, color: c.textMain),
+                    ),
+                    const SizedBox(height: 20),
+                    Row(children: [
+                      Expanded(
+                        child: SizedBox(
+                          height: 46,
+                          child: OutlinedButton(
+                            onPressed: () => Navigator.pop(ctx),
+                            style: OutlinedButton.styleFrom(
+                              shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12)),
+                            ),
+                            child: const Text('Αργότερα'),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        flex: 2,
+                        child: SizedBox(
+                          height: 46,
+                          child: FilledButton.icon(
+                            style: FilledButton.styleFrom(
+                              backgroundColor: c.amberDeep,
+                              shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12)),
+                            ),
+                            icon: const Icon(Icons.download_rounded, size: 18),
+                            label: const Text('Έλεγχος αναβαθμίσεων'),
+                            onPressed: () async {
+                              Navigator.pop(ctx);
+                              final uri = Uri.parse(kUpdateUrl);
+                              if (await canLaunchUrl(uri)) {
+                                await launchUrl(uri,
+                                    mode: LaunchMode.externalApplication);
+                              }
+                            },
+                          ),
+                        ),
+                      ),
+                    ]),
+                  ],
+                ),
+              ),
+            ],
           ),
-        ],
         ),
       ),
     );
