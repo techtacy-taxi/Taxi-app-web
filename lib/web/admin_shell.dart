@@ -36,6 +36,7 @@ import '../masters/global_settings_page.dart';
 import 'auth_gateway_web.dart';
 import 'ics_upload_web.dart';
 import 'map_web_page.dart';
+import 'web_settings_page.dart';
 
 const double _kDesktopBreakpoint = 900;
 
@@ -164,6 +165,15 @@ class _AdminShellState extends State<AdminShell> {
         label: 'Ομάδες',
         icon: Icons.groups_rounded,
         page: GroupsAdminPage(uid: s.uid),
+      ),
+      _Section(
+        label: 'Ρυθμίσεις',
+        icon: Icons.settings_rounded,
+        page: WebSettingsPage(
+          uid:      s.uid,
+          isAdmin:  s.isAdmin,
+          isMaster: s.isMaster,
+        ),
       ),
     ];
 
