@@ -149,13 +149,20 @@ class OwnJobsTodayStats extends StatelessWidget {
           if (j.createdBy != uid) return false;
           final ref = _referenceDate(j);
           if (ref == null || !_isToday(ref)) return false;
-          return j.isOpen || j.isTaken || j.isBoarded;
+          // ΣΗΜΑΝΤΙΚΟ: περιλαμβάνονται ΚΑΙ οι ΟΛΟΚΛΗΡΩΜΕΝΕΣ (done). Πριν
+          // αποκλείονταν, οπότε μια δουλειά που τελείωνε ΕΞΑΦΑΝΙΖΟΤΑΝ από τα
+          // στατιστικά και ο «Τζίρος σήμερα» έδειχνε 0€ παρότι είχε γίνει
+          // δουλειά — ακριβώς το αντίθετο από το νόημα του τζίρου.
+          return j.isOpen || j.isTaken || j.isBoarded ||
+                 j.status == JobStatus.done;
         }).toList();
 
         final openCount       = mine.where((j) => j.isOpen).length;
         final unassignedCount = mine.where((j) => j.isOpen && (j.takenBy == null || j.takenBy!.isEmpty)).length;
+        // Τζίρος = ό,τι έχει αναληφθεί ΚΑΙ ό,τι έχει ολοκληρωθεί σήμερα.
         final revenue = mine
-            .where((j) => j.isTaken || j.isBoarded)
+            .where((j) => j.isTaken || j.isBoarded ||
+                          j.status == JobStatus.done)
             .fold<double>(0, (sum, j) => sum + j.price);
 
         return Container(

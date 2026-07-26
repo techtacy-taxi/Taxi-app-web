@@ -10,11 +10,20 @@ Future<VehicleType?> showVehicleTypeMenu({
 }) async {
   final RenderBox box    = itemCtx.findRenderObject() as RenderBox;
   final Offset    offset = box.localToGlobal(Offset.zero);
-  final screenW          = MediaQuery.of(context).size.width;
+  final mq               = MediaQuery.of(context);
+  final screenW          = mq.size.width;
+  final screenH          = mq.size.height;
   const menuW            = 220.0;
+  // Εκτίμηση ύψους μενού (header + 3 στοιχεία + padding).
+  const menuH            = 190.0;
+  final bottomSafe       = mq.viewPadding.bottom + mq.viewInsets.bottom;
   final left             = (offset.dx + menuW > screenW)
       ? screenW - menuW - 8
       : offset.dx;
+  // Μην αφήνεις το μενού να ανοίγει κάτω από το ορατό ύψος της οθόνης
+  // (π.χ. πίσω από την κάτω navigation bar του Android).
+  final maxTop           = screenH - bottomSafe - menuH - 8;
+  final top              = (offset.dy - 8).clamp(8.0, maxTop < 8.0 ? 8.0 : maxTop);
 
   return showGeneralDialog<VehicleType>(
     context: context,
@@ -33,7 +42,7 @@ Future<VehicleType?> showVehicleTypeMenu({
     ),
     pageBuilder: (ctx, _, _) => Stack(children: [
       Positioned(
-        left: left, top: offset.dy - 8, width: menuW,
+        left: left, top: top, width: menuW,
         child: Material(
           color: Colors.transparent,
           child: Container(

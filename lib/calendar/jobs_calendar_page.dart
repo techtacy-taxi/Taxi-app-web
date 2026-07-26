@@ -542,6 +542,8 @@ class _JobsCalendarPageState extends State<JobsCalendarPage> {
       ),
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: TableCalendar<_CalEntry>(
+        // Η εβδομάδα ξεκινά ΔΕΥΤΕΡΑ (προεπιλογή του πακέτου είναι Κυριακή).
+        startingDayOfWeek: StartingDayOfWeek.monday,
         // Ψηλότερα κελιά (προεπιλογή 52) ώστε να χωρέσουν ΤΡΕΙΣ σειρές
         // κουκκίδων 9px χωρίς να ακουμπούν τον αριθμό της ημέρας.
         rowHeight: 64,

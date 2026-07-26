@@ -241,6 +241,8 @@ class _GoogleCalendarPageState extends State<GoogleCalendarPage> {
               ),
               padding: const EdgeInsets.symmetric(vertical: 4),
               child: TableCalendar<CalendarEvent>(
+                // Η εβδομάδα ξεκινά ΔΕΥΤΕΡΑ (προεπιλογή είναι Κυριακή).
+                startingDayOfWeek: StartingDayOfWeek.monday,
                 firstDay:   DateTime.utc(2023, 1, 1),
                 lastDay:    DateTime.utc(2035, 12, 31),
                 focusedDay: _focusedMonth,
