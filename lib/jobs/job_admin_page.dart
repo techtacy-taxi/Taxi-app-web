@@ -652,9 +652,11 @@ class _OpenJobsTabState extends State<_OpenJobsTab>
           separatorBuilder: (_, _) => const SizedBox(height: 10),
           itemBuilder:      (_, i) {
             final lvl = _levelFor(jobs[i]);
-            final isForeign = !widget.isMaster &&
-                jobs[i].createdBy != widget.adminUid &&
-                _shared.containsKey(jobs[i].createdBy);
+            // «Ξένη» = δεν την έφτιαξε ο τρέχων χρήστης — ΑΝΕΞΑΡΤΗΤΑ αν είναι
+            // master. ΠΡΙΝ υπήρχε `!widget.isMaster &&` που σήμαινε ότι για
+            // τον master ΤΙΠΟΤΑ δεν ήταν ξένο → δεν περνούσε ownerOverride →
+            // κάθε edit του master «έκλεβε» την ιδιοκτησία της δουλειάς.
+            final isForeign = jobs[i].createdBy != widget.adminUid;
             return AdminJobCard(
               job:        jobs[i],
               adminUid:   widget.adminUid,

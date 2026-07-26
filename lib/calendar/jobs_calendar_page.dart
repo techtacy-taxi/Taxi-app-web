@@ -542,6 +542,9 @@ class _JobsCalendarPageState extends State<JobsCalendarPage> {
       ),
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: TableCalendar<_CalEntry>(
+        // Ψηλότερα κελιά (προεπιλογή 52) ώστε να χωρέσουν ΤΡΕΙΣ σειρές
+        // κουκκίδων 9px χωρίς να ακουμπούν τον αριθμό της ημέρας.
+        rowHeight: 64,
         firstDay:       DateTime.utc(2023, 1, 1),
         lastDay:        DateTime.utc(2035, 12, 31),
         focusedDay:     _focusedMonth,
@@ -588,24 +591,27 @@ class _JobsCalendarPageState extends State<JobsCalendarPage> {
               color: c.scaffold, fontWeight: FontWeight.w600),
         ),
         calendarBuilders: CalendarBuilders<_CalEntry>(
-          // Έως 8 κουκκίδες σε ΔΥΟ σειρές (4+4), μεγαλύτερες (8px)·
-          // «+Ν» αν υπάρχουν κι άλλες. Περίγραμμα οχήματος διατηρείται.
+          // Έως 12 κουκκίδες σε ΤΡΕΙΣ σειρές (4+4+4) — «+Ν» αν υπάρχουν κι
+          // άλλες. Οι κουκκίδες ΜΕΓΑΛΩΣΑΝ (8→9px) όπως ζητήθηκε, δεν
+          // μικρύνθηκαν. Χωρητικότητα: πλάτος 46 / (9 + 2 κενό) ≈ 4 ανά
+          // σειρά· ύψος 3 σειρές = 9*3 + 2*2 = 31px, χωράει άνετα στο
+          // rowHeight 64 χωρίς να ακουμπά τον αριθμό της ημέρας.
           markerBuilder: (context, day, dayEntries) {
             if (dayEntries.isEmpty) return null;
-            final shown = dayEntries.take(8).toList();
+            final shown = dayEntries.take(12).toList();
             final extra = dayEntries.length - shown.length;
             return Positioned(
-              bottom: 3,
+              bottom: 2,
               child: SizedBox(
                 width: 46,
                 child: Wrap(
                   alignment: WrapAlignment.center,
-                  spacing: 2.5, runSpacing: 2.5,
+                  spacing: 2, runSpacing: 2,
                   children: [
                     ...shown.map((e) {
                       final border = _vehicleBorderColor(e.vehicleType);
                       return Container(
-                        width: 8, height: 8,
+                        width: 9, height: 9,
                         decoration: BoxDecoration(
                           color: _statusColor(c, e.kind),
                           shape: BoxShape.circle,

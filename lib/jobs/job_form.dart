@@ -1246,6 +1246,21 @@ class _JobFormPageState extends State<JobFormPage> {
           resendMap['takenByName']     = null;
           resendMap['takenAt']         = null;
         }
+        else {
+          // ── ΑΝΑΛΗΦΘΕΙΣΑ δουλειά (taken/boarded) ──────────────────────────
+          // Επιτρέπεται η επεξεργασία (ώρα ραντεβού, τιμή, στοιχεία κ.λπ.)
+          // ΧΩΡΙΣ να χαθεί η ανάθεση. ΚΡΙΣΙΜΟ: το job.toMap() γράφει
+          // status: open — αν το αφήναμε, η δουλειά θα «ξεκολλούσε» από τον
+          // οδηγό. Διατηρούμε ρητά κατάσταση + ανάθεση + χρόνο ανάληψης.
+          resendMap['status']      = widget.editJob!.status.name;
+          resendMap['takenBy']     = widget.editJob!.takenBy;
+          resendMap['takenByName'] = widget.editJob!.takenByName;
+          if (widget.editJob!.takenAt != null) {
+            resendMap['takenAt'] = Timestamp.fromDate(widget.editJob!.takenAt!);
+          }
+          // Μην πειράξεις createdAt/escalation — η δουλειά συνεχίζει κανονικά.
+          resendMap.remove('createdAt');
+        }
         await JobService.updateJob(widget.editJob!.id, resendMap);
         if (mounted && isUntaken) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -1295,7 +1310,7 @@ class _JobFormPageState extends State<JobFormPage> {
     }
     if (m > 60) {
       final h = m ~/ 60, r = m % 60;
-      return '$hω $rλ';
+      return '${h}ω ${r}λ';
     }
     return '$m λεπτά';
   }

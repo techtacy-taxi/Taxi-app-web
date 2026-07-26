@@ -248,6 +248,28 @@ class AdminJobCard extends StatelessWidget {
                   onPressed:   () => _confirmDelete(context),
                 ),
             ],
+            // ── Επεξεργασία ΑΝΑΛΗΦΘΕΙΣΑΣ δουλειάς ──────────────────────────
+            // Ο master (όλες) και ο admin (μόνο δικές του, μέσω _canEdit)
+            // μπορούν να αλλάξουν ώρα ραντεβού / τιμή / στοιχεία ΧΩΡΙΣ να
+            // χαθεί η ανάθεση — ο οδηγός βλέπει την αλλαγή αμέσως (live
+            // Firestore stream). Η ιδιοκτησία (createdBy) ΔΕΝ αλλάζει:
+            // περνάμε ownerOverride ώστε να μείνει ο αρχικός δημιουργός.
+            if ((job.isTaken || job.isBoarded) && _canEdit)
+              IconButton(
+                icon:    const Icon(Icons.edit_rounded, size: 20, color: Colors.grey),
+                tooltip: 'Επεξεργασία (κρατά τον οδηγό)',
+                onPressed: () {
+                  Navigator.of(context).push(MaterialPageRoute(
+                    builder: (_) => JobFormPage(
+                        adminUid: adminUid,
+                        adminName: adminName,
+                        editJob: job,
+                        isMaster: isMaster,
+                        ownerOverrideUid:  isForeign ? job.createdBy : null,
+                        ownerOverrideName: isForeign ? job.createdByName : null),
+                  ));
+                },
+              ),
             // Ακύρωση για taken — όσοι μπορούν να επεξεργαστούν
             if ((job.isTaken || job.isBoarded) && _canEdit)
               FilledButton.icon(

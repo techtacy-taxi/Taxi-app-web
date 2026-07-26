@@ -960,8 +960,10 @@ class _SavedJobsTabState extends State<SavedJobsTab> {
 
   // ─── Edit ────────────────────────────────────────────────────────────────
   Future<void> _editSaved(SavedJob s) async {
-    final isForeign =
-        !widget.isMaster && s.ownerUid != widget.adminUid;
+    // «Ξένη» = δεν την αποθήκευσε ο τρέχων χρήστης — ΑΝΕΞΑΡΤΗΤΑ αν είναι
+    // master (βλ. σχόλιο στο job_admin_page): αλλιώς το edit του master
+    // άλλαζε τον ιδιοκτήτη της αποθηκευμένης δουλειάς.
+    final isForeign = s.ownerUid != widget.adminUid;
     await Navigator.of(context).push(MaterialPageRoute(
       builder: (_) => JobFormPage(
         adminUid:       widget.adminUid,
