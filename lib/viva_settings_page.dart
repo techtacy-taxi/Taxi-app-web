@@ -2170,20 +2170,21 @@ class _CopyableCode extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = AppColors.of(context);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: c.card,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.grey.shade300),
+        border: Border.all(color: c.cardBorder),
       ),
       child: Row(children: [
         Expanded(
           child: Text(text,
-              style: const TextStyle(fontSize: 11, fontFamily: 'monospace')),
+              style: TextStyle(fontSize: 11, fontFamily: 'monospace', color: c.textMain)),
         ),
         IconButton(
-          icon: const Icon(Icons.copy_rounded, size: 16),
+          icon: Icon(Icons.copy_rounded, size: 16, color: c.textFaint),
           padding: EdgeInsets.zero,
           constraints: const BoxConstraints(),
           onPressed: () {

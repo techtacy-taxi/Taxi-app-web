@@ -13,7 +13,8 @@
 //                               Πηγές/Πελάτες + κουμπί «Νέα Δουλειά»)
 //   Χρεώσεις   → BillingPage
 //   Ομάδες     → GroupsAdminPage
-//   Ημερολόγιο → CalendarPage   (αν calendarEnabled ή master)
+//   Ημερολόγιο → JobsCalendarPage (ίδιο ημερολόγιο με την εφαρμογή κινητού,
+//                               με κουμπί Google Calendar)   (αν calendarEnabled ή master)
 //   Εισαγωγή   → ICS upload
 //   Διαχείριση → MastersAdminPage (μόνο master)
 
@@ -23,9 +24,10 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+import '../app_theme.dart';
 import '../jobs/job_admin_page.dart';
 import '../jobs/billing_page.dart';
-import '../calendar/calendar_page.dart';
+import '../calendar/jobs_calendar_page.dart';
 import '../voice/groups_admin.dart';
 import '../masters/masters_admin_page.dart';
 import '../pricing/pricing_zones_page.dart';
@@ -36,7 +38,6 @@ import 'ics_upload_web.dart';
 import 'map_web_page.dart';
 
 const double _kDesktopBreakpoint = 900;
-const Color  _kAmber = Color(0xFFFFB300);
 
 class _Section {
   final String   label;
@@ -171,10 +172,11 @@ class _AdminShellState extends State<AdminShell> {
       sections.add(_Section(
         label: 'Ημερολόγιο',
         icon: Icons.calendar_month_rounded,
-        page: CalendarPage(
-          adminUid:  s.uid,
-          adminName: s.fullName,
-          isMaster:  s.isMaster,
+        page: JobsCalendarPage(
+          uid:                    s.uid,
+          isAdmin:                s.isAdmin,
+          isMaster:               s.isMaster,
+          googleCalendarEnabled:  s.isMaster || s.calendarEnabled,
         ),
       ));
     }
@@ -268,7 +270,9 @@ class _AdminShellState extends State<AdminShell> {
   // ─── DESKTOP: μόνιμο sidebar ──────────────────────────────────────────────
 
   Widget _buildDesktop() {
+    final c = AppColors.of(context);
     return Scaffold(
+      backgroundColor: c.scaffold,
       body: Row(
         children: [
           _Sidebar(
@@ -278,7 +282,7 @@ class _AdminShellState extends State<AdminShell> {
             session: _session,
             onSignOut: _signOut,
           ),
-          const VerticalDivider(width: 1),
+          VerticalDivider(width: 1, color: c.divider),
           Expanded(
             child: ClipRect(
               child: _sections[_index].page,
@@ -292,18 +296,22 @@ class _AdminShellState extends State<AdminShell> {
   // ─── MOBILE: AppBar + drawer + bottom navigation ─────────────────────────
 
   Widget _buildMobile() {
+    final c = AppColors.of(context);
     // Στο bottom bar χωράνε έως ~5· τα υπόλοιπα πάνε στο drawer.
     final bottomCount = _sections.length <= 5 ? _sections.length : 4;
     final inBottom = _sections.take(bottomCount).toList();
     final bottomActive = _index < bottomCount;
 
     return Scaffold(
+      backgroundColor: c.scaffold,
       appBar: AppBar(
         title: Text(_sections[_index].label),
-        backgroundColor: _kAmber,
-        foregroundColor: Colors.black87,
+        backgroundColor: c.scaffold,
+        foregroundColor: c.textMain,
+        elevation: 0,
       ),
       drawer: Drawer(
+        backgroundColor: c.scaffold,
         child: _DrawerContent(
           sections: _sections,
           index: _index,
@@ -316,12 +324,13 @@ class _AdminShellState extends State<AdminShell> {
       bottomNavigationBar: NavigationBar(
         selectedIndex: bottomActive ? _index : 0,
         onDestinationSelected: (i) => setState(() => _index = i),
-        backgroundColor: Colors.white,
-        indicatorColor: _kAmber.withValues(alpha: 0.25),
+        backgroundColor: c.card,
+        indicatorColor: c.amberSoft,
         destinations: [
           for (final s in inBottom)
             NavigationDestination(
-              icon: Icon(s.icon),
+              icon: Icon(s.icon, color: c.textFaint),
+              selectedIcon: Icon(s.icon, color: c.amberDeep),
               label: s.label,
             ),
         ],
@@ -348,15 +357,16 @@ class _Sidebar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = AppColors.of(context);
     return Container(
       width: 250,
-      color: Colors.white,
+      color: c.card,
       child: Column(
         children: [
           const SizedBox(height: 22),
           _Header(session: session),
           const SizedBox(height: 14),
-          const Divider(height: 1),
+          Divider(height: 1, color: c.divider),
           Expanded(
             child: ListView(
               padding: const EdgeInsets.symmetric(vertical: 8),
@@ -370,7 +380,7 @@ class _Sidebar extends StatelessWidget {
               ],
             ),
           ),
-          const Divider(height: 1),
+          Divider(height: 1, color: c.divider),
           _SignOutTile(onSignOut: onSignOut),
           const SizedBox(height: 8),
         ],
@@ -397,13 +407,14 @@ class _DrawerContent extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = AppColors.of(context);
     return SafeArea(
       child: Column(
         children: [
           const SizedBox(height: 18),
           _Header(session: session),
           const SizedBox(height: 14),
-          const Divider(height: 1),
+          Divider(height: 1, color: c.divider),
           Expanded(
             child: ListView(
               children: [
@@ -416,7 +427,7 @@ class _DrawerContent extends StatelessWidget {
               ],
             ),
           ),
-          const Divider(height: 1),
+          Divider(height: 1, color: c.divider),
           _SignOutTile(onSignOut: onSignOut),
           const SizedBox(height: 8),
         ],
@@ -431,6 +442,7 @@ class _Header extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = AppColors.of(context);
     final roleLabel = session.isMaster ? 'Master' : 'Εργολάβος';
     return Column(
       children: [
@@ -450,21 +462,21 @@ class _Header extends StatelessWidget {
             textAlign: TextAlign.center,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: c.textMain),
           ),
         ),
         const SizedBox(height: 3),
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
           decoration: BoxDecoration(
-            color: _kAmber.withValues(alpha: 0.18),
+            color: c.amberSoft,
             borderRadius: BorderRadius.circular(20),
           ),
           child: Text(roleLabel,
               style: TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.w600,
-                  color: Colors.amber.shade900)),
+                  color: c.amberDeep)),
         ),
       ],
     );
@@ -483,10 +495,11 @@ class _NavTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = AppColors.of(context);
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
       child: Material(
-        color: selected ? _kAmber.withValues(alpha: 0.18) : Colors.transparent,
+        color: selected ? c.amberSoft : Colors.transparent,
         borderRadius: BorderRadius.circular(12),
         child: InkWell(
           borderRadius: BorderRadius.circular(12),
@@ -498,14 +511,14 @@ class _NavTile extends StatelessWidget {
               children: [
                 Icon(section.icon,
                     size: 22,
-                    color: selected ? Colors.amber.shade900 : Colors.grey[700]),
+                    color: selected ? c.amberDeep : c.textFaint),
                 const SizedBox(width: 14),
                 Text(section.label,
                     style: TextStyle(
                       fontSize: 14.5,
                       fontWeight:
                           selected ? FontWeight.w700 : FontWeight.w500,
-                      color: selected ? Colors.black87 : Colors.grey[800],
+                      color: selected ? c.textMain : c.textFaint,
                     )),
               ],
             ),
@@ -522,9 +535,10 @@ class _SignOutTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = AppColors.of(context);
     return ListTile(
-      leading: Icon(Icons.logout_rounded, color: Colors.grey[700]),
-      title: const Text('Αποσύνδεση'),
+      leading: Icon(Icons.logout_rounded, color: c.textFaint),
+      title: Text('Αποσύνδεση', style: TextStyle(color: c.textMain)),
       onTap: onSignOut,
     );
   }

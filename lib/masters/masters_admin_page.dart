@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:url_launcher/url_launcher.dart';
 
+import '../app_theme.dart';
 import '../models.dart';
 import '../jobs/job_service.dart';
 import '../jobs/job_shared_widgets.dart';
@@ -30,8 +31,9 @@ class _MastersAdminPageState extends State<MastersAdminPage> {
 
   @override
   Widget build(BuildContext context) {
+    final c = AppColors.of(context);
     return Scaffold(
-      backgroundColor: const Color(0xFFF8F8F8),
+      backgroundColor: c.scaffold,
       appBar: AppBar(
         title: const Row(children: [
           Icon(Icons.admin_panel_settings_rounded,
@@ -76,7 +78,7 @@ class _MastersAdminPageState extends State<MastersAdminPage> {
                       },
                     ),
               filled: true,
-              fillColor: Colors.white,
+              fillColor: c.card,
               contentPadding:
                   const EdgeInsets.symmetric(horizontal: 14, vertical: 0),
               border: OutlineInputBorder(
@@ -136,13 +138,13 @@ class _MastersAdminPageState extends State<MastersAdminPage> {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Icon(Icons.search_off_rounded,
-                          size: 48, color: Colors.grey.shade400),
+                          size: 48, color: c.textFaint),
                       const SizedBox(height: 10),
                       Text(
                         _query.isEmpty
                             ? 'Δεν υπάρχουν χρήστες'
                             : 'Κανένα αποτέλεσμα για «${_searchCtrl.text}»',
-                        style: TextStyle(color: Colors.grey.shade600),
+                        style: TextStyle(color: c.textFaint),
                       ),
                     ],
                   ),
@@ -172,13 +174,16 @@ class _MastersAdminPageState extends State<MastersAdminPage> {
     );
   }
 
-  // ─── Dialog ρυθμίσεων ─────────────────────────────────────────────────────
+  // ─── Bottom sheet ρυθμίσεων — ίδιο design pattern με τα Settings/vehicle
+  // picker (showModalBottomSheet + SafeArea + στρογγυλεμένη κορυφή) αντί για
+  // παλιό AlertDialog κουτί.
   Future<void> _showSettingsDialog(BuildContext context) async {
     // Σιγουρέψου ότι υπάρχει η πηγή Standard Rate
     await JobService.ensureStandardRate();
     final settings = await JobService.getAppSettings();
 
     if (!context.mounted) return;
+    final c = AppColors.of(context);
 
     final appCtrl = TextEditingController(
         text: (settings['appCommission'] ?? 1.50).toStringAsFixed(2));
@@ -190,119 +195,137 @@ class _MastersAdminPageState extends State<MastersAdminPage> {
         text: (settings['shuttleExtraMinutesPerBooking'] ?? 10)
             .toStringAsFixed(0));
 
-    await showDialog<void>(
+    await showModalBottomSheet<void>(
       context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setS) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: const Row(children: [
-          Icon(Icons.settings_rounded, color: Colors.deepPurple),
-          SizedBox(width: 10),
-          Text('Ρυθμίσεις'),
-        ]),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-            // Προμήθεια App
-            TextField(
-              controller: appCtrl,
-              keyboardType:
-                  const TextInputType.numberWithOptions(decimal: true),
-              decoration: const InputDecoration(
-                labelText:  'Προμήθεια App (€)',
-                helperText: 'Εφαρμόζεται σε ΟΛΕΣ τις πηγές',
-                prefixIcon: Icon(Icons.phone_iphone_rounded,
-                    color: Colors.blue),
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 18),
-            // Συνδρομή
-            TextField(
-              controller: subCtrl,
-              keyboardType:
-                  const TextInputType.numberWithOptions(decimal: true),
-              decoration: const InputDecoration(
-                labelText:  'Μηνιαία Συνδρομή App (€)',
-                helperText: 'Χρεώνεται σε κάθε οδηγό την 1η του μήνα',
-                prefixIcon: Icon(Icons.calendar_month_rounded,
-                    color: Colors.deepOrange),
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 18),
-            // Συνδρομή Ημερολογίου
-            TextField(
-              controller: calCtrl,
-              keyboardType:
-                  const TextInputType.numberWithOptions(decimal: true),
-              decoration: const InputDecoration(
-                labelText:  'Συνδρομή Ημερολογίου (€)',
-                helperText: 'Έξτρα χρέωση 1η μήνα — μόνο σε όσους έχουν '
-                    'ενεργό ημερολόγιο. 0 = ανενεργή.',
-                prefixIcon: Icon(Icons.event_repeat_rounded,
-                    color: Colors.deepPurple),
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 18),
-            // Έξτρα λεπτά ανά κράτηση Shuttle
-            TextField(
-              controller: shuttleMinCtrl,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(
-                labelText:  'Έξτρα λεπτά ανά κράτηση Shuttle',
-                helperText: 'Κάθε επιπλέον κράτηση σε ενωμένο Shuttle προσθέτει '
-                    'τόσα λεπτά στον εκτιμώμενο χρόνο (π.χ. 10\' → 1 κράτηση='
-                    '60\', 2=70\', 3=80\'...).',
-                suffixText: 'λεπτά',
-                prefixIcon: Icon(Icons.directions_bus_rounded,
-                    color: Colors.amber),
-                border: OutlineInputBorder(),
-              ),
-            ),
-          ]),
-        ),
-        actions: [
-          AppButtonTonal(label: 'Άκυρο', onPressed: () => Navigator.pop(ctx)),
-          AppButton(
-            label: 'Αποθήκευση',
-            color: Colors.deepPurple,
-            onPressed: () async {
-              final appV = double.tryParse(
-                  appCtrl.text.trim().replaceAll(',', '.'));
-              final subV = double.tryParse(
-                  subCtrl.text.trim().replaceAll(',', '.'));
-              final calV = double.tryParse(
-                  calCtrl.text.trim().replaceAll(',', '.'));
-              Navigator.pop(ctx);
-              if (appV != null) {
-                await JobService.setGlobalAppCommission(appV);
-              }
-              if (subV != null) {
-                await JobService.setSubscription(subV);
-              }
-              if (calV != null) {
-                await JobService.setCalendarSubscription(calV);
-              }
-              final shuttleMinV =
-                  double.tryParse(shuttleMinCtrl.text.trim());
-              if (shuttleMinV != null) {
-                await JobService.setShuttleExtraMinutes(shuttleMinV);
-              }
-              if (context.mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Οι ρυθμίσεις αποθηκεύτηκαν'),
-                    backgroundColor: Colors.green,
+      isScrollControlled: true,
+      backgroundColor: c.scaffold,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: EdgeInsets.fromLTRB(
+              20, 16, 20, 20 + MediaQuery.of(ctx).viewInsets.bottom),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(children: [
+                  Icon(Icons.settings_rounded, color: c.amberDeep),
+                  const SizedBox(width: 10),
+                  Text('Ρυθμίσεις',
+                      style: TextStyle(fontWeight: FontWeight.bold,
+                          fontSize: 17, color: c.textMain)),
+                ]),
+                const SizedBox(height: 18),
+                // Προμήθεια App
+                TextField(
+                  controller: appCtrl,
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
+                  decoration: const InputDecoration(
+                    labelText:  'Προμήθεια App (€)',
+                    helperText: 'Εφαρμόζεται σε ΟΛΕΣ τις πηγές',
+                    prefixIcon: Icon(Icons.phone_iphone_rounded,
+                        color: Colors.blue),
+                    border: OutlineInputBorder(),
                   ),
-                );
-              }
-            },
+                ),
+                const SizedBox(height: 18),
+                // Συνδρομή
+                TextField(
+                  controller: subCtrl,
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
+                  decoration: const InputDecoration(
+                    labelText:  'Μηνιαία Συνδρομή App (€)',
+                    helperText: 'Χρεώνεται σε κάθε οδηγό την 1η του μήνα',
+                    prefixIcon: Icon(Icons.calendar_month_rounded,
+                        color: Colors.deepOrange),
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 18),
+                // Συνδρομή Ημερολογίου
+                TextField(
+                  controller: calCtrl,
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
+                  decoration: const InputDecoration(
+                    labelText:  'Συνδρομή Ημερολογίου (€)',
+                    helperText: 'Έξτρα χρέωση 1η μήνα — μόνο σε όσους έχουν '
+                        'ενεργό ημερολόγιο. 0 = ανενεργή.',
+                    prefixIcon: Icon(Icons.event_repeat_rounded,
+                        color: Colors.deepPurple),
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 18),
+                // Έξτρα λεπτά ανά κράτηση Shuttle
+                TextField(
+                  controller: shuttleMinCtrl,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText:  'Έξτρα λεπτά ανά κράτηση Shuttle',
+                    helperText: 'Κάθε επιπλέον κράτηση σε ενωμένο Shuttle προσθέτει '
+                        'τόσα λεπτά στον εκτιμώμενο χρόνο (π.χ. 10\' → 1 κράτηση='
+                        '60\', 2=70\', 3=80\'...).',
+                    suffixText: 'λεπτά',
+                    prefixIcon: Icon(Icons.directions_bus_rounded,
+                        color: Colors.amber),
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 22),
+                Row(children: [
+                  Expanded(
+                    child: AppButtonTonal(
+                        label: 'Άκυρο', onPressed: () => Navigator.pop(ctx)),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    flex: 2,
+                    child: AppButton(
+                      label: 'Αποθήκευση',
+                      color: c.amberDeep,
+                      onPressed: () async {
+                        final appV = double.tryParse(
+                            appCtrl.text.trim().replaceAll(',', '.'));
+                        final subV = double.tryParse(
+                            subCtrl.text.trim().replaceAll(',', '.'));
+                        final calV = double.tryParse(
+                            calCtrl.text.trim().replaceAll(',', '.'));
+                        Navigator.pop(ctx);
+                        if (appV != null) {
+                          await JobService.setGlobalAppCommission(appV);
+                        }
+                        if (subV != null) {
+                          await JobService.setSubscription(subV);
+                        }
+                        if (calV != null) {
+                          await JobService.setCalendarSubscription(calV);
+                        }
+                        final shuttleMinV =
+                            double.tryParse(shuttleMinCtrl.text.trim());
+                        if (shuttleMinV != null) {
+                          await JobService.setShuttleExtraMinutes(shuttleMinV);
+                        }
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Οι ρυθμίσεις αποθηκεύτηκαν'),
+                              backgroundColor: Colors.green,
+                            ),
+                          );
+                        }
+                      },
+                    ),
+                  ),
+                ]),
+              ],
+            ),
           ),
-        ],
         ),
       ),
     );
@@ -326,6 +349,7 @@ class _AdminDriverCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = AppColors.of(context);
     final name   = '${data['displayName'] ?? ''} ${data['lastName'] ?? ''}'.trim();
     final phone  = data['phone']  as String? ?? '';
     final email  = data['email']  as String? ?? '';
@@ -368,13 +392,13 @@ class _AdminDriverCard extends StatelessWidget {
 
     return Card(
       elevation: 0,
-      color:     Colors.white,
+      color:     c.card,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(14),
         side: BorderSide(
           color: isMaster
               ? Colors.deepPurple.shade200
-              : (isAdmin ? Colors.amber.shade300 : Colors.grey.shade200),
+              : (isAdmin ? Colors.amber.shade300 : c.cardBorder),
         ),
       ),
       child: Padding(
@@ -748,27 +772,34 @@ class _AdminDriverCard extends StatelessWidget {
     final icsPriceCtrl = TextEditingController(
         text: icsPrice.toStringAsFixed(2));
 
-    await showDialog<void>(
+    await showModalBottomSheet<void>(
       context: context,
+      isScrollControlled: true,
+      backgroundColor: AppColors.of(context).scaffold,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
       builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setS) => AlertDialog(
-          shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(20)),
-          title: Row(children: [
-            const Icon(Icons.manage_accounts_rounded,
-                color: Colors.deepPurple),
-            const SizedBox(width: 10),
-            Expanded(child: Text(
-              '${data['displayName'] ?? ''} ${data['lastName'] ?? ''}'.trim(),
-              style: const TextStyle(fontWeight: FontWeight.bold,
-                  fontSize: 15),
-            )),
-          ]),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
+        builder: (ctx, setS) => SafeArea(
+          child: Padding(
+            padding: EdgeInsets.fromLTRB(
+                20, 16, 20, 20 + MediaQuery.of(ctx).viewInsets.bottom),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(children: [
+                    const Icon(Icons.manage_accounts_rounded,
+                        color: Colors.deepPurple),
+                    const SizedBox(width: 10),
+                    Expanded(child: Text(
+                      '${data['displayName'] ?? ''} ${data['lastName'] ?? ''}'.trim(),
+                      style: const TextStyle(fontWeight: FontWeight.bold,
+                          fontSize: 17),
+                    )),
+                  ]),
+                  const SizedBox(height: 16),
                 // ── Ρόλος ──────────────────────────────────────────
                 const Text('Ρόλος',
                     style: TextStyle(fontWeight: FontWeight.bold,
@@ -1018,6 +1049,7 @@ class _AdminDriverCard extends StatelessWidget {
                 ]),
                 const SizedBox(height: 8),
                 _accessRow(
+                  ctx: ctx,
                   setS: setS,
                   icon: Icons.event_available_rounded,
                   color: const Color(0xFF1A73E8),
@@ -1045,6 +1077,7 @@ class _AdminDriverCard extends StatelessWidget {
 
                   // Ημερολόγιο (πλήρης σύνδεση Google Calendar) — μόνο admin/master
                   _accessRow(
+                    ctx: ctx,
                     setS: setS,
                     icon: Icons.calendar_month_rounded,
                     color: Colors.deepPurple,
@@ -1058,6 +1091,7 @@ class _AdminDriverCard extends StatelessWidget {
 
                   // Web πίνακας
                   _accessRow(
+                    ctx: ctx,
                     setS: setS,
                     icon: Icons.language_rounded,
                     color: const Color(0xFF185FA5),
@@ -1068,40 +1102,48 @@ class _AdminDriverCard extends StatelessWidget {
                     priceCtrl: webPriceCtrl,
                   ),
                 ],
-              ],
+                  const SizedBox(height: 22),
+                  Row(children: [
+                    Expanded(
+                      child: AppButtonTonal(label: 'Άκυρο', onPressed: () => Navigator.pop(ctx)),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      flex: 2,
+                      child: AppButton(
+                        label: 'Αποθήκευση',
+                        color: Colors.deepPurple,
+                        onPressed: () async {
+                          Navigator.pop(ctx);
+                          double parsePrice(TextEditingController c) {
+                            final v = double.tryParse(
+                                c.text.trim().replaceAll(',', '.')) ?? 0.0;
+                            return v < 0 ? 0.0 : v;
+                          }
+                          await _saveRole(
+                            isAdmin:          selAdmin,
+                            isMaster:         selMaster,
+                            calendarEnabled:  selCalendar,
+                            webEnabled:       selWeb,
+                            icsExportEnabled: selIcs,
+                            calendarPrice:    parsePrice(calPriceCtrl),
+                            webPrice:         parsePrice(webPriceCtrl),
+                            icsPrice:         parsePrice(icsPriceCtrl),
+                            tenantOwner:      selTenantOwner,
+                            tenantId:         tenantIdCtrl.text.trim(),
+                            homeOwnerBillingPeriod: selHomeOwnerPeriod,
+                            homeOwnerBillingAmount:
+                                double.tryParse(homeOwnerPriceCtrl.text.replaceAll(',', '.')) ?? 0.0,
+                            managedGroupIds:  selGroupIds.toList(),
+                          );
+                        },
+                      ),
+                    ),
+                  ]),
+                ],
+              ),
             ),
           ),
-          actions: [
-            AppButtonTonal(label: 'Άκυρο', onPressed: () => Navigator.pop(ctx)),
-            AppButton(
-              label: 'Αποθήκευση',
-              color: Colors.deepPurple,
-              onPressed: () async {
-                Navigator.pop(ctx);
-                double parsePrice(TextEditingController c) {
-                  final v = double.tryParse(
-                      c.text.trim().replaceAll(',', '.')) ?? 0.0;
-                  return v < 0 ? 0.0 : v;
-                }
-                await _saveRole(
-                  isAdmin:          selAdmin,
-                  isMaster:         selMaster,
-                  calendarEnabled:  selCalendar,
-                  webEnabled:       selWeb,
-                  icsExportEnabled: selIcs,
-                  calendarPrice:    parsePrice(calPriceCtrl),
-                  webPrice:         parsePrice(webPriceCtrl),
-                  icsPrice:         parsePrice(icsPriceCtrl),
-                  tenantOwner:      selTenantOwner,
-                  tenantId:         tenantIdCtrl.text.trim(),
-                  homeOwnerBillingPeriod: selHomeOwnerPeriod,
-                  homeOwnerBillingAmount:
-                      double.tryParse(homeOwnerPriceCtrl.text.replaceAll(',', '.')) ?? 0.0,
-                  managedGroupIds:  selGroupIds.toList(),
-                );
-              },
-            ),
-          ],
         ),
       ),
     );
@@ -1116,8 +1158,9 @@ class _AdminDriverCard extends StatelessWidget {
     required Color        color,
     required bool         selected,
     required VoidCallback onTap,
-  }) =>
-      GestureDetector(
+  }) {
+    final c = AppColors.of(ctx);
+    return GestureDetector(
         onTap: onTap,
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 150),
@@ -1125,17 +1168,17 @@ class _AdminDriverCard extends StatelessWidget {
           decoration: BoxDecoration(
             color: selected
                 ? color.withValues(alpha: 0.1)
-                : Colors.grey.shade50,
+                : c.card,
             borderRadius: BorderRadius.circular(10),
             border: Border.all(
               color: selected
                   ? color.withValues(alpha: 0.6)
-                  : Colors.grey.shade200,
+                  : c.cardBorder,
               width: selected ? 1.5 : 1,
             ),
           ),
           child: Row(children: [
-            Icon(icon, color: selected ? color : Colors.grey, size: 20),
+            Icon(icon, color: selected ? color : c.textFaint, size: 20),
             const SizedBox(width: 10),
             Expanded(child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -1143,10 +1186,10 @@ class _AdminDriverCard extends StatelessWidget {
                 Text(label,
                     style: TextStyle(
                         fontWeight: FontWeight.bold,
-                        color: selected ? color : Colors.black87)),
+                        color: selected ? color : c.textMain)),
                 Text(subtitle,
                     style: TextStyle(
-                        fontSize: 11, color: Colors.grey[500])),
+                        fontSize: 11, color: c.textFaint)),
               ],
             )),
             if (selected)
@@ -1154,10 +1197,12 @@ class _AdminDriverCard extends StatelessWidget {
           ]),
         ),
       );
+  }
 
   /// Γραμμή πρόσβασης: διακόπτης on/off + κουτάκι τιμής (€/μήνα) που
   /// εμφανίζεται μόνο όταν είναι ενεργό. 0 = χωρίς χρέωση.
   Widget _accessRow({
+    required BuildContext       ctx,
     required StateSetter        setS,
     required IconData           icon,
     required Color              color,
@@ -1167,16 +1212,17 @@ class _AdminDriverCard extends StatelessWidget {
     required ValueChanged<bool> onChanged,
     required TextEditingController priceCtrl,
   }) {
+    final c = AppColors.of(ctx);
     return Container(
       decoration: BoxDecoration(
         color: value
             ? color.withValues(alpha: 0.08)
-            : Colors.grey.shade50,
+            : c.card,
         borderRadius: BorderRadius.circular(10),
         border: Border.all(
           color: value
               ? color.withValues(alpha: 0.4)
-              : Colors.grey.shade200,
+              : c.cardBorder,
         ),
       ),
       child: Column(
@@ -1184,12 +1230,12 @@ class _AdminDriverCard extends StatelessWidget {
           SwitchListTile(
             dense: true,
             activeThumbColor: color,
-            secondary: Icon(icon, color: value ? color : Colors.grey),
+            secondary: Icon(icon, color: value ? color : c.textFaint),
             title: Text(title,
-                style: const TextStyle(
-                    fontSize: 13, fontWeight: FontWeight.bold)),
+                style: TextStyle(
+                    fontSize: 13, fontWeight: FontWeight.bold, color: c.textMain)),
             subtitle: Text(subtitle,
-                style: TextStyle(fontSize: 11, color: Colors.grey[600])),
+                style: TextStyle(fontSize: 11, color: c.textFaint)),
             value: value,
             onChanged: onChanged,
           ),

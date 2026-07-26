@@ -18,6 +18,7 @@ import 'dart:js_interop';
 import 'package:flutter/material.dart';
 import 'package:web/web.dart' as web;
 
+import '../app_theme.dart';
 import '../ics_intent.dart';
 import '../jobs/job_form.dart';
 import '../jobs/places_service.dart';
@@ -123,8 +124,9 @@ class _IcsUploadPageState extends State<IcsUploadPage> {
 
   @override
   Widget build(BuildContext context) {
+    final c = AppColors.of(context);
     return Scaffold(
-      backgroundColor: const Color(0xFFF7F8FA),
+      backgroundColor: c.scaffold,
       body: Center(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(28),
@@ -136,16 +138,15 @@ class _IcsUploadPageState extends State<IcsUploadPage> {
                 Icon(Icons.upload_file_rounded,
                     size: 56, color: Colors.amber.shade700),
                 const SizedBox(height: 16),
-                const Text('Εισαγωγή κράτησης από .ics',
-                    style:
-                        TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                Text('Εισαγωγή κράτησης από .ics',
+                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold,
+                        color: c.textMain)),
                 const SizedBox(height: 8),
                 Text(
                   'Ανέβασε ένα αρχείο .ics και θα ανοίξει η φόρμα νέας '
                   'δουλειάς προ-συμπληρωμένη.',
                   textAlign: TextAlign.center,
-                  style:
-                      TextStyle(color: Colors.grey[600], fontSize: 14, height: 1.4),
+                  style: TextStyle(color: c.textFaint, fontSize: 14, height: 1.4),
                 ),
                 const SizedBox(height: 28),
                 _UploadBox(onTap: _pickFile),
@@ -158,7 +159,7 @@ class _IcsUploadPageState extends State<IcsUploadPage> {
                           size: 18, color: Colors.green.shade600),
                       const SizedBox(width: 6),
                       Flexible(child: Text(_lastFileName!,
-                          style: TextStyle(color: Colors.grey[700]))),
+                          style: TextStyle(color: c.textFaint))),
                     ],
                   ),
                 ],
@@ -193,6 +194,7 @@ class _UploadBox extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = AppColors.of(context);
     return InkWell(
       borderRadius: BorderRadius.circular(16),
       onTap: onTap,
@@ -200,7 +202,7 @@ class _UploadBox extends StatelessWidget {
         width: double.infinity,
         padding: const EdgeInsets.symmetric(vertical: 40, horizontal: 20),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: c.card,
           borderRadius: BorderRadius.circular(16),
           border: Border.all(color: _kAmber, width: 1.5),
         ),
@@ -209,11 +211,12 @@ class _UploadBox extends StatelessWidget {
             Icon(Icons.file_upload_outlined,
                 size: 38, color: Colors.amber.shade700),
             const SizedBox(height: 12),
-            const Text('Επιλογή αρχείου .ics',
-                style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
+            Text('Επιλογή αρχείου .ics',
+                style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15,
+                    color: c.textMain)),
             const SizedBox(height: 4),
             Text('Πάτησε εδώ για να επιλέξεις',
-                style: TextStyle(color: Colors.grey[500], fontSize: 13)),
+                style: TextStyle(color: c.textFaint, fontSize: 13)),
           ],
         ),
       ),
