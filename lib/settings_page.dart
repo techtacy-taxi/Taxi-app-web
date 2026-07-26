@@ -19,6 +19,7 @@ import 'package:flutter/material.dart';
 
 import 'app_theme.dart';
 import 'masters/global_settings_page.dart';
+import 'models.dart';
 import 'pricing/pricing_zones_page.dart';
 import 'qr/qr_code_page.dart';
 import 'viva_settings_page.dart';
@@ -35,9 +36,12 @@ class SettingsPage extends StatefulWidget {
   final VoidCallback onSignOut;
   final bool   muted;
   final ValueChanged<bool> onMuteChanged;
-  /// Άνοιγμα του επιλογέα οχήματος (Ταξί/Van/Bus) — ίδιος διάλογος με πριν,
-  /// απλά καλείται από εδώ αντί από το παλιό popup menu.
-  final VoidCallback onOpenVehiclePicker;
+  /// Τρέχων τύπος οχήματος + αν έχει ενεργό «Λεωφορείο» — για να δείχνει
+  /// η οθόνη Ρυθμίσεων την τρέχουσα επιλογή και το bottom sheet.
+  final VehicleType vehicleType;
+  final bool hasBus;
+  /// Καλείται όταν ο χρήστης επιλέξει νέο όχημα από το bottom sheet εδώ.
+  final ValueChanged<({VehicleType type, bool hasBus})> onVehicleChanged;
   /// Μόνο master: στέλνει ειδοποίηση αναβάθμισης σε όλους τους οδηγούς.
   final VoidCallback? onBroadcastUpdate;
 
@@ -51,7 +55,9 @@ class SettingsPage extends StatefulWidget {
     required this.onSignOut,
     required this.muted,
     required this.onMuteChanged,
-    required this.onOpenVehiclePicker,
+    required this.vehicleType,
+    required this.hasBus,
+    required this.onVehicleChanged,
     this.onBroadcastUpdate,
   });
 
@@ -72,6 +78,89 @@ class _SettingsPageState extends State<SettingsPage> {
   void _toggleMuted(bool v) {
     setState(() => _muted = v);
     widget.onMuteChanged(v);
+  }
+
+  String _vehicleLabel(VehicleType type, bool hasBus) {
+    if (hasBus) return 'Λεωφορείο';
+    return switch (type) {
+      VehicleType.taxi => 'Taxi',
+      VehicleType.van  => 'Van',
+      VehicleType.bus  => 'Λεωφορείο',
+    };
+  }
+
+  // ── Bottom sheet επιλογής οχήματος — ίδιο design pattern με το
+  // «Εμφάνιση εφαρμογής / κύριου χάρτη» (showModalBottomSheet + SafeArea),
+  // ώστε να μην κρύβεται ποτέ πίσω από την κάτω navigation bar του Android.
+  Future<void> _openVehiclePicker(BuildContext context, AppColors c) async {
+    // «Λεωφορείο» είναι ξεχωριστή επιλογή στο UI, αλλά τεχνικά αποθηκεύεται
+    // ως VehicleType.van + hasBus=true (ίδια χωρητικότητα/συμβατότητα).
+    final current = widget.hasBus ? VehicleType.bus : widget.vehicleType;
+
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: c.scaffold,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Text('Όχημα',
+                style: TextStyle(
+                    fontSize: 15, fontWeight: FontWeight.w600, color: c.textMain)),
+            const SizedBox(height: 12),
+            _vehicleOption(ctx, c, VehicleType.taxi, 'Taxi',
+                Icons.local_taxi_rounded, current),
+            _vehicleOption(ctx, c, VehicleType.van, 'Van',
+                Icons.airport_shuttle_rounded, current),
+            _vehicleOption(ctx, c, VehicleType.bus, 'Λεωφορείο',
+                Icons.directions_bus_rounded, current),
+          ]),
+        ),
+      ),
+    );
+  }
+
+  Widget _vehicleOption(BuildContext context, AppColors c, VehicleType option,
+      String label, IconData icon, VehicleType current) {
+    final selected = option == current;
+    return InkWell(
+      borderRadius: BorderRadius.circular(14),
+      onTap: () {
+        Navigator.of(context).pop();
+        final wantsBus = option == VehicleType.bus;
+        widget.onVehicleChanged((
+          type: wantsBus ? VehicleType.van : option,
+          hasBus: wantsBus,
+        ));
+      },
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+          color:        selected ? c.amberSoft : c.card,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: selected ? c.amber : c.cardBorder,
+            width: selected ? 1.5 : 0.8,
+          ),
+        ),
+        child: Row(children: [
+          Icon(icon, size: 21, color: selected ? c.amberDeep : c.textFaint),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(label,
+                style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+                    color: selected ? c.amberDeep : c.textMain)),
+          ),
+          if (selected) Icon(Icons.check_rounded, size: 20, color: c.amberDeep),
+        ]),
+      ),
+    );
   }
 
   @override
@@ -121,7 +210,8 @@ class _SettingsPageState extends State<SettingsPage> {
             _tile(context, c,
                 icon: Icons.local_taxi_rounded,
                 label: 'Όχημα',
-                onTap: widget.onOpenVehiclePicker),
+                trailingText: _vehicleLabel(widget.vehicleType, widget.hasBus),
+                onTap: () => _openVehiclePicker(context, c)),
             _divider(c),
             _switchTile(context, c,
                 icon: Icons.notifications_off_rounded,

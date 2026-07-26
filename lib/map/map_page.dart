@@ -29,7 +29,6 @@ import '../voice/voice_models.dart';
 import '../voice/voice_service.dart';
 import '../voice/groups_admin.dart' hide GroupBadge;
 import 'driver_card.dart';
-import 'map_menus.dart';
 import 'home_top_overlay.dart';
 import 'marker_builder.dart';
 import '../ics_intent.dart';
@@ -751,18 +750,10 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
   VehicleType get _vehicleForMenu =>
       _hasBus ? VehicleType.bus : _vehicleType;
 
-  Future<void> _openVehiclePicker(BuildContext outerContext) async {
-    final result = await showVehicleTypeMenu(
-      context: outerContext, itemCtx: outerContext,
-      currentType: _vehicleForMenu,
-    );
-    if (result == null) return;
-
-    final wantsBus = result == VehicleType.bus;
-    // Όταν διαλέγει Λεωφορείο, το πραγματικό vehicleType παραμένει Van
-    // (χωρητικότητα/συμβατότητα ίδια με πριν) — μόνο το hasBus αλλάζει.
-    final newVehicleType = wantsBus ? VehicleType.van : result;
-
+  // Καλείται από το bottom sheet «Όχημα» στις Ρυθμίσεις.
+  // newVehicleType εδώ είναι ήδη το «πραγματικό» τύπο (van αν επιλέχθηκε
+  // Λεωφορείο) — hasBus ξεχωρίζει αν πρέπει να δείχνει σαν Λεωφορείο.
+  Future<void> _applyVehicleChange(VehicleType newVehicleType, bool wantsBus) async {
     if (newVehicleType != _vehicleType || wantsBus != _hasBus) {
       _vehicleType = newVehicleType;
       _hasBus = wantsBus;
@@ -1366,7 +1357,9 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
                       isMaster: _isMaster,
                       onEditProfile: _openProfileForm,
                       onCheckUpdate: () => _handleMenuAction(MenuAction.checkUpdate, context),
-                      onOpenVehiclePicker: () => _openVehiclePicker(context),
+                      vehicleType: _vehicleType,
+                      hasBus: _hasBus,
+                      onVehicleChanged: (v) => _applyVehicleChange(v.type, v.hasBus),
                       onBroadcastUpdate: _isMaster
                           ? () => _handleMenuAction(MenuAction.broadcastUpdate, context)
                           : null,
