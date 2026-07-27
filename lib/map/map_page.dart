@@ -39,7 +39,6 @@ import '../jobs/places_service.dart';
 import '../jobs/job_badge.dart';
 import '../jobs/billing_page.dart';
 import '../jobs/job_service.dart';
-import '../masters/masters_admin_page.dart';
 import '../masters/global_settings_page.dart';
 import '../calendar/jobs_calendar_page.dart';
 import '../pricing/pricing_zones_page.dart';
@@ -914,7 +913,7 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
             uid: _uid ?? '',
             hasAccess: (d) => d['master'] == true,
             deniedMessage: 'Η πρόσβαση στους Διαχειριστές αφαιρέθηκε.',
-            child: MastersAdminPage(masterUid: _uid ?? ''),
+            child: GlobalSettingsPage(masterUid: _uid ?? ''),
           ),
         ));
         return;

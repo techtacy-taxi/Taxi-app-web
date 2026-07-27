@@ -16,7 +16,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../models.dart';
 import '../app_theme.dart';
-import '../masters/masters_admin_page.dart';
+import '../masters/global_settings_page.dart';
 import '../notifications_service.dart';
 import '../alert_gate.dart';
 import 'job_details_sheet.dart';
@@ -522,7 +522,7 @@ class _JobListenerState extends State<JobListener> with WidgetsBindingObserver {
     final nav = NotificationsService.navigatorKey.currentState;
     if (nav == null) return;
     nav.push(MaterialPageRoute(
-      builder: (_) => MastersAdminPage(masterUid: widget.uid),
+      builder: (_) => GlobalSettingsPage(masterUid: widget.uid),
     ));
   }
 

@@ -32,8 +32,7 @@ enum _Role { driver, admin, master }
 class _AdminRoleEditorPageState extends State<AdminRoleEditorPage> {
   late _Role _role;
   late bool  _isApproved;
-  String?    _selectedGroupId;
-  String?    _selectedGroupName;
+  final Set<String> _selGroupIds = {};
   bool _groupsLoading = true;
   List<Map<String, String>> _groups = [];
   bool _saving = false;
@@ -46,8 +45,7 @@ class _AdminRoleEditorPageState extends State<AdminRoleEditorPage> {
         ? _Role.master
         : (d['admin'] == true ? _Role.admin : _Role.driver);
     _isApproved = d['isApproved'] == true;
-    _selectedGroupId   = d['managedGroupId']   as String?;
-    _selectedGroupName = d['managedGroupName'] as String?;
+    _selGroupIds.addAll(List<String>.from(d['managedGroupIds'] ?? const []));
     _loadGroups();
   }
 
@@ -79,8 +77,9 @@ class _AdminRoleEditorPageState extends State<AdminRoleEditorPage> {
         'admin':  _role == _Role.admin  || _role == _Role.master,
         'master': _role == _Role.master,
         'isApproved': _isApproved,
-        'managedGroupId':   _selectedGroupId,
-        'managedGroupName': _selectedGroupName,
+        // Λίστα ομάδων — άδεια λίστα = βλέπει όλες. Master δεν χρειάζεται
+        // περιορισμό ομάδων (βλέπει τα πάντα).
+        'managedGroupIds': _role == _Role.master ? <String>[] : _selGroupIds.toList(),
       }, SetOptions(merge: true));
       if (mounted) Navigator.of(context).pop();
     } finally {
@@ -159,9 +158,11 @@ class _AdminRoleEditorPageState extends State<AdminRoleEditorPage> {
 
             if (_role != _Role.master) ...[
               const SizedBox(height: 16),
-              Text('Ομάδα',
+              Text('Ομάδες Διαχείρισης',
                   style: TextStyle(
                       fontSize: 12, fontWeight: FontWeight.w600, color: c.textFaint)),
+              Text('Αν δεν επιλεχθεί καμία → βλέπει όλες',
+                  style: TextStyle(fontSize: 10.5, color: c.textFaint)),
               const SizedBox(height: 7),
               _groupsLoading
                   ? const Padding(
@@ -171,43 +172,33 @@ class _AdminRoleEditorPageState extends State<AdminRoleEditorPage> {
                               width: 20, height: 20,
                               child: CircularProgressIndicator(strokeWidth: 2))),
                     )
-                  : Container(
-                      decoration: BoxDecoration(
-                        color:        c.card,
-                        borderRadius: BorderRadius.circular(14),
-                        border:       Border.all(color: c.cardBorder, width: 0.8),
-                      ),
-                      padding: const EdgeInsets.symmetric(horizontal: 12),
-                      child: DropdownButtonHideUnderline(
-                        child: DropdownButton<String?>(
-                          isExpanded: true,
-                          value: _selectedGroupId,
-                          hint: Text('Όλες οι ομάδες',
-                              style: TextStyle(fontSize: 13, color: c.textFaint)),
-                          dropdownColor: c.card,
-                          items: [
-                            DropdownMenuItem<String?>(
-                              value: null,
-                              child: Text('Όλες οι ομάδες',
+                  : _groups.isEmpty
+                      ? Text('Δεν υπάρχουν ομάδες',
+                          style: TextStyle(fontSize: 12.5, color: c.textFaint))
+                      : Container(
+                          decoration: BoxDecoration(
+                            color:        c.card,
+                            borderRadius: BorderRadius.circular(14),
+                            border:       Border.all(color: c.cardBorder, width: 0.8),
+                          ),
+                          child: Column(
+                            children: _groups.map((g) => CheckboxListTile(
+                              dense: true,
+                              activeColor: c.amberDeep,
+                              title: Text(g['name'] ?? '',
                                   style: TextStyle(fontSize: 13, color: c.textMain)),
-                            ),
-                            ..._groups.map((g) => DropdownMenuItem<String?>(
-                                  value: g['id'],
-                                  child: Text(g['name'] ?? '',
-                                      style: TextStyle(fontSize: 13, color: c.textMain)),
-                                )),
-                          ],
-                          onChanged: (v) => setState(() {
-                            _selectedGroupId = v;
-                            _selectedGroupName =
-                                v == null ? null : _groups.firstWhere((g) => g['id'] == v)['name'];
-                          }),
+                              value: _selGroupIds.contains(g['id']),
+                              onChanged: (v) => setState(() {
+                                if (v == true) {
+                                  _selGroupIds.add(g['id']!);
+                                } else {
+                                  _selGroupIds.remove(g['id']);
+                                }
+                              }),
+                              controlAffinity: ListTileControlAffinity.leading,
+                            )).toList(),
+                          ),
                         ),
-                      ),
-                    ),
-              const SizedBox(height: 6),
-              Text('Αν δεν επιλέξεις ομάδα, ο διαχειριστής βλέπει όλες τις ομάδες',
-                  style: TextStyle(fontSize: 10.5, color: c.textFaint)),
             ],
 
             const SizedBox(height: 16),

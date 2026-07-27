@@ -29,7 +29,6 @@ import '../jobs/job_admin_page.dart';
 import '../jobs/billing_page.dart';
 import '../calendar/jobs_calendar_page.dart';
 import '../voice/groups_admin.dart';
-import '../masters/masters_admin_page.dart';
 import '../pricing/pricing_zones_page.dart';
 import '../viva_settings_page.dart';
 import '../masters/global_settings_page.dart';
@@ -202,14 +201,9 @@ class _AdminShellState extends State<AdminShell> {
       ),
     ));
 
-    // Διαχείριση χρηστών/ρόλων — μόνο master.
-    if (s.isMaster) {
-      sections.add(_Section(
-        label: 'Διαχείριση',
-        icon: Icons.admin_panel_settings_rounded,
-        page: MastersAdminPage(masterUid: s.uid),
-      ));
-    }
+    // Η παλιά «Διαχείριση» (MastersAdminPage) ΚΑΤΑΡΓΗΘΗΚΕ — ενοποιήθηκε
+    // πλήρως μέσα στις «Καθολικές ρυθμίσεις» (GlobalSettingsPage), block
+    // ΧΡΗΣΤΕΣ (ρόλος/ομάδες/τιμές/διαγραφή, με αναζήτηση).
 
     // Ζώνες & Τιμές (τιμοκατάλογος δημόσιας φόρμας κράτησης) — master ή
     // tenantOwner (πελάτης multi-tenant, βλέπει ΜΟΝΟ αυτό το επιπλέον menu,

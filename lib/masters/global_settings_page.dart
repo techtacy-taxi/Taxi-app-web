@@ -39,6 +39,8 @@ class _GlobalSettingsPageState extends State<GlobalSettingsPage> {
   bool _loadingTenants = true;
   List<Map<String, dynamic>> _tenants = [];
   String? _expandedTenantId; // ποιο tenant row είναι ανοιχτό (inline διαχείριση)
+  final _driverSearchCtrl = TextEditingController();
+  String _driverQuery = '';
 
   @override
   void initState() {
@@ -86,7 +88,7 @@ class _GlobalSettingsPageState extends State<GlobalSettingsPage> {
             _tenantsBlock(c),
 
             const SizedBox(height: 18),
-            _sectionLabel(c, 'ADMINS'),
+            _sectionLabel(c, 'ΧΡΗΣΤΕΣ'),
             const SizedBox(height: 8),
             _adminsBlock(c),
 
@@ -581,19 +583,55 @@ class _GlobalSettingsPageState extends State<GlobalSettingsPage> {
               }
               return rank(a.data()).compareTo(rank(b.data()));
             });
+          final filtered = _driverQuery.isEmpty
+              ? sorted
+              : sorted.where((doc) {
+                  final d = doc.data();
+                  final haystack = [
+                    d['displayName'], d['lastName'], d['phone'],
+                    d['email'], d['plateNumber'],
+                  ].map((v) => (v as String? ?? '').toLowerCase()).join(' ');
+                  return haystack.contains(_driverQuery);
+                }).toList();
 
           return Column(children: [
             Row(children: [
               Icon(Icons.groups_rounded, size: 16, color: c.blueDeep),
               const SizedBox(width: 8),
               Expanded(
-                child: Text('Admins · ${sorted.where((d) => d.data()['admin'] == true || d.data()['master'] == true).length}',
+                child: Text('Χρήστες · ${sorted.length}',
                     style: TextStyle(
                         fontSize: 12.5,
                         fontWeight: FontWeight.w700,
                         color: c.blueDeep)),
               ),
             ]),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _driverSearchCtrl,
+              onChanged: (v) => setState(() => _driverQuery = v.trim().toLowerCase()),
+              decoration: InputDecoration(
+                isDense: true,
+                hintText: 'Αναζήτηση: όνομα, τηλέφωνο, email, πινακίδα…',
+                prefixIcon: Icon(Icons.search_rounded, size: 18, color: c.blueDeep),
+                suffixIcon: _driverQuery.isEmpty
+                    ? null
+                    : IconButton(
+                        icon: const Icon(Icons.clear_rounded, size: 18),
+                        onPressed: () {
+                          _driverSearchCtrl.clear();
+                          setState(() => _driverQuery = '');
+                        },
+                      ),
+                filled: true,
+                fillColor: c.card,
+                contentPadding: const EdgeInsets.symmetric(horizontal: 10),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  borderSide: BorderSide(color: c.blueSoft),
+                ),
+              ),
+            ),
             const SizedBox(height: 8),
             if (snap.connectionState == ConnectionState.waiting)
               const Padding(
@@ -603,8 +641,14 @@ class _GlobalSettingsPageState extends State<GlobalSettingsPage> {
                         width: 20, height: 20,
                         child: CircularProgressIndicator(strokeWidth: 2))),
               )
+            else if (filtered.isEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                child: Text('Κανένα αποτέλεσμα',
+                    style: TextStyle(fontSize: 12.5, color: c.blueFaint)),
+              )
             else
-              ...sorted.map((doc) => Padding(
+              ...filtered.map((doc) => Padding(
                     padding: const EdgeInsets.only(bottom: 8),
                     child: AdminCard(
                       docId:     doc.id,
@@ -695,7 +739,11 @@ class AdminCard extends StatelessWidget {
     final c = AppColors.of(context);
 
     final name  = '${data['displayName'] ?? ''} ${data['lastName'] ?? ''}'.trim();
-    final groupName = (data['managedGroupName'] as String?) ?? '';
+    final phone = (data['phone'] as String?) ?? '';
+    final email = (data['email'] as String?) ?? '';
+    final plate = (data['plateNumber'] as String?) ?? '';
+    final vehicleModel = (data['vehicleModel'] as String?) ?? '';
+    final groupIds = List<String>.from(data['managedGroupIds'] ?? const []);
     final isMaster  = data['master'] == true;
     final isAdmin   = data['admin']  == true;
 
@@ -737,8 +785,8 @@ class AdminCard extends StatelessWidget {
               Text(name.isEmpty ? '(χωρίς όνομα)' : name,
                   style: TextStyle(
                       fontSize: 13, fontWeight: FontWeight.w600, color: c.textMain)),
-              if (groupName.isNotEmpty)
-                Text('Ομάδα: $groupName',
+              if ((isAdmin || isMaster) && !isMaster)
+                Text(groupIds.isEmpty ? 'Βλέπει όλες τις ομάδες' : '${groupIds.length} ομάδ${groupIds.length == 1 ? 'α' : 'ες'}',
                     style: TextStyle(fontSize: 10.5, color: c.textFaint)),
             ]),
           ),
@@ -762,6 +810,47 @@ class AdminCard extends StatelessWidget {
             ),
           ],
         ]),
+
+        if (vehicleModel.isNotEmpty || plate.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 6, left: 41),
+            child: Text([vehicleModel, plate].where((s) => s.isNotEmpty).join(' · '),
+                style: TextStyle(fontSize: 11.5, color: c.textFaint)),
+          ),
+        if (phone.isNotEmpty || email.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 4, left: 41),
+            child: Wrap(spacing: 14, runSpacing: 2, children: [
+              if (phone.isNotEmpty)
+                InkWell(
+                  onTap: () {
+                    Clipboard.setData(ClipboardData(text: phone));
+                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                        content: Text('Τηλέφωνο αντιγράφηκε'),
+                        duration: Duration(seconds: 1)));
+                  },
+                  child: Row(mainAxisSize: MainAxisSize.min, children: [
+                    Icon(Icons.phone_rounded, size: 13, color: c.blueDeep),
+                    const SizedBox(width: 4),
+                    Text(phone, style: TextStyle(fontSize: 11.5, color: c.blueDeep)),
+                  ]),
+                ),
+              if (email.isNotEmpty)
+                InkWell(
+                  onTap: () {
+                    Clipboard.setData(ClipboardData(text: email));
+                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                        content: Text('Email αντιγράφηκε'),
+                        duration: Duration(seconds: 1)));
+                  },
+                  child: Row(mainAxisSize: MainAxisSize.min, children: [
+                    Icon(Icons.email_rounded, size: 13, color: c.blueDeep),
+                    const SizedBox(width: 4),
+                    Text(email, style: TextStyle(fontSize: 11.5, color: c.blueDeep)),
+                  ]),
+                ),
+            ]),
+          ),
 
         if (isAdmin || isMaster) ...[
           const SizedBox(height: 9),
@@ -1162,9 +1251,11 @@ class _PlatformPricingBlock extends StatefulWidget {
 
 class _PlatformPricingBlockState extends State<_PlatformPricingBlock> {
   bool _loading = true;
-  double _firstBooking   = 0.60;
-  double _extraShuttle   = 0.10;
-  double _subscription   = 5.00;
+  double _firstBooking       = 0.60;
+  double _extraShuttle       = 0.10;
+  double _subscription       = 5.00;
+  double _calendarSubscription       = 0.00;
+  double _shuttleExtraMinutes        = 10;
 
   @override
   void initState() {
@@ -1185,6 +1276,10 @@ class _PlatformPricingBlockState extends State<_PlatformPricingBlock> {
         _extraShuttle = (d?['appCommissionPerExtraShuttleBooking'] as num?)
                 ?.toDouble() ?? 0.10;
         _subscription = (d?['subscription'] as num?)?.toDouble() ?? 5.00;
+        _calendarSubscription =
+            (d?['calendarSubscription'] as num?)?.toDouble() ?? 0.00;
+        _shuttleExtraMinutes =
+            (d?['shuttleExtraMinutesPerBooking'] as num?)?.toDouble() ?? 10;
         _loading = false;
       });
     } catch (_) {
@@ -1303,6 +1398,34 @@ class _PlatformPricingBlockState extends State<_PlatformPricingBlock> {
             current: _subscription,
             suffix: '€ / μήνα',
             applyLocal: (v) => _subscription = v,
+          ),
+        ),
+        Divider(height: 1, color: c.blueSoft),
+        _row(
+          c,
+          icon:  Icons.event_repeat_rounded,
+          label: 'Συνδρομή Ημερολογίου',
+          value: '${_calendarSubscription.toStringAsFixed(2)} €',
+          onTap: () => _editValue(
+            field: 'calendarSubscription',
+            label: 'Συνδρομή Ημερολογίου (0 = ανενεργή)',
+            current: _calendarSubscription,
+            suffix: '€ / μήνα',
+            applyLocal: (v) => _calendarSubscription = v,
+          ),
+        ),
+        Divider(height: 1, color: c.blueSoft),
+        _row(
+          c,
+          icon:  Icons.directions_bus_rounded,
+          label: 'Έξτρα λεπτά ανά κράτηση Shuttle',
+          value: '${_shuttleExtraMinutes.toStringAsFixed(0)} λεπτά',
+          onTap: () => _editValue(
+            field: 'shuttleExtraMinutesPerBooking',
+            label: 'Έξτρα λεπτά ανά κράτηση Shuttle',
+            current: _shuttleExtraMinutes,
+            suffix: 'λεπτά',
+            applyLocal: (v) => _shuttleExtraMinutes = v,
           ),
         ),
       ]),
