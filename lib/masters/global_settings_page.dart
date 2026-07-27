@@ -1255,7 +1255,6 @@ class _PlatformPricingBlockState extends State<_PlatformPricingBlock> {
   double _extraShuttle       = 0.10;
   double _subscription       = 5.00;
   double _calendarSubscription       = 0.00;
-  double _shuttleExtraMinutes        = 10;
 
   @override
   void initState() {
@@ -1278,8 +1277,6 @@ class _PlatformPricingBlockState extends State<_PlatformPricingBlock> {
         _subscription = (d?['subscription'] as num?)?.toDouble() ?? 5.00;
         _calendarSubscription =
             (d?['calendarSubscription'] as num?)?.toDouble() ?? 0.00;
-        _shuttleExtraMinutes =
-            (d?['shuttleExtraMinutesPerBooking'] as num?)?.toDouble() ?? 10;
         _loading = false;
       });
     } catch (_) {
@@ -1404,28 +1401,14 @@ class _PlatformPricingBlockState extends State<_PlatformPricingBlock> {
         _row(
           c,
           icon:  Icons.event_repeat_rounded,
-          label: 'Συνδρομή Ημερολογίου',
+          label: 'Συνδρομή Google Ημερολογίου',
           value: '${_calendarSubscription.toStringAsFixed(2)} €',
           onTap: () => _editValue(
             field: 'calendarSubscription',
-            label: 'Συνδρομή Ημερολογίου (0 = ανενεργή)',
+            label: 'Συνδρομή Google Ημερολογίου (0 = ανενεργή)',
             current: _calendarSubscription,
             suffix: '€ / μήνα',
             applyLocal: (v) => _calendarSubscription = v,
-          ),
-        ),
-        Divider(height: 1, color: c.blueSoft),
-        _row(
-          c,
-          icon:  Icons.directions_bus_rounded,
-          label: 'Έξτρα λεπτά ανά κράτηση Shuttle',
-          value: '${_shuttleExtraMinutes.toStringAsFixed(0)} λεπτά',
-          onTap: () => _editValue(
-            field: 'shuttleExtraMinutesPerBooking',
-            label: 'Έξτρα λεπτά ανά κράτηση Shuttle',
-            current: _shuttleExtraMinutes,
-            suffix: 'λεπτά',
-            applyLocal: (v) => _shuttleExtraMinutes = v,
           ),
         ),
       ]),
