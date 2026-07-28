@@ -262,6 +262,7 @@ class SavedJobService {
     required String ownerName,
     String? calendarEventId,
     bool autoReturned = false,
+    String? tenantId,
   }) async {
     final map = draft.toMap();
     // Το toMap βάζει createdAt = serverTimestamp· κρατάμε ξεχωριστό savedAt.
@@ -273,7 +274,14 @@ class SavedJobService {
     // sameTenantAsNewDoc): κάθε ΝΕΟ doc πρέπει να έχει tenantId ίδιο με του
     // δημιουργού. Χωρίς αυτό το Firestore το θεωρεί 'default' και κάθε admin
     // εκτός super-admin έπαιρνε permission-denied στο κουμπί «Αποθήκευση».
-    map['tenantId']  = await _myTenantId();
+    // ⚠️ BUGFIX (αδιεκδίκητη δουλειά που γυρίζει πίσω): αν μας δοθεί ρητά
+    // tenantId (π.χ. από returnExpiredToSaved, όπου ο tenant είναι ΤΟΥ ΔΟΥΛΕΙΑΣ
+    // και ΟΧΙ αυτού που τυχαίνει να τρέχει την επαναφορά), το κρατάμε. Αλλιώς
+    // ο super-admin που είχε ανοιχτή την εφαρμογή έγραφε το δικό του tenantId
+    // και η δουλειά εξαφανιζόταν από τον admin του tenant (π.χ. Σερέτης).
+    map['tenantId']  = (tenantId != null && tenantId.isNotEmpty)
+        ? tenantId
+        : await _myTenantId();
     if (calendarEventId != null && calendarEventId.isNotEmpty) {
       map['calendarEventId'] = calendarEventId;
     }

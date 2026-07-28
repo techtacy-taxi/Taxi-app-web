@@ -10,7 +10,9 @@
 import 'dart:convert';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'job_model.dart';
@@ -118,6 +120,17 @@ class _JobFormPageState extends State<JobFormPage> {
   // ─── Controllers ──────────────────────────────────────────────────────────
   final _priceCtrl   = TextEditingController();
   final _noteCtrl    = TextEditingController();
+
+  // ─── Link πληρωμής (Viva/Stripe) ─────────────────────────────────────────
+  // Χρησιμοποιεί ΤΗΝ ΙΔΙΑ φόρμα «Νέα Δουλειά» — όχι νέα, ξεχωριστή φόρμα.
+  // «Ποσό Προκαταβολής» εδώ ΔΕΝ σχετίζεται με το _fullyPaidManual toggle
+  // (που σημαίνει «ήδη πληρώθηκε εκτός app») — αφορά ΜΟΝΟ το ποσό που θα
+  // χρεωθεί online μέσω του link. Κενό = πληρώνεται ΟΛΟΚΛΗΡΟ το ποσό online.
+  final _linkDepositCtrl        = TextEditingController();
+  int   _linkTaxiCount = 0;
+  int   _linkVanCount  = 0;
+  int   _linkBusCount  = 0;
+  bool  _generatingLink = false;
 
   // ─── Σημεία Google (Από / Προς) ───────────────────────────────────────────
   PlacePick? _fromPick;
@@ -578,6 +591,7 @@ class _JobFormPageState extends State<JobFormPage> {
     _clientPhoneCtrl.dispose();
     _clientEmailCtrl.dispose();
     _flightShipCtrl.dispose();
+    _linkDepositCtrl.dispose();
     super.dispose();
   }
 
@@ -1291,6 +1305,147 @@ class _JobFormPageState extends State<JobFormPage> {
     );
   }
 
+  /// Δημιουργεί ΕΝΑ link πληρωμής (Viva ή Stripe, ανάλογα με τον πάροχο του
+  /// tenant) βάσει ΑΚΡΙΒΩΣ των στοιχείων που έχει γράψει ο master/admin σε
+  /// αυτή τη φόρμα — καμία επανα-υπολόγιση τιμής από ζώνες. Μόλις πληρωθεί,
+  /// το ήδη υπάρχον σύστημα (ίδιο με την online φόρμα) αποθηκεύει τη δουλειά,
+  /// στέλνει email επιβεβαίωσης και ειδοποιεί.
+  Future<void> _generatePaymentLink() async {
+    if (_generatingLink) return;
+
+    final fromText = (_fromPick?.description ?? '').trim();
+    final toText   = (_toPick?.description   ?? '').trim();
+    if (fromText.isEmpty || toText.isEmpty) {
+      _showError('Συμπλήρωσε Από και Προς');
+      return;
+    }
+    final basePrice = double.tryParse(_priceCtrl.text.trim());
+    if (basePrice == null || basePrice <= 0) {
+      _showError('Συμπλήρωσε έγκυρη τιμή');
+      return;
+    }
+    if (_clientNameCtrl.text.trim().isEmpty || _clientPhoneCtrl.text.trim().isEmpty) {
+      _showError('Συμπλήρωσε όνομα και τηλέφωνο πελάτη (χρειάζονται για την πληρωμή)');
+      return;
+    }
+
+    final price = basePrice + _childSeatTotal;
+    final depositText = _linkDepositCtrl.text.trim().replaceAll(',', '.');
+    final depositAmount = depositText.isEmpty ? 0.0 : (double.tryParse(depositText) ?? 0.0);
+
+    // Χωρίς προγραμματισμένη ώρα → «τώρα» (η ίδια στιγμή δημιουργίας).
+    final effectiveDt = (_isScheduled && _scheduledAt != null) ? _scheduledAt! : DateTime.now();
+    final dateStr = '${effectiveDt.year.toString().padLeft(4, '0')}-'
+        '${effectiveDt.month.toString().padLeft(2, '0')}-'
+        '${effectiveDt.day.toString().padLeft(2, '0')}';
+    final timeStr = '${effectiveDt.hour.toString().padLeft(2, '0')}:'
+        '${effectiveDt.minute.toString().padLeft(2, '0')}';
+
+    setState(() => _generatingLink = true);
+    try {
+      final tenantId = await JobService.myTenantId();
+
+      // ── Ανάλυση οχημάτων από τους 3 μετρητές (Taxi/Van/Λεωφορείο) ──
+      // Αν ο master/admin δεν άγγιξε κανέναν μετρητή (όλοι στο 0), πέφτουμε
+      // πίσω σε 1 μονάδα του οχήματος που έχει ήδη επιλεγμένο στη φόρμα.
+      final counts = <String, int>{
+        'taxi': _linkTaxiCount,
+        'van':  _linkVanCount,
+        'bus':  _linkBusCount,
+      };
+      if (counts.values.every((v) => v <= 0)) {
+        final fallbackType =
+            ['taxi', 'van', 'bus'].contains(_vehicleType) ? _vehicleType : 'taxi';
+        counts[fallbackType] = 1;
+      }
+      final vehicleBreakdown = counts.entries
+          .where((e) => e.value > 0)
+          .map((e) => {'type': e.key, 'count': e.value})
+          .toList();
+
+      final callable = FirebaseFunctions.instance.httpsCallable('createManualBookingPaymentLink');
+      final res = await callable.call({
+        'tenantId':        tenantId,
+        'from':            fromText,
+        'to':              toText,
+        'clientName':      _clientNameCtrl.text.trim(),
+        'clientPhone':     _clientPhoneCtrl.text.trim(),
+        'clientEmail':     _clientEmailCtrl.text.trim().isNotEmpty ? _clientEmailCtrl.text.trim() : null,
+        'flightOrShip':    _flightShipCtrl.text.trim().isNotEmpty ? _flightShipCtrl.text.trim() : null,
+        'persons':         _persons,
+        'luggage':         _luggage,
+        'childSeatCount':  _childSeatCount,
+        'vehicleBreakdown': vehicleBreakdown,
+        'date':            dateStr,
+        'time':            timeStr,
+        'price':           price,
+        'depositAmount':   depositAmount,
+        'note': _noteCtrl.text.trim().isNotEmpty ? _noteCtrl.text.trim() : null,
+        'lang': 'el',
+      });
+
+      final data = Map<String, dynamic>.from(res.data as Map);
+      final checkoutUrl = data['checkoutUrl'] as String?;
+      if (checkoutUrl == null || checkoutUrl.isEmpty) {
+        _showError('Δεν επιστράφηκε link — δοκίμασε ξανά');
+        return;
+      }
+      if (mounted) _showPaymentLinkDialog(checkoutUrl);
+    } on FirebaseFunctionsException catch (e) {
+      _showError(e.message ?? 'Σφάλμα δημιουργίας link');
+    } catch (e) {
+      _showError('Σφάλμα: $e');
+    } finally {
+      if (mounted) setState(() => _generatingLink = false);
+    }
+  }
+
+  void _showPaymentLinkDialog(String url) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Link πληρωμής έτοιμο'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Αντίγραψε το link και στείλ\' το στον πελάτη:'),
+            const SizedBox(height: 10),
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: Colors.grey.shade100,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.grey.shade300),
+              ),
+              child: SelectableText(url, style: const TextStyle(fontSize: 13)),
+            ),
+            const SizedBox(height: 6),
+            Text('Το link λήγει σε 48 ώρες αν δεν πληρωθεί.',
+                style: TextStyle(fontSize: 11.5, color: Colors.grey[600])),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Κλείσιμο'),
+          ),
+          FilledButton.icon(
+            icon: const Icon(Icons.copy_rounded),
+            label: const Text('Αντιγραφή'),
+            onPressed: () {
+              Clipboard.setData(ClipboardData(text: url));
+              Navigator.pop(ctx);
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Αντιγράφηκε στο πρόχειρο')),
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
   // ─── Date/Time picker ─────────────────────────────────────────────────────
 
   // ─── Υπενθυμίσεις (λεπτά πριν) ──────────────────────────────────────────
@@ -1448,6 +1603,17 @@ class _JobFormPageState extends State<JobFormPage> {
                   child: CircularProgressIndicator(strokeWidth: 2, color: Colors.black)),
             )
           else ...[
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+              child: IconButton(
+                icon: _generatingLink
+                    ? const SizedBox(width: 20, height: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Icon(Icons.link_rounded),
+                tooltip: 'Δημιουργία link πληρωμής',
+                onPressed: _generatingLink ? null : _generatePaymentLink,
+              ),
+            ),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
               child: AppButtonTonal(
@@ -1632,6 +1798,53 @@ class _JobFormPageState extends State<JobFormPage> {
               onChanged: (v) => setState(() => _fullyPaidManual = v),
             ),
           ),
+
+          // ── Link Πληρωμής (Viva/Stripe) ─────────────────────────────────
+          const SizedBox(height: 20),
+          _section('Link Πληρωμής (προαιρετικό)'),
+          _field(
+            controller: _linkDepositCtrl,
+            label:      'Ποσό προκαταβολής link (€) — κενό = ολόκληρο',
+            icon:       Icons.link_rounded,
+            isNumber:   true,
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Δημιουργεί ένα link πληρωμής Viva/Stripe (ανάλογα με τον πάροχο '
+            'αυτού του λογαριασμού) που αντιγράφεις και στέλνεις στον πελάτη. '
+            'Αν αφήσεις το ποσό κενό, ο πελάτης πληρώνει ΟΛΟΚΛΗΡΗ την τιμή '
+            'μέσω του link.',
+            style: TextStyle(fontSize: 11.5, color: Colors.grey[600]),
+          ),
+          const SizedBox(height: 10),
+          Text('Ποια οχήματα χρειάζεται; (κενό = ό,τι έχεις επιλέξει πάνω)',
+              style: TextStyle(fontSize: 12, color: Colors.grey[600])),
+          const SizedBox(height: 8),
+          Row(children: [
+            Expanded(
+              child: _stepper(
+                label: 'Taxi', icon: Icons.local_taxi_rounded,
+                value: _linkTaxiCount, min: 0, max: 10,
+                onChanged: (v) => setState(() => _linkTaxiCount = v),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: _stepper(
+                label: 'Van', icon: Icons.airport_shuttle_rounded,
+                value: _linkVanCount, min: 0, max: 10,
+                onChanged: (v) => setState(() => _linkVanCount = v),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: _stepper(
+                label: 'Λεωφορείο', icon: Icons.directions_bus_filled_rounded,
+                value: _linkBusCount, min: 0, max: 10,
+                onChanged: (v) => setState(() => _linkBusCount = v),
+              ),
+            ),
+          ]),
 
           // ── Επεξεργάσιμα πεδία προμηθειών ──────────────────────────────
           if (_selectedSource != null) ...[

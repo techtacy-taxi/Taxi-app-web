@@ -2465,6 +2465,15 @@ function athensNaiveDate(realDate) {
   const get = (t) => Number(parts.find((p) => p.type === t).value);
   return new Date(Date.UTC(get("year"), get("month") - 1, get("day"), get("hour"), get("minute"), get("second")));
 }
+// ⚠️ ΚΡΙΣΙΜΟ: το date/time της φόρμας ΠΡΕΠΕΙ να έχει αυστηρή μορφή. Αν έρθει
+// σκουπίδι (π.χ. autofill του browser έβαλε το ΟΝΟΜΑ στο πεδίο ημερομηνίας),
+// τότε: (α) το computeGate επέστρεφε [] και ΠΑΡΑΚΑΜΠΤΟΝΤΑΝ όλοι οι έλεγχοι
+// (blackout/προθεσμία), (β) η τιμή υπολογιζόταν χωρίς ώρα, και (γ) το
+// scheduledAt έπεφτε σιωπηλά σε new Date() → ραντεβού = η ΩΡΑ ΤΗΣ ΚΡΑΤΗΣΗΣ.
+// Πλέον απορρίπτεται ρητά πριν φτάσει πουθενά.
+function isValidDateStr(v) { return /^\d{4}-\d{2}-\d{2}$/.test(s(v)); }
+function isValidTimeStr(v) { return /^\d{1,2}:\d{2}$/.test(s(v)); }
+
 function athensNaiveFromDateTimeStrings(dateStr, timeStr) {
   const [y, m, d] = s(dateStr).split("-").map(Number);
   const [hh, mm] = (s(timeStr) || "00:00").split(":").map(Number);
@@ -3393,6 +3402,7 @@ exports.estimatePrice = onRequest(
         depositPercent: (cfg.depositPercent === null || cfg.depositPercent === undefined)
           ? 10 : Number(cfg.depositPercent),
         fullPaymentEnabled: cfg.fullPaymentEnabled !== false,
+        helpBannerEnabled: cfg.helpBannerEnabled !== false,
         shuttleAvailable: !!result.shuttleAvailable,
         shuttlePricePerPerson: result.shuttlePricePerPerson || null,
         shuttleSlotOptions: result.shuttleSlotOptions || null,
@@ -3464,6 +3474,10 @@ exports.submitPublicBooking = onRequest(
       // Ελάχιστη επικύρωση
       if (!from || !to || !name || !phone || !date || !time) {
         return res.status(400).json({ ok: false, error: "missing_fields" });
+      }
+      // Αυστηρός έλεγχος μορφής ημερομηνίας/ώρας (βλ. isValidDateStr).
+      if (!isValidDateStr(date) || !isValidTimeStr(time)) {
+        return res.status(400).json({ ok: false, error: "invalid_datetime" });
       }
 
       const persons = Math.max(1, parseInt(b.persons, 10) || 1);
@@ -4021,6 +4035,10 @@ async function prepareBookingOrder(req) {
   if (!from || !to || !name || !phone || !date || !time) {
     return { ok: false, status: 400, body: { ok: false, error: "missing_fields" } };
   }
+  // Αυστηρός έλεγχος μορφής ημερομηνίας/ώρας (βλ. isValidDateStr).
+  if (!isValidDateStr(date) || !isValidTimeStr(time)) {
+    return { ok: false, status: 400, body: { ok: false, error: "invalid_datetime" } };
+  }
 
   let tenantCfg = null;
   if (tenantId !== "default") {
@@ -4325,6 +4343,197 @@ exports.createStripeCheckoutSession = onRequest(
   }
 );
 
+// ── createManualBookingPaymentLink: ο master/admin συμπληρώνει μια δουλειά
+// ΧΕΙΡΟΚΙΝΗΤΑ (ίδια φόρμα «Νέα Δουλειά» της εφαρμογής) και παίρνει ΕΝΑ link
+// πληρωμής (Viva ή Stripe, ανάλογα με τον πάροχο του tenant) που δίνει στον
+// πελάτη. ΔΕΝ ξαναϋπολογίζει τιμή από ζώνες/απόσταση — χρησιμοποιεί ΑΚΡΙΒΩΣ
+// την τιμή που έγραψε ο ίδιος. Μόλις πληρωθεί, το ήδη υπάρχον Viva/Stripe
+// webhook ολοκληρώνει τη δουλειά ΑΚΡΙΒΩΣ όπως μια κράτηση από την online
+// φόρμα (ίδιο finalizeSuccessfulPayment) — saved_jobs, email επιβεβαίωσης,
+// απόδειξη, ειδοποίηση FCM στον master.
+// ⚠️ paymentTimeout Viva: 43200" (12 ώρες) — επαλήθευσε το πραγματικό όριο
+// στην τεκμηρίωση της Viva· το pending_bookings doc ούτως ή άλλως καθαρίζεται
+// μετά από 48 ώρες από το cleanupStalePendingBookings.
+exports.createManualBookingPaymentLink = onCall(
+  {
+    region: "us-central1",
+    secrets: [VIVA_CLIENT_ID, VIVA_CLIENT_SECRET, VIVA_DEMO],
+  },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "Απαιτείται σύνδεση.");
+    }
+    const d = request.data || {};
+    const tenantId = s(d.tenantId) || "default";
+    const from = s(d.from), to = s(d.to);
+    const clientName = s(d.clientName), clientPhone = s(d.clientPhone);
+    const date = s(d.date), time = s(d.time);
+    const price = Number(d.price);
+
+    if (!from || !to || !clientName || !clientPhone || !date || !time || !(price > 0)) {
+      throw new HttpsError("invalid-argument",
+        "Λείπουν υποχρεωτικά στοιχεία (Από/Προς/Όνομα/Τηλέφωνο/Ημερομηνία/Ώρα/Τιμή).");
+    }
+
+    const persons = Math.max(1, parseInt(d.persons, 10) || 1);
+    const luggage = Math.max(0, parseInt(d.luggage, 10) || 0);
+    const childSeatCount = Math.max(0, parseInt(d.childSeatCount, 10) || 0);
+    const clientEmail = s(d.clientEmail) || null;
+    const flightOrShip = s(d.flightOrShip) || null;
+    const note = s(d.note) || null;
+    const lang = s(d.lang) || "el";
+
+    // ── Ανάλυση οχημάτων: [{type:'taxi',count:2},{type:'van',count:1}] ──
+    const breakdown = Array.isArray(d.vehicleBreakdown) ? d.vehicleBreakdown : [];
+    const vehicleLabelsEl = { taxi: "Ταξί", van: "Βαν", bus: "Λεωφορείο" };
+    const totalVehicles = breakdown.reduce((sum, v) => sum + (parseInt(v.count, 10) || 0), 0);
+    let vehicleType = "taxi";
+    let vehicleBreakdownNote = null;
+    if (breakdown.length === 1 && (parseInt(breakdown[0].count, 10) || 0) <= 1) {
+      vehicleType = ["taxi", "van", "bus"].includes(breakdown[0].type) ? breakdown[0].type : "taxi";
+    } else if (totalVehicles > 0) {
+      vehicleType = "any";
+      vehicleBreakdownNote = "Χρειάζεται: " + breakdown
+        .filter((v) => (parseInt(v.count, 10) || 0) > 0)
+        .map((v) => (parseInt(v.count, 10) || 0) + " " + (vehicleLabelsEl[v.type] || v.type))
+        .join(" + ");
+    }
+
+    const depositAmountRequested = Number(d.depositAmount) || 0;
+    const fullyPaid = depositAmountRequested <= 0;
+    const chargeAmount = fullyPaid ? Math.ceil(price) : Math.ceil(depositAmountRequested);
+    if (chargeAmount <= 0) {
+      throw new HttpsError("invalid-argument", "Μη έγκυρο ποσό πληρωμής.");
+    }
+    const jobPrice = Math.max(0, price - chargeAmount);
+
+    let tenantCfg = null;
+    if (tenantId !== "default") {
+      const tDoc = await getFirestore().collection("tenants").doc(tenantId).get();
+      if (!tDoc.exists) throw new HttpsError("not-found", "Άγνωστος tenant.");
+      tenantCfg = tDoc.data();
+    }
+
+    const db = getFirestore();
+    await cleanupStalePendingBookings(db);
+    const pendingRef = await db.collection("pending_bookings").add({
+      status: "pending",
+      origin: "manual_admin_link",
+      tenantId,
+      from, to,
+      fromLat: null, fromLng: null, toLat: null, toLng: null,
+      clientName, clientPhone, clientEmail,
+      flightOrShip, persons, luggage, childSeatCount,
+      vehicleType,
+      vehicleBreakdownNote,
+      note,
+      date, time,
+      price: jobPrice,
+      depositAmount: chargeAmount,
+      fullyPaid,
+      routeKm: null, routePolyline: null,
+      wantsInvoice: false,
+      lang,
+      createdBy: request.auth.uid,
+      createdAt: FieldValue.serverTimestamp(),
+    });
+
+    const provider = resolvePaymentProvider(tenantCfg);
+    const dialCode = (clientPhone.match(/^\+\d+/) || [""])[0];
+
+    try {
+      if (provider === "stripe") {
+        const tenantStripe = await getTenantStripeCredentials(tenantId);
+        if (!tenantStripe.secretKey) {
+          await pendingRef.delete().catch(() => {});
+          throw new HttpsError("failed-precondition",
+            "Δεν έχουν ρυθμιστεί στοιχεία Stripe για αυτόν τον tenant.");
+        }
+        const stripe = getStripeClient(tenantStripe.secretKey);
+        const label = (lang === "el" ? "Χειροκίνητη κράτηση · " : "Manual booking · ") + from + " → " + to;
+        const successUrl = "https://taxiathenstransfers.com/" + (lang === "el" ? "el/" : "") + "index.html";
+        const session = await stripe.checkout.sessions.create({
+          mode: "payment",
+          payment_method_types: ["card"],
+          line_items: [{
+            price_data: { currency: "eur", unit_amount: Math.round(chargeAmount * 100), product_data: { name: label } },
+            quantity: 1,
+          }],
+          customer_email: clientEmail || undefined,
+          client_reference_id: pendingRef.id,
+          metadata: { pendingBookingId: pendingRef.id, tenantId },
+          success_url: successUrl,
+          cancel_url: successUrl,
+          expires_at: Math.floor(Date.now() / 1000) + 48 * 3600,
+        });
+        await pendingRef.update({ stripeSessionId: session.id });
+        return { ok: true, checkoutUrl: session.url, depositAmount: chargeAmount };
+      }
+
+      // ── Viva (προεπιλογή) ──
+      let tenantViva = null;
+      if (tenantId !== "default") {
+        tenantViva = await getTenantVivaCredentials(tenantId);
+        if (!tenantViva.clientId || !tenantViva.clientSecret) {
+          await pendingRef.delete().catch(() => {});
+          throw new HttpsError("failed-precondition",
+            "Δεν έχουν ρυθμιστεί στοιχεία Viva για αυτόν τον tenant.");
+        }
+      }
+      const demo = tenantCfg ? tenantCfg.vivaDemo !== false : vivaIsDemo(await readSecret("VIVA_DEMO"));
+      const hosts = vivaHosts(demo);
+      const vClientId = tenantViva ? tenantViva.clientId : await readSecret("VIVA_CLIENT_ID");
+      const vClientSecret = tenantViva ? tenantViva.clientSecret : await readSecret("VIVA_CLIENT_SECRET");
+      const accessToken = await getVivaAccessToken(demo, vClientId, vClientSecret);
+      if (!accessToken) {
+        await pendingRef.delete().catch(() => {});
+        throw new HttpsError("internal", "Αποτυχία σύνδεσης με Viva.");
+      }
+
+      const orderResp = await fetch(hosts.api + "/checkout/v2/orders", {
+        method: "POST",
+        headers: { "Authorization": "Bearer " + accessToken, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          amount: Math.round(chargeAmount * 100),
+          customerTrns: (lang === "el" ? "Χειροκίνητη κράτηση · " : "Manual booking · ")
+            + from + " → " + to + " · " + date + " " + time,
+          customer: {
+            email: clientEmail || undefined,
+            fullName: clientName,
+            phone: clientPhone,
+            countryCode: dialCode === "+30" ? "GR" : undefined,
+            requestLang: lang === "el" ? "el-GR" : "en-GB",
+          },
+          paymentTimeout: 43200, // 12 ώρες — βλ. σχόλιο πάνω από τη function
+          merchantTrns: pendingRef.id,
+          sourceCode: tenantCfg
+            ? (lang === "el" ? (tenantCfg.vivaSourceCode || "Default") : (tenantCfg.vivaSourceCodeEn || tenantCfg.vivaSourceCode || "Default"))
+            : "1325",
+        }),
+      });
+      if (!orderResp.ok) {
+        console.error("createManualBookingPaymentLink Viva order error:", orderResp.status, await orderResp.text());
+        await pendingRef.delete().catch(() => {});
+        throw new HttpsError("internal", "Σφάλμα δημιουργίας παραγγελίας Viva.");
+      }
+      const orderData = await orderResp.json();
+      const orderCode = orderData.orderCode;
+      if (!orderCode) {
+        await pendingRef.delete().catch(() => {});
+        throw new HttpsError("internal", "Δεν επιστράφηκε κωδικός παραγγελίας από τη Viva.");
+      }
+      await pendingRef.update({ vivaOrderCode: String(orderCode) });
+      const checkoutUrl = hosts.web + "/web/checkout?ref=" + orderCode;
+      return { ok: true, checkoutUrl, depositAmount: chargeAmount };
+    } catch (e) {
+      if (e instanceof HttpsError) throw e;
+      console.error("createManualBookingPaymentLink error:", e);
+      await pendingRef.delete().catch(() => {});
+      throw new HttpsError("internal", "Σφάλμα διακομιστή.");
+    }
+  }
+);
+
 async function finalizeSuccessfulPayment(db, pendingRef, pd, providerMeta) {
   const masterUid = await findMasterUid(pd.tenantId);
   if (!masterUid) {
@@ -4337,9 +4546,23 @@ async function finalizeSuccessfulPayment(db, pendingRef, pd, providerMeta) {
   // ⚠️ BUGFIX (ίδιο με submitPublicBooking): ώρα Αθήνας → πραγματικό UTC,
   // αλλιώς το ραντεβού σωζόταν +3 ώρες μπροστά (11:00 → 14:00).
   const schedNaive = athensNaiveFromDateTimeStrings(pd.date, pd.time);
+  // ⚠️ BUGFIX: ΠΟΤΕ σιωπηλό fallback σε new Date() — έβαζε ως «ραντεβού» την ώρα
+  // που ολοκληρώθηκε η πληρωμή (π.χ. 11:44 αντί 18:00). Αν φτάσουμε εδώ με
+  // χαλασμένο date/time, το γράφουμε ΕΜΦΑΝΩΣ στη σημείωση για να το δει ο admin.
+  const badSchedule = !schedNaive;
   const startDate = schedNaive ? athensNaiveToRealDate(schedNaive) : new Date();
+  if (badSchedule) {
+    console.error("finalizeSuccessfulPayment: ΑΚΥΡΟ date/time στην κράτηση", {
+      date: pd.date, time: pd.time, tenantId: pd.tenantId,
+    });
+  }
 
   const noteLines = [];
+  if (badSchedule) {
+    noteLines.push("\u26a0\ufe0f ΠΡΟΣΟΧΗ: η φόρμα δεν έστειλε έγκυρη ημερομηνία/ώρα (" +
+                   String(pd.date) + " " + String(pd.time) +
+                   "). Το ραντεβού ΔΕΝ είναι σωστό — επιβεβαίωσε με τον πελάτη.");
+  }
   noteLines.push(pd.fullyPaid
     ? "📝 Από φόρμα ιστοσελίδας · ⚠️ ΠΡΟΠΛΗΡΩΜΕΝΟ ΔΡΟΜΟΛΟΓΙΟ — δεν εισπράττεις τίποτα από τον πελάτη"
     : "📝 Από φόρμα ιστοσελίδας · 💳 Πληρώθηκε προκαταβολή online — εισπράττεις μόνο το υπόλοιπο");
@@ -4348,7 +4571,9 @@ async function finalizeSuccessfulPayment(db, pendingRef, pd, providerMeta) {
   if (pd.flightOrShip) noteLines.push("Πτήση/Πλοίο: " + pd.flightOrShip);
   noteLines.push("Άτομα: " + pd.persons + " · Βαλίτσες: " + pd.luggage +
                  (pd.childSeatCount ? " · Παιδικά καθ.: " + pd.childSeatCount : ""));
-  noteLines.push("Όχημα: " + (pd.vehicleType === "van" ? "Βαν" : "Ταξί"));
+  const vehicleLabelsEl2 = { taxi: "Ταξί", van: "Βαν", bus: "Λεωφορείο", shuttle: "Shuttle", any: "Οποιοδήποτε" };
+  noteLines.push("Όχημα: " + (vehicleLabelsEl2[pd.vehicleType] || "Ταξί"));
+  if (pd.vehicleBreakdownNote) noteLines.push(pd.vehicleBreakdownNote);
   if (pd.note) noteLines.push("Σχόλια: " + pd.note);
   const fullNote = noteLines.join("\n");
 
@@ -6826,11 +7051,25 @@ exports.getTenantBusinessInfo = onRequest(
     try {
       const tenantId = s(req.method === "POST" ? (req.body || {}).tenantId : req.query.tenantId) || "default";
       const db = getFirestore();
+      // ── Ποσοστό προκαταβολής / διαθεσιμότητα πλήρους πληρωμής — ίδια πηγή
+      // (app_settings/pricing ή tenant_pricing_settings/{tenantId}) που ήδη
+      // χρησιμοποιεί το estimatePrice. Δημόσια στοιχεία (τα βλέπει ο πελάτης
+      // ούτως ή άλλως στη φόρμα κράτησης), ασφαλές να εκτεθούν εδώ.
+      let depositPercent = 10, fullPaymentEnabled = true, helpBannerEnabled = true;
+      try {
+        const { cfg } = await getPricingData(tenantId);
+        depositPercent = (cfg.depositPercent === null || cfg.depositPercent === undefined)
+          ? 10 : Number(cfg.depositPercent);
+        fullPaymentEnabled = cfg.fullPaymentEnabled !== false;
+        helpBannerEnabled = cfg.helpBannerEnabled !== false;
+      } catch (e) { /* μη κρίσιμο — δείχνουμε τις προεπιλογές 10% / true / true */ }
+
       const doc = await db.collection("tenants").doc(tenantId).get();
       if (!doc.exists) {
         return res.status(200).json({ ok: true, businessName: null, contactPhone: null,
           contactEmail: null, whatsappNumber: null, logoUrl: null, mapsApiKey: null,
           qrLinkUrl: null,
+          depositPercent, fullPaymentEnabled, helpBannerEnabled,
           mapEnabled: true, placesEnabled: true,
           afm: null, doy: null, taxAddress: null, kad: null,
           invoiceProvider: "none", hasInvoiceApiKey: false,
@@ -6849,6 +7088,9 @@ exports.getTenantBusinessInfo = onRequest(
         logoUrl:        t.logoUrl        || null,
         mapsApiKey:     t.mapsApiKey     || null,
         qrLinkUrl:      t.qrLinkUrl      || null,
+        depositPercent,
+        fullPaymentEnabled,
+        helpBannerEnabled,
         // ── Διακόπτες master — απενεργοποιούν χάρτη/Places ανά φόρμα.
         // ΠΡΟΕΠΙΛΟΓΗ true (ενεργά) αν δεν έχουν οριστεί ρητά ποτέ.
         mapEnabled:     t.mapEnabled     !== false,

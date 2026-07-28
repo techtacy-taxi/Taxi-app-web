@@ -1428,6 +1428,10 @@ class _PricingConfigTabState extends State<_PricingConfigTab> {
   // μόνο η προκαταβολή (εκτός αν κι αυτή είναι 0%, οπότε δεν μένει καμία
   // πληρωμή και η κράτηση γίνεται κατευθείαν).
   bool _fullPaymentEnabled = true;
+  // ── Πλαίσιο βοήθειας κάτω από το κουμπί πληρωμής στη δημόσια φόρμα —
+  // "Χρειάζεστε βοήθεια με την κράτησή σας; Επικοινωνήστε μαζί μας μέσω
+  // WhatsApp ή email". Προεπιλογή ενεργό· κάθε tenant το ελέγχει μόνος του.
+  bool _helpBannerEnabled = true;
   // ── Λειτουργία «Μόνο πελάτες» — ΔΙΚΟΣ ΤΟΥ διακόπτης του tenant (ΟΧΙ ο
   // παλιός Google Places του master). Αν ενεργός, τα «Από»/«Προς» γίνονται
   // dropdown ΑΠΟΚΛΕΙΣΤΙΚΑ με πελάτες — καμία ελεύθερη πληκτρολόγηση, καμία
@@ -1510,6 +1514,7 @@ class _PricingConfigTabState extends State<_PricingConfigTab> {
           final busSeats = (data['busMaxSeats'] as num?)?.toInt() ?? 20;
           _busMaxSeatsCtrl.text = '$busSeats';
           _fullPaymentEnabled = data['fullPaymentEnabled'] != false;
+          _helpBannerEnabled = data['helpBannerEnabled'] != false;
           _clientsOnlyBooking = data['clientsOnlyBooking'] == true;
           _clientsCatalogMode = data['clientsCatalogMode'] == true;
 
@@ -1683,6 +1688,19 @@ class _PricingConfigTabState extends State<_PricingConfigTab> {
                     style: TextStyle(fontSize: 11)),
                 value: _fullPaymentEnabled,
                 onChanged: (v) => setState(() => _fullPaymentEnabled = v),
+              ),
+              const SizedBox(height: 10),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Πλαίσιο βοήθειας στη δημόσια φόρμα',
+                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                subtitle: const Text(
+                    'Εμφανίζει ένα πλαίσιο κάτω από το κουμπί πληρωμής: «Χρειάζεστε '
+                    'βοήθεια με την κράτησή σας ή είναι πολύπλοκη και όχι μια απλή '
+                    'μεταφορά; Επικοινωνήστε μαζί μας» με κουμπιά WhatsApp/Email.',
+                    style: TextStyle(fontSize: 11)),
+                value: _helpBannerEnabled,
+                onChanged: (v) => setState(() => _helpBannerEnabled = v),
               ),
               const SizedBox(height: 16),
               TextField(
@@ -1975,6 +1993,7 @@ class _PricingConfigTabState extends State<_PricingConfigTab> {
       'dynamicDiscountPercent': (double.tryParse(_dynamicDiscountCtrl.text.replaceAll(',', '.')) ?? 8)
           .clamp(0, 90),
       'fullPaymentEnabled': _fullPaymentEnabled,
+      'helpBannerEnabled': _helpBannerEnabled,
       'busMaxSeats': int.tryParse(_busMaxSeatsCtrl.text.trim()) ?? 20,
       'clientsOnlyBooking': _clientsOnlyBooking,
       'clientsCatalogMode': _clientsCatalogMode,

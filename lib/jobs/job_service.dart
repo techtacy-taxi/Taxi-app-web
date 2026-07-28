@@ -400,11 +400,16 @@ class JobService {
     for (final j in expired) {
       try {
         Job? deletedJob;
+        String? jobTenantId;
         await _fs.runTransaction((tx) async {
           final ref  = _fs.collection(_jobs).doc(j.id);
           final snap = await tx.get(ref);
           if (!snap.exists) return;
           final fresh = Job.fromDoc(snap);
+          // Ο tenant ΤΗΣ ΔΟΥΛΕΙΑΣ (το Job model δεν τον κουβαλάει) — τον
+          // διαβάζουμε απευθείας από το doc ώστε το draft που θα γραφτεί στις
+          // «Αποθηκευμένες» να μείνει στον σωστό tenant.
+          jobTenantId = (snap.data() as Map<String, dynamic>?)?['tenantId'] as String?;
           // Επαναβεβαίωση μέσα στο transaction (μπορεί κάποιος να την πήρε)
           if (!fresh.isUnclaimedExpired) return;
           // Αν είναι ακόμη 'open', σεβάσου το stopped (ο admin τη σταμάτησε
@@ -420,6 +425,7 @@ class JobService {
             ownerUid:     deletedJob!.createdBy,
             ownerName:    deletedJob!.createdByName,
             autoReturned: true,
+            tenantId:     jobTenantId,
           );
           moved++;
         }
