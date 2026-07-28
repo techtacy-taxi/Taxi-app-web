@@ -130,6 +130,7 @@ class _JobFormPageState extends State<JobFormPage> {
   int   _linkTaxiCount = 0;
   int   _linkVanCount  = 0;
   int   _linkBusCount  = 0;
+  String _linkLang = 'el';
   bool  _generatingLink = false;
 
   // ─── Σημεία Google (Από / Προς) ───────────────────────────────────────────
@@ -1381,7 +1382,7 @@ class _JobFormPageState extends State<JobFormPage> {
         'price':           price,
         'depositAmount':   depositAmount,
         'note': _noteCtrl.text.trim().isNotEmpty ? _noteCtrl.text.trim() : null,
-        'lang': 'el',
+        'lang': _linkLang,
       });
 
       final data = Map<String, dynamic>.from(res.data as Map);
@@ -1815,6 +1816,24 @@ class _JobFormPageState extends State<JobFormPage> {
             'Αν αφήσεις το ποσό κενό, ο πελάτης πληρώνει ΟΛΟΚΛΗΡΗ την τιμή '
             'μέσω του link.',
             style: TextStyle(fontSize: 11.5, color: Colors.grey[600]),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Text('Γλώσσα link/email: ', style: TextStyle(fontSize: 12, color: Colors.grey[600])),
+              const SizedBox(width: 8),
+              ChoiceChip(
+                label: const Text('EL'),
+                selected: _linkLang == 'el',
+                onSelected: (_) => setState(() => _linkLang = 'el'),
+              ),
+              const SizedBox(width: 6),
+              ChoiceChip(
+                label: const Text('EN'),
+                selected: _linkLang == 'en',
+                onSelected: (_) => setState(() => _linkLang = 'en'),
+              ),
+            ],
           ),
           const SizedBox(height: 10),
           Text('Ποια οχήματα χρειάζεται; (κενό = ό,τι έχεις επιλέξει πάνω)',
