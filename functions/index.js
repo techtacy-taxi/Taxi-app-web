@@ -4450,7 +4450,10 @@ exports.createManualBookingPaymentLink = onCall(
             "Δεν έχουν ρυθμιστεί στοιχεία Stripe για αυτόν τον tenant.");
         }
         const stripe = getStripeClient(tenantStripe.secretKey);
-        const label = (lang === "el" ? "Χειροκίνητη κράτηση · " : "Manual booking · ") + from + " → " + to;
+        const label = (lang === "el" ? "Χειροκίνητη κράτηση · " : "Manual booking · ")
+          + clientName + " · " + from + " → " + to + " · " + date + " " + time
+          + (vehicleBreakdownNote ? " · " + vehicleBreakdownNote
+                                  : " · " + (vehicleLabelsEl[vehicleType] || vehicleType));
         const successUrl = "https://taxiathenstransfers.com/" + (lang === "el" ? "el/" : "") + "index.html";
         const session = await stripe.checkout.sessions.create({
           mode: "payment",
@@ -4496,7 +4499,9 @@ exports.createManualBookingPaymentLink = onCall(
         body: JSON.stringify({
           amount: Math.round(chargeAmount * 100),
           customerTrns: (lang === "el" ? "Χειροκίνητη κράτηση · " : "Manual booking · ")
-            + from + " → " + to + " · " + date + " " + time,
+            + clientName + " · " + from + " → " + to + " · " + date + " " + time
+            + (vehicleBreakdownNote ? " · " + vehicleBreakdownNote
+                                    : " · " + (vehicleLabelsEl[vehicleType] || vehicleType)),
           customer: {
             email: clientEmail || undefined,
             fullName: clientName,
