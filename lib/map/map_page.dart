@@ -340,6 +340,11 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
+      // ⚠️ ΚΡΙΣΙΜΟ: αν ο χρήστης άνοιξε την εφαρμογή πατώντας την ειδοποίηση
+      // «νέα κράτηση από φόρμα», η native ειδοποίηση με FLAG_INSISTENT μπορεί
+      // να συνεχίζει να χτυπάει/δονείται. Εφόσον κοιτάει την οθόνη, σταματάμε
+      // τα πάντα εδώ — χωρίς αυτό έπρεπε να κλείσει τελείως την εφαρμογή.
+      try { PublicBookingAlerts.instance.onAppResumed(); } catch (_) {}
       _setOnline(true);
       Geolocator.getCurrentPosition(
           locationSettings: const LocationSettings(accuracy: LocationAccuracy.best))

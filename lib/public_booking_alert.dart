@@ -23,6 +23,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'notifications_service.dart';
 
 class PublicBookingAlerts {
@@ -36,6 +37,34 @@ class PublicBookingAlerts {
   bool _dialogOpen = false;
   int _pendingCount = 0;
   void Function(void Function())? _setStateInDialog;
+  Timer? _dialogRetryTimer;
+
+  /// Διαβάζει τα savedJobId που ειδοποιήθηκαν ΗΔΗ από το background isolate
+  /// και τα βάζει στα _seenIds, ώστε ο foreground listener να μην ξαναχτυπήσει
+  /// για την ίδια κράτηση μόλις ανοίξει η εφαρμογή από την ειδοποίηση.
+  Future<void> _absorbBackgroundNotified() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.reload();   // γράφτηκαν σε ΑΛΛΟ isolate — χωρίς reload δεν φαίνονται
+      final list = prefs.getStringList(kBgNotifiedBookings) ?? const <String>[];
+      _seenIds.addAll(list);
+      await prefs.setStringList(kBgNotifiedBookings, const <String>[]);
+    } catch (_) {}
+  }
+
+  /// Σταματά ΤΩΡΑ κάθε ήχο/δόνηση/ειδοποίηση κράτησης, χωρίς να κλείσει τυχόν
+  /// ανοιχτό dialog. Καλείται όταν η εφαρμογή έρχεται στο προσκήνιο: αν ο
+  /// χρήστης κοιτάει την οθόνη, δεν υπάρχει λόγος να συνεχίζει να χτυπάει.
+  Future<void> silenceNow() async {
+    try { await stopRingtoneLoop(); } catch (_) {}
+    try { await cancelPublicBookingNotifications(); } catch (_) {}
+  }
+
+  /// Καλείται από το map_page στο AppLifecycleState.resumed.
+  Future<void> onAppResumed() async {
+    await silenceNow();
+    await _absorbBackgroundNotified();
+  }
 
   /// Ξεκινά listeners. Ασφαλές να κληθεί πολλές φορές.
   Future<void> start() async {
@@ -45,6 +74,10 @@ class PublicBookingAlerts {
     // μπορεί να έχει μείνει «κολλημένη» από background handler, ώστε να μην
     // χρειάζεται ποτέ να σκοτώσει κανείς την εφαρμογή για να σταματήσει.
     cancelPublicBookingNotifications();
+    stopRingtoneLoop();
+    // ⚠️ ΚΡΙΣΙΜΟ: πρέπει να γίνει ΠΡΙΝ στηθεί ο listener, αλλιώς το πρώτο
+    // snapshot προλαβαίνει και ξαναχτυπάει για κράτηση που μόλις ειδοποιήθηκε.
+    await _absorbBackgroundNotified();
 
     // 1) Firestore listener — ο αξιόπιστος τρόπος για foreground.
     if (_fsSub == null) {
@@ -93,6 +126,7 @@ class PublicBookingAlerts {
   }
 
   void dispose() {
+    _dialogRetryTimer?.cancel(); _dialogRetryTimer = null;
     _fsSub?.cancel(); _fsSub = null;
     _fcmSub?.cancel(); _fcmSub = null;
     _primed = false;
@@ -101,10 +135,16 @@ class PublicBookingAlerts {
 
   void _onSnapshot(QuerySnapshot<Map<String, dynamic>> snap) {
     // Πρώτο snapshot: «γέμισε» τις υπάρχουσες χωρίς popup.
+    //
+    // ⚠️ ΚΡΙΣΙΜΟ: το ΠΡΩΤΟ snapshot έρχεται συχνά από την τοπική cache και
+    // είναι ΑΔΕΙΟ (cold start). Αν κάναμε priming πάνω σε αυτό, το επόμενο
+    // —πραγματικό— snapshot από τον server έβλεπε ΟΛΑ τα docs σαν 'added' και
+    // ξαναχτυπούσε. Κάνουμε priming ΜΟΝΟ σε snapshot από τον server.
     if (!_primed) {
       for (final d in snap.docs) {
         _seenIds.add(d.id);
       }
+      if (snap.metadata.isFromCache) return;   // περίμενε το server snapshot
       _primed = true;
       return;
     }
@@ -151,7 +191,22 @@ class PublicBookingAlerts {
   Future<void> _showDialog() async {
     final nav = NotificationsService.navigatorKey.currentState;
     final ctx = nav?.overlay?.context;
-    if (ctx == null) return;
+
+    // ⚠️ ΚΡΙΣΙΜΟ BUGFIX: πριν εδώ υπήρχε σκέτο `if (ctx == null) return;`.
+    // Σε cold start (άνοιγμα από την ειδοποίηση) ο navigator δεν είναι ακόμα
+    // έτοιμος, οπότε ο ήχος είχε ΗΔΗ ξεκινήσει, dialog δεν άνοιγε ποτέ, και
+    // δεν υπήρχε κανένα «ΟΚ» να πατηθεί → έπρεπε να κλείσεις την εφαρμογή.
+    // Τώρα: σταματάμε τον ήχο και ξαναπροσπαθούμε όταν στηθεί το UI.
+    if (ctx == null) {
+      await silenceNow();
+      _dialogRetryTimer?.cancel();
+      _dialogRetryTimer = Timer(const Duration(milliseconds: 700), () {
+        if (!_dialogOpen && _pendingCount > 0) _showDialog();
+      });
+      return;
+    }
+    _dialogRetryTimer?.cancel();
+    _dialogRetryTimer = null;
 
     _dialogOpen = true;
     await showDialog<void>(

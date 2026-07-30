@@ -119,6 +119,22 @@ class ReminderSpec {
 // Cross-isolate flag (background isolate → main isolate)
 const String kStopRingtoneFlag  = 'stop_ringtone_flag_v1';
 
+/// Κλειδί SharedPreferences: τα savedJobId για τα οποία ο BACKGROUND isolate
+/// έχει ήδη εμφανίσει ειδοποίηση «νέα κράτηση από φόρμα».
+///
+/// ⚠️ ΓΙΑΤΙ ΥΠΑΡΧΕΙ: όταν ο χρήστης πατάει την ειδοποίηση με κλειστή εφαρμογή,
+/// το app κάνει cold start και ο Firestore listener του PublicBookingAlerts
+/// βλέπει την ΙΔΙΑ κράτηση σαν «νέα» → ξαναχτυπούσε μέσα στην εφαρμογή. Το
+/// foreground διαβάζει αυτή τη λίστα στο start() και τα βάζει στα _seenIds.
+const String kBgNotifiedBookings = 'public_booking_bg_notified_v1';
+
+/// Ίδιο notification id σε background & foreground για την ίδια κράτηση, ώστε
+/// ένα cancel να τα σβήνει και τα δύο. ΠΡΙΝ: το background χρησιμοποιούσε
+/// ('booking'.hashCode ^ savedJobId.hashCode) και το foreground άλλο id — το
+/// ένα από τα δύο έμενε ζωντανό και ο FLAG_INSISTENT ήχος συνέχιζε.
+int publicBookingNotifId(String savedJobId) =>
+    (savedJobId.hashCode.abs() & 0x7FFFFFFF) ^ 0x70B11C;
+
 // Auto-stop ringtone μετά από 60s για ασφάλεια
 const Duration kMaxRingDuration = Duration(seconds: 60);
 
@@ -719,7 +735,7 @@ Future<void> showPublicBookingNotification({
   );
   try {
     await _localNotifs.show(
-      (savedJobId.hashCode.abs() & 0x7FFFFFFF) ^ 0x70B11C,
+      publicBookingNotifId(savedJobId),
       '🌐 Νέα κράτηση από φόρμα',
       (from.isNotEmpty || to.isNotEmpty) ? '$from → $to' : 'Νέα αποθηκευμένη δουλειά',
       NotificationDetails(android: androidDetails),
