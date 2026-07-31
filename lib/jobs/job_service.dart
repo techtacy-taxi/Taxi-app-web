@@ -409,7 +409,7 @@ class JobService {
           // Ο tenant ΤΗΣ ΔΟΥΛΕΙΑΣ (το Job model δεν τον κουβαλάει) — τον
           // διαβάζουμε απευθείας από το doc ώστε το draft που θα γραφτεί στις
           // «Αποθηκευμένες» να μείνει στον σωστό tenant.
-          jobTenantId = (snap.data())?['tenantId'] as String?;
+          jobTenantId = (snap.data() as Map<String, dynamic>?)?['tenantId'] as String?;
           // Επαναβεβαίωση μέσα στο transaction (μπορεί κάποιος να την πήρε)
           if (!fresh.isUnclaimedExpired) return;
           // Αν είναι ακόμη 'open', σεβάσου το stopped (ο admin τη σταμάτησε

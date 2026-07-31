@@ -22,7 +22,6 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 import 'firebase_options.dart';
 import 'notifications_service.dart';
@@ -30,19 +29,6 @@ import 'notifications_service.dart';
 // FLAG_INSISTENT (0x4): επαναλαμβάνει ήχο/δόνηση μέχρι ο χρήστης να
 // αλληλεπιδράσει — η native εκδοχή του "συνεχόμενου κουδουνιού".
 final Int32List _kInsistent = Int32List.fromList(<int>[4]);
-
-Future<void> _rememberBgNotifiedBooking(String savedJobId) async {
-  if (savedJobId.isEmpty) return;
-  try {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.reload();
-    final list = prefs.getStringList(kBgNotifiedBookings) ?? <String>[];
-    if (!list.contains(savedJobId)) list.add(savedJobId);
-    // Κράτα μικρή ουρά — δεν μας ενδιαφέρουν παλιές.
-    final trimmed = list.length > 30 ? list.sublist(list.length - 30) : list;
-    await prefs.setStringList(kBgNotifiedBookings, trimmed);
-  } catch (_) {}
-}
 
 /// Πληθώρα μηχανισμών μπορεί να καλέσει αυτόν τον handler. Πρέπει να είναι
 /// top-level ή static + @pragma('vm:entry-point') ώστε να βρεθεί από το
@@ -419,11 +405,8 @@ Future<void> _showPublicBookingBg(
     ],
   );
 
-  // Σημάδεψε ότι το background ήδη ειδοποίησε γι' αυτή την κράτηση, ώστε ο
-  // foreground listener να μην ξαναχτυπήσει μόλις ανοίξει η εφαρμογή.
-  await _rememberBgNotifiedBooking(savedJobId);
-
-  final notifId = publicBookingNotifId(savedJobId);
+  final notifId =
+      (('booking'.hashCode ^ savedJobId.hashCode).abs()) & 0x7FFFFFFF;
   await fln.show(
     notifId,
     title,
