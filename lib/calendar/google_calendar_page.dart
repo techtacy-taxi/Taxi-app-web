@@ -466,11 +466,22 @@ class _GoogleCalendarPageState extends State<GoogleCalendarPage> {
               ],
               const SizedBox(height: 10),
               if (converted)
-                Text('Έχει μετατραπεί σε δουλειά ✓',
-                    style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                        color: const Color(0xFF3B6D11)))
+                // Κουμπί (ίδιο στυλ με «Μετατροπή σε δουλειά») που δηλώνει
+                // ότι έγινε ήδη — με πάτημα μπορείς να τη βγάλεις ξανά.
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.icon(
+                    onPressed: () => _openConvertForm(e),
+                    icon: const Icon(Icons.check_circle_rounded, size: 17),
+                    label: const Text('Έχει μετατραπεί σε δουλειά'),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: const Color(0xFF97C459),
+                      foregroundColor: const Color(0xFF23400A),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(24)),
+                    ),
+                  ),
+                )
               else if (looksTransfer)
                 SizedBox(
                   width: double.infinity,

@@ -577,6 +577,8 @@ class _GlobalSettingsPageState extends State<GlobalSettingsPage> {
           final docs = snap.data?.docs ?? [];
           final sorted = [...docs]..sort((a, b) {
               int rank(Map<String, dynamic> d) {
+                // Εκκρεμείς εγκρίσεις πάντα πρώτες
+                if (d['master'] != true && d['isApproved'] != true) return -1;
                 if (d['master'] == true) return 0;
                 if (d['admin']  == true) return 1;
                 return 2;
@@ -734,6 +736,18 @@ class AdminCard extends StatelessWidget {
         .set({field: value}, SetOptions(merge: true));
   }
 
+  Future<void> _approve(BuildContext context, bool value) async {
+    await FirebaseFirestore.instance
+        .collection('presence')
+        .doc(docId)
+        .set({'isApproved': value}, SetOptions(merge: true));
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(value ? 'Ο χρήστης εγκρίθηκε' : 'Η έγκριση αφαιρέθηκε'),
+      duration: const Duration(seconds: 2),
+    ));
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
@@ -749,6 +763,9 @@ class AdminCard extends StatelessWidget {
 
     final webEnabled      = data['webEnabled']      == true;
     final calendarEnabled = data['calendarEnabled'] == true;
+    final hiddenFromMap   = data['hiddenFromMap']   == true;
+    final isApproved      = data['isApproved']      == true;
+    final isPending       = !isMaster && !isApproved;
     final icsEnabled      = data['icsExportEnabled'] == true;
     final tenantOwner     = data['tenantOwner']      == true;
 
@@ -767,9 +784,34 @@ class AdminCard extends StatelessWidget {
       decoration: BoxDecoration(
         color:        c.card,
         borderRadius: BorderRadius.circular(14),
+        border: isPending
+            ? Border.all(color: c.amberDeep, width: 1.6)
+            : null,
       ),
       padding: const EdgeInsets.all(11),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        if (isPending) ...[
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
+            decoration: BoxDecoration(
+              color:        c.amberSoft,
+              borderRadius: BorderRadius.circular(9),
+            ),
+            child: Row(children: [
+              Icon(Icons.hourglass_top_rounded, size: 15, color: c.amberDeep),
+              const SizedBox(width: 7),
+              Expanded(
+                child: Text('Εκκρεμεί έγκριση',
+                    style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: c.amberDeep)),
+              ),
+            ]),
+          ),
+          const SizedBox(height: 9),
+        ],
         Row(children: [
           Container(
             width: 32, height: 32,
@@ -851,6 +893,51 @@ class AdminCard extends StatelessWidget {
                 ),
             ]),
           ),
+
+        if (isPending) ...[
+          const SizedBox(height: 8),
+          if ((data['referredBy'] as String? ?? '').isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 4, left: 41),
+              child: Row(children: [
+                Icon(Icons.handshake_rounded, size: 13, color: c.textFaint),
+                const SizedBox(width: 5),
+                Expanded(
+                  child: Text('Πρόταση: ${data['referredBy']}',
+                      style: TextStyle(fontSize: 11.5, color: c.textFaint)),
+                ),
+              ]),
+            ),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              onPressed: () => _approve(context, true),
+              icon: const Icon(Icons.check_circle_rounded, size: 18),
+              label: const Text('Έγκριση χρήστη'),
+              style: FilledButton.styleFrom(
+                backgroundColor: c.amberDeep,
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12)),
+              ),
+            ),
+          ),
+        ],
+
+        if (!isMaster && !isPending) ...[
+          const SizedBox(height: 6),
+          Row(children: [
+            Icon(Icons.visibility_off_rounded, size: 15, color: c.textFaint),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text('Απόκρυψη από τον χάρτη',
+                  style: TextStyle(fontSize: 12.5, color: c.textMain)),
+            ),
+            Switch(
+              value: hiddenFromMap,
+              onChanged: (v) => _toggleField('hiddenFromMap', v),
+            ),
+          ]),
+        ],
 
         if (isAdmin || isMaster) ...[
           const SizedBox(height: 9),

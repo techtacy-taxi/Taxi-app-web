@@ -119,6 +119,14 @@ class ReminderSpec {
 // Cross-isolate flag (background isolate → main isolate)
 const String kStopRingtoneFlag  = 'stop_ringtone_flag_v1';
 
+/// Κλειδί SharedPreferences: τα savedJobId για τα οποία ο BACKGROUND isolate
+/// έχει ήδη εμφανίσει ειδοποίηση «νέα κράτηση από φόρμα».
+const String kBgNotifiedBookings = 'public_booking_bg_notified_v1';
+
+/// Κοινό notification id (foreground & background) για την ίδια κράτηση.
+int publicBookingNotifId(String savedJobId) =>
+    (savedJobId.hashCode.abs() & 0x7FFFFFFF) ^ 0x70B11C;
+
 // Auto-stop ringtone μετά από 60s για ασφάλεια
 const Duration kMaxRingDuration = Duration(seconds: 60);
 
@@ -719,7 +727,7 @@ Future<void> showPublicBookingNotification({
   );
   try {
     await _localNotifs.show(
-      (savedJobId.hashCode.abs() & 0x7FFFFFFF) ^ 0x70B11C,
+      publicBookingNotifId(savedJobId),
       '🌐 Νέα κράτηση από φόρμα',
       (from.isNotEmpty || to.isNotEmpty) ? '$from → $to' : 'Νέα αποθηκευμένη δουλειά',
       NotificationDetails(android: androidDetails),

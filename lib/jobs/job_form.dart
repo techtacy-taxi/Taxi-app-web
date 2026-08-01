@@ -1135,6 +1135,12 @@ class _JobFormPageState extends State<JobFormPage> {
       exclusiveTarget:  _exclusiveTarget,
       sourceId:         _selectedSource?.id,
       sourceName:       _selectedSource?.name,
+      // Προέλευση: διατηρείται αν υπάρχει ήδη (επεξεργασία / αποθηκευμένη
+      // από online φόρμα), αλλιώς 'calendar' όταν ήρθε από Google Calendar,
+      // αλλιώς 'manual' (νέα δημιουργία από τη φόρμα).
+      origin:           widget.editJob?.origin
+                        ?? widget.editSavedJob?.origin
+                        ?? (widget.calendarEventId != null ? 'calendar' : 'manual'),
       scheduledAt:      _isScheduled ? _scheduledAt : null,
       reminderOffsets:  _sortedOffsets(),
       createdAt:        DateTime.now(),
@@ -1290,7 +1296,10 @@ class _JobFormPageState extends State<JobFormPage> {
       }
 
       if (mounted) {
-        Navigator.of(context).removeRoute(ModalRoute.of(context)!);
+        // ΣΗΜΑΝΤΙΚΟ: επιστρέφουμε true ώστε ο καλών (π.χ. σελίδα Google
+        // Calendar) να μαρκάρει το event ως «μετατράπηκε σε δουλειά».
+        // Το removeRoute ΔΕΝ επέστρεφε τιμή → το σήμα χανόταν.
+        Navigator.of(context).pop(true);
       }
     } catch (e) {
       if (mounted) {

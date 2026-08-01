@@ -45,6 +45,9 @@ class Job {
   final String?    note;
   final String?    sourceId;
   final String?    sourceName;
+  /// Προέλευση δουλειάς: 'public_form' (online φόρμα) | 'calendar'
+  /// (μετατροπή από Google Calendar) | 'manual' (νέα δημιουργία στη φόρμα).
+  final String?    origin;
   final DateTime?  scheduledAt;
   /// Λεπτά ΠΡΙΝ το ραντεβού για ειδοποιήσεις. 10 & 30 είναι πάντα κλειδωμένα·
   /// ο χρήστης μπορεί να προσθέσει κι άλλα (π.χ. 90). Ταξινομημένα φθίνουσα.
@@ -123,6 +126,7 @@ class Job {
     this.note,
     this.sourceId,
     this.sourceName,
+    this.origin,
     this.scheduledAt,
     this.reminderOffsets = const [30, 10],
     required this.createdAt,
@@ -227,6 +231,7 @@ class Job {
       note:             d['note'],
       sourceId:         d['sourceId'],
       sourceName:       d['sourceName'],
+      origin:           d['origin'] as String?,
       scheduledAt:      (d['scheduledAt'] as Timestamp?)?.toDate(),
       reminderOffsets:  _parseOffsets(d['reminderOffsets']),
       createdAt:        (d['createdAt']   as Timestamp?)?.toDate() ?? DateTime.now(),
@@ -308,6 +313,7 @@ class Job {
     if (note        != null) 'note':        note,
     if (sourceId    != null) 'sourceId':    sourceId,
     if (sourceName  != null) 'sourceName':  sourceName,
+    if (origin      != null) 'origin':      origin,
     if (scheduledAt != null) 'scheduledAt': Timestamp.fromDate(scheduledAt!),
     'reminderOffsets': reminderOffsets,
     'createdAt':        FieldValue.serverTimestamp(),
@@ -351,6 +357,7 @@ class Job {
     childSeatPrice: childSeatPrice, vehicleType: vehicleType, status: status,
     createdBy: createdBy, createdByName: createdByName, takenBy: takenBy,
     takenByName: takenByName, note: note, sourceId: sourceId, sourceName: sourceName,
+    origin: origin,
     scheduledAt: scheduledAt, reminderOffsets: reminderOffsets,
     createdAt: createdAt, takenAt: takenAt,
     doneAt: doneAt, cancelledAt: cancelledAt, groupId: groupId,

@@ -876,11 +876,37 @@ class _JobsCalendarPageState extends State<JobsCalendarPage> {
                                 ? e.savedJob?.ownerName
                                 : job.createdByName) ??
                             '';
+                        // Προέλευση δουλειάς — ρητή ετικέτα:
+                        //  public_form → «Από: Online φόρμα»
+                        //  calendar    → «Από: Ημερολόγιο Google»
+                        //  manual      → «Νέα δημιουργία»
+                        final origin = (e.kind == _EntryKind.saved
+                                ? e.savedJob?.origin
+                                : job.origin) ??
+                            '';
+                        String originLabel;
+                        switch (origin) {
+                          case 'public_form':
+                            originLabel = 'Από: Online φόρμα';
+                            break;
+                          case 'calendar':
+                            originLabel = 'Από: Ημερολόγιο Google';
+                            break;
+                          case 'manual':
+                            originLabel = 'Νέα δημιουργία';
+                            break;
+                          default:
+                            // Παλιές δουλειές χωρίς πεδίο origin
+                            originLabel = creatorName.isNotEmpty
+                                ? 'Από: $creatorName'
+                                : 'Από: Online φόρμα';
+                        }
+                        if (origin.isNotEmpty && creatorName.isNotEmpty) {
+                          originLabel = '$originLabel · $creatorName';
+                        }
                         return Text(
                           [
-                            creatorName.isNotEmpty
-                                ? 'Από: $creatorName'
-                                : 'Από: Online φόρμα',
+                            originLabel,
                             if (job.takenByName != null &&
                                 job.takenByName!.isNotEmpty)
                               'Οδηγός: ${job.takenByName}',

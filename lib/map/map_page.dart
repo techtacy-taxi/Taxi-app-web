@@ -582,6 +582,12 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
     for (final entry in _presenceCache.entries) {
       final id   = entry.key;
       final data = entry.value;
+
+      // Ο οδηγός/admin έχει κρύψει τον εαυτό του από τον χάρτη →
+      // τον βλέπει μόνο ο master.
+      final hiddenFromMap = data['hiddenFromMap'] == true;
+      if (hiddenFromMap && !_isMaster) { continue; }
+
       final lat  = (data['lat'] as num?)?.toDouble();
       final lng  = (data['lng'] as num?)?.toDouble();
       if (lat == null || lng == null) { continue; }
