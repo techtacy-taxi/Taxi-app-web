@@ -58,6 +58,20 @@ async function sendDataOnly(tokens, data, opts = {}) {
     const batch = db.batch();
     snap.docs.forEach((d) => batch.update(d.ref, { fcmToken: null }));
     await batch.commit();
+
+    // ...και από τη λίστα πολλαπλών συσκευών (fcmTokens)
+    try {
+      const { FieldValue: FV } = require("firebase-admin/firestore");
+      for (const t of deadTokens.slice(0, 30)) {
+        const s2 = await db.collection("presence")
+          .where("fcmTokens", "array-contains", t).get();
+        const b2 = db.batch();
+        s2.docs.forEach((d) => b2.update(d.ref, { fcmTokens: FV.arrayRemove(t) }));
+        if (!s2.empty) await b2.commit();
+      }
+    } catch (e) {
+      console.warn("fcmTokens cleanup failed:", e.message);
+    }
   }
 }
 
@@ -249,7 +263,17 @@ async function getTokensForUid(uid) {
   const db = getFirestore();
   const doc = await db.collection("presence").doc(String(uid)).get();
   const d = doc.exists ? doc.data() : null;
-  return d && d.fcmToken ? [d.fcmToken] : [];
+  if (!d) return [];
+  // ⚠️ BUGFIX: πριν διαβάζαμε ΜΟΝΟ το μοναδικό πεδίο `fcmToken`. Αν ο ίδιος
+  // χρήστης συνδεόταν από 2η συσκευή, το παλιό token αντικαθίστατο σιωπηλά
+  // και η πρώτη συσκευή δεν έπαιρνε ΠΟΤΕ ξανά ειδοποίηση. Πλέον κρατάμε
+  // λίστα `fcmTokens` (array) και το παλιό πεδίο ως fallback/συμβατότητα.
+  const set = new Set();
+  if (Array.isArray(d.fcmTokens)) {
+    for (const t of d.fcmTokens) if (t) set.add(String(t));
+  }
+  if (d.fcmToken) set.add(String(d.fcmToken));
+  return Array.from(set);
 }
 
 // ─── Helper: token(s) όλων των masters ──────────────────────────────────────
@@ -1001,14 +1025,34 @@ async function findMasterUid(tenantId) {
     if (!anyMaster.empty) return anyMaster.docs[0].id;
   }
 
-  // Fallback: ο tenant δεν έχει master (νέο μοντέλο multi-tenant — ο
-  // πελάτης είναι admin + tenantOwner, όχι master) — ειδοποιούμε τον
-  // πρώτο admin που βρεθεί σε αυτόν τον tenant.
-  const adminSnap = await db.collection("presence")
-    .where("admin", "==", true)
+  // ⚠️ ΚΡΙΣΙΜΟ BUGFIX: ο tenant δεν έχει master (νέο μοντέλο multi-tenant — ο
+  // πελάτης είναι admin + tenantOwner, ΟΧΙ master). Πριν εδώ παίρναμε τον
+  // «πρώτο admin που θα βρεθεί» (limit(1), ΧΩΡΙΣ κανένα κριτήριο). Σε tenant
+  // με πάνω από έναν admin, το ownerUid της κράτησης —και μαζί το FCM— πήγαινε
+  // σε ΤΥΧΑΙΟ admin: η δουλειά εμφανιζόταν στα «Αποθηκευμένα» εκείνου, ενώ ο
+  // πραγματικός ιδιοκτήτης της φόρμας ΔΕΝ έπαιρνε ποτέ ειδοποίηση.
+  //
+  // ΚΑΝΟΝΑΣ: η κράτηση ανήκει ΑΠΟΚΛΕΙΣΤΙΚΑ στον ιδιοκτήτη της online φόρμας —
+  // δηλαδή στον tenantOwner αυτού του tenant. ΚΑΝΕΝΑΣ άλλος admin δεν
+  // ειδοποιείται και κανένας δεν βλέπει τις αποθηκευμένες αλλουνού.
+  const ownerSnap = await db.collection("presence")
+    .where("tenantOwner", "==", true)
     .where("tenantId", "==", tid)
     .limit(1).get();
-  return adminSnap.empty ? null : adminSnap.docs[0].id;
+  if (!ownerSnap.empty) return ownerSnap.docs[0].id;
+
+  // Δεν υπάρχει ούτε master ούτε tenantOwner για αυτόν τον tenant (λάθος
+  // ρύθμιση). ΔΕΝ δίνουμε την κράτηση σε τυχαίο admin — αλλά ούτε την
+  // πετάμε: πάει στον super-admin (master του "default") για να τη δει και
+  // να διορθώσει τη ρύθμιση του tenant.
+  console.error("findMasterUid: ο tenant ΔΕΝ έχει master/tenantOwner — " +
+                "η κράτηση πάει στον super-admin", { tenantId: tid });
+  if (tid !== "default") {
+    const superMaster = await db.collection("presence")
+      .where("master", "==", true).limit(1).get();
+    if (!superMaster.empty) return superMaster.docs[0].id;
+  }
+  return null;
 }
 
 // ─── Μήνας/έτος ΣΕ ΩΡΑ ΕΛΛΑΔΑΣ για ένα Date ─────────────────────────────────
@@ -3599,6 +3643,8 @@ exports.submitPublicBooking = onRequest(
       // public_booking_alert.dart (ownerUid==myUid φίλτρο, βλ. εκεί).
       const whenStr = date + " " + time;
       try {
+        // Παραλήπτης = Ο ΙΔΙΟΚΤΗΤΗΣ ΤΗΣ ΦΟΡΜΑΣ αυτού του tenant (masterUid, βλ.
+        // findMasterUid: master → tenantOwner → admin) σε ΟΛΕΣ τις συσκευές του.
         const tokens = await getTokensForUid(masterUid);
         await sendDataOnly(tokens, {
           type:       "public_booking",          // ← το owner_alerts το ξεχωρίζει
@@ -4632,6 +4678,8 @@ async function finalizeSuccessfulPayment(db, pendingRef, pd, providerMeta) {
   const whenStr = pd.date + " " + pd.time;
 
   try {
+    // Ίδια λογική με submitPublicBooking: ο ιδιοκτήτης της φόρμας αυτού του
+    // tenant, σε ΟΛΕΣ τις συσκευές του.
     const tokens = await getTokensForUid(masterUid);
     await sendDataOnly(tokens, {
       type:       "public_booking",

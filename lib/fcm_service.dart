@@ -565,6 +565,11 @@ class FcmService {
           .doc(uid)
           .update({
             'fcmToken': token,
+            // ⚠️ Λίστα πολλαπλών συσκευών: το μοναδικό `fcmToken` έσβηνε το
+            // token της προηγούμενης συσκευής όταν ο ίδιος χρήστης συνδεόταν
+            // από 2η (π.χ. κινητό + tablet) και εκείνη σταματούσε να παίρνει
+            // ειδοποιήσεις. Το `fcmToken` μένει για συμβατότητα.
+            'fcmTokens': FieldValue.arrayUnion([token]),
             'fcmUpdatedAt': FieldValue.serverTimestamp(),
           });
       debugPrint('FCM token saved for $uid');
@@ -576,10 +581,17 @@ class FcmService {
   /// Καλείται στο logout — καθαρίζει το token ώστε να μη λαμβάνει άλλο.
   static Future<void> clearToken(String uid) async {
     try {
+      // Αφαίρεσε ΚΑΙ από τη λίστα πολλαπλών συσκευών — αλλιώς ο server θα
+      // συνέχιζε να στέλνει σε token αποσυνδεδεμένης συσκευής.
+      String? current;
+      try { current = await _fm.getToken(); } catch (_) {}
       await FirebaseFirestore.instance
           .collection('presence')
           .doc(uid)
-          .set({'fcmToken': null}, SetOptions(merge: true));
+          .set({
+            'fcmToken': null,
+            if (current != null) 'fcmTokens': FieldValue.arrayRemove([current]),
+          }, SetOptions(merge: true));
       await _fm.deleteToken();
     } catch (_) {}
   }

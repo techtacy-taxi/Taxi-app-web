@@ -35,6 +35,7 @@ import '../masters/global_settings_page.dart';
 import 'auth_gateway_web.dart';
 import 'ics_upload_web.dart';
 import 'map_web_page.dart';
+import 'web_booking_alerts.dart';
 import 'web_settings_page.dart';
 
 const double _kDesktopBreakpoint = 900;
@@ -63,6 +64,14 @@ class _AdminShellState extends State<AdminShell> {
   @override
   void initState() {
     super.initState();
+    // Ειδοποιήσεις «νέα κράτηση από φόρμα» και στο WEB panel (ήχος + popup).
+    // Ο listener φιλτράρει ownerUid == myUid, άρα ο καθένας ακούει ΜΟΝΟ τις
+    // κρατήσεις της ΔΙΚΗΣ ΤΟΥ online φόρμας.
+    if (_session.isMaster || _session.isAdmin || _session.isTenantOwner) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) WebBookingAlerts.instance.start(context);
+      });
+    }
     // ── Ζωντανή παρακολούθηση του δικού μας presence — ΑΚΑΡΙΑΙΑ αντίδραση
     // αν ο master αλλάξει δικαιώματα ΕΝΩ είμαστε ήδη μέσα στο web panel: το
     // μενού ανανεώνεται αμέσως (νέες ενότητες εμφανίζονται/εξαφανίζονται),
@@ -117,6 +126,7 @@ class _AdminShellState extends State<AdminShell> {
   }
 
   Future<void> _forceSignOut() async {
+    WebBookingAlerts.instance.dispose();
     await FirebaseAuth.instance.signOut();
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
@@ -243,6 +253,7 @@ class _AdminShellState extends State<AdminShell> {
   @override
   void dispose() {
     _presenceSub?.cancel();
+    WebBookingAlerts.instance.dispose();
     super.dispose();
   }
 
