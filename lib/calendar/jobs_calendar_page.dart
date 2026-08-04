@@ -71,6 +71,34 @@ class JobsCalendarPage extends StatefulWidget {
 }
 
 class _JobsCalendarPageState extends State<JobsCalendarPage> {
+
+  // ── Κελί ημέρας: ΟΛΟ το κουτί επιλέγεται, όχι μόνο ο αριθμός ─────────────
+  // Πριν το selected/today ήταν κύκλος γύρω από τον αριθμό και οι κουκκίδες
+  // έμεναν απ' έξω. Τώρα το φόντο γεμίζει το κελί (radius 12), οπότε μπαίνουν
+  // ΜΕΣΑ και η ημερομηνία και οι τελίτσες. Όλα τα χρώματα είναι theme-aware
+  // (amberSoft / amber / amberDeep) → δουλεύει σε ανοιχτό και σκούρο.
+  static Widget _dayCellBox(AppColors c, DateTime day,
+      {required bool selected}) {
+    return Container(
+      margin: const EdgeInsets.all(2),
+      decoration: BoxDecoration(
+        color: c.amberSoft,
+        borderRadius: BorderRadius.circular(12),
+        border: selected ? Border.all(color: c.amber, width: 1.6) : null,
+      ),
+      alignment: Alignment.topCenter,
+      padding: const EdgeInsets.only(top: 6),
+      child: Text(
+        '${day.day}',
+        style: TextStyle(
+          fontSize: 14,
+          fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
+          color: c.amberDeep,
+        ),
+      ),
+    );
+  }
+
   DateTime _focusedMonth = DateTime.now();
   DateTime _selectedDay  = DateTime.now();
 
@@ -578,21 +606,12 @@ class _JobsCalendarPageState extends State<JobsCalendarPage> {
           outsideDaysVisible: false,
           defaultTextStyle:   TextStyle(fontSize: 14, color: c.textMain),
           weekendTextStyle:   const TextStyle(fontSize: 14, color: Color(0xFF993C1D)),
-          todayDecoration: BoxDecoration(
-            color:  c.amberSoft,
-            shape:  BoxShape.circle,
-          ),
-          todayTextStyle: TextStyle(
-              color: c.isDark ? c.amberDeep : const Color(0xFF633806),
-              fontWeight: FontWeight.w600),
-          selectedDecoration: BoxDecoration(
-            color: c.textMain,
-            shape: BoxShape.circle,
-          ),
-          selectedTextStyle: TextStyle(
-              color: c.scaffold, fontWeight: FontWeight.w600),
         ),
         calendarBuilders: CalendarBuilders<_CalEntry>(
+          selectedBuilder: (ctx, day, _) =>
+              _dayCellBox(c, day, selected: true),
+          todayBuilder: (ctx, day, _) =>
+              _dayCellBox(c, day, selected: false),
           // Έως 12 κουκκίδες σε ΤΡΕΙΣ σειρές (4+4+4) — «+Ν» αν υπάρχουν κι
           // άλλες. Οι κουκκίδες ΜΕΓΑΛΩΣΑΝ (8→9px) όπως ζητήθηκε, δεν
           // μικρύνθηκαν. Χωρητικότητα: πλάτος 46 / (9 + 2 κενό) ≈ 4 ανά

@@ -253,6 +253,20 @@ class CalendarEventParser {
       final pr = _parsePrice(line);
       if (pr != null && price == null && _looksLikePrice(line)) {
         price = pr;
+        // ⚠️ BUGFIX: πριν κάναμε σκέτο `continue` και η γραμμή χανόταν.
+        // Οι τυπικές γραμμές είναι «Airport - Lavrio port =100», δηλαδή
+        // ΚΑΙ τιμή ΚΑΙ από/προς στην ίδια γραμμή — το από/προς δεν έφτανε
+        // ποτέ στον κανόνα 6 και έμενε κενό.
+        final rest = _stripPrice(line);
+        if (rest.isNotEmpty) {
+          final dash = _splitDash(rest);
+          if (dash != null && from == null && to == null) {
+            from = dash.$1;
+            to   = dash.$2;
+          } else {
+            leftovers.add(rest);
+          }
+        }
         continue;
       }
 
@@ -544,8 +558,8 @@ class CalendarEventParser {
     // Πρώτη παύλα με κείμενο εκατέρωθεν. Δέχεται "-", "–", "—".
     final m = RegExp(r'^(.*?\S)\s*[-–—]\s*(\S.*)$').firstMatch(line.trim());
     if (m == null) return null;
-    var a = m.group(1)!.trim();
-    var b = m.group(2)!.trim();
+    var a = _stripPrice(m.group(1)!).trim();
+    var b = _stripPrice(m.group(2)!).trim();
     if (a.isEmpty || b.isEmpty) return null;
 
     // Όριο «από»: έως 3 λέξεις πριν την παύλα, και ΟΧΙ σκέτος αριθμός
@@ -568,6 +582,25 @@ class CalendarEventParser {
   }
 
   /// true αν η γραμμή έχει σαφή ένδειξη τιμής (€, EUR, ευρώ).
+  /// Αφαιρεί το κομμάτι τιμής από μια γραμμή: «=100», «= 53,50», «100€»,
+  /// «100 EUR», «100 ευρώ». Έτσι το «Airport - Lavrio port =100» δίνει
+  /// καθαρό προορισμό «Lavrio port» αντί για «Lavrio port =100».
+  static String _stripPrice(String line) {
+    return line
+        .replaceAll(RegExp(r'=\s*\d{1,3}(?:[.,]\d{1,2})?'), '')
+        .replaceAll(
+            RegExp(r'\d+(?:[.,]\d{1,2})?\s*(?:€|eur\b|ευρώ|ευρω)',
+                caseSensitive: false),
+            '')
+        .replaceAll(
+            RegExp(r'(?:€|eur\b)\s*\d+(?:[.,]\d{1,2})?',
+                caseSensitive: false),
+            '')
+        .replaceAll('€', '')
+        .replaceAll(RegExp(r'\s{2,}'), ' ')
+        .trim();
+  }
+
   static bool _looksLikePrice(String line) {
     final t = line.toLowerCase();
     return t.contains('€') || t.contains('eur') || t.contains('ευρώ') ||

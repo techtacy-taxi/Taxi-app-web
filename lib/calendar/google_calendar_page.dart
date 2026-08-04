@@ -498,14 +498,12 @@ class _GoogleCalendarPageState extends State<GoogleCalendarPage> {
                   outsideDaysVisible: false,
                   defaultTextStyle:   TextStyle(fontSize: 14, color: c.textMain),
                   weekendTextStyle:   const TextStyle(fontSize: 14, color: Color(0xFF993C1D)),
-                  todayDecoration: BoxDecoration(color: c.amberSoft, shape: BoxShape.circle),
-                  todayTextStyle: TextStyle(
-                      color: c.isDark ? c.amberDeep : const Color(0xFF633806),
-                      fontWeight: FontWeight.w600),
-                  selectedDecoration: BoxDecoration(color: c.textMain, shape: BoxShape.circle),
-                  selectedTextStyle: TextStyle(color: c.scaffold, fontWeight: FontWeight.w600),
                 ),
                 calendarBuilders: CalendarBuilders<CalendarEvent>(
+                  selectedBuilder: (ctx, day, _) =>
+                      _dayCellBox(c, day, selected: true),
+                  todayBuilder: (ctx, day, _) =>
+                      _dayCellBox(c, day, selected: false),
                   // Έως 8 κουκκίδες σε ΔΥΟ σειρές (4+4), μεγαλύτερες (8px)·
                   // «+Ν» αν υπάρχουν κι άλλες.
                   markerBuilder: (context, day, events) {
@@ -522,12 +520,18 @@ class _GoogleCalendarPageState extends State<GoogleCalendarPage> {
                           children: [
                             ...shown.map((e) {
                               final converted = _convertedCache[e.id] ?? false;
+                              final col = _eventColor(e, c);
+                              // Το ΧΡΩΜΑ δηλώνει πλέον το ημερολόγιο Google.
+                              // Το «έγινε δουλειά» το δείχνει το ΣΧΗΜΑ:
+                              // γεμάτη κουκκίδα = εκκρεμεί, δαχτυλίδι
+                              // (κούφια) = έχει ήδη μετατραπεί.
                               return Container(
                                 width: 8, height: 8,
                                 decoration: BoxDecoration(
-                                  color: converted
-                                      ? const Color(0xFF97C459)
-                                      : c.amber,
+                                  color: converted ? Colors.transparent : col,
+                                  border: converted
+                                      ? Border.all(color: col, width: 2)
+                                      : null,
                                   shape: BoxShape.circle,
                                 ),
                               );
@@ -679,6 +683,55 @@ class _GoogleCalendarPageState extends State<GoogleCalendarPage> {
     });
   }
 
+  // ── Χρώμα event = το χρώμα του Google Calendar ────────────────────────────
+  // Η επίσημη παλέτα «event colors» του Google (colorId 1–11). Αν το event
+  // δεν έχει δικό του colorId, κληρονομεί το χρώμα του ημερολογίου — εκεί
+  // πέφτουμε στο amber της εφαρμογής.
+  static const Map<String, Color> _googleEventColors = {
+    '1':  Color(0xFF7986CB), // Lavender
+    '2':  Color(0xFF33B679), // Sage
+    '3':  Color(0xFF8E24AA), // Grape
+    '4':  Color(0xFFE67C73), // Flamingo
+    '5':  Color(0xFFF6BF26), // Banana
+    '6':  Color(0xFFF4511E), // Tangerine
+    '7':  Color(0xFF039BE5), // Peacock
+    '8':  Color(0xFF616161), // Graphite
+    '9':  Color(0xFF3F51B5), // Blueberry
+    '10': Color(0xFF0B8043), // Basil
+    '11': Color(0xFFD50000), // Tomato
+  };
+
+  Color _eventColor(CalendarEvent e, AppColors c) =>
+      _googleEventColors[e.colorId ?? ''] ?? c.amber;
+
+
+  // ── Κελί ημέρας: ΟΛΟ το κουτί επιλέγεται, όχι μόνο ο αριθμός ─────────────
+  // Πριν το selected/today ήταν κύκλος γύρω από τον αριθμό και οι κουκκίδες
+  // έμεναν απ' έξω. Τώρα το φόντο γεμίζει το κελί (radius 12), οπότε μπαίνουν
+  // ΜΕΣΑ και η ημερομηνία και οι τελίτσες. Όλα τα χρώματα είναι theme-aware
+  // (amberSoft / amber / amberDeep) → δουλεύει σε ανοιχτό και σκούρο.
+  static Widget _dayCellBox(AppColors c, DateTime day,
+      {required bool selected}) {
+    return Container(
+      margin: const EdgeInsets.all(2),
+      decoration: BoxDecoration(
+        color: c.amberSoft,
+        borderRadius: BorderRadius.circular(12),
+        border: selected ? Border.all(color: c.amber, width: 1.6) : null,
+      ),
+      alignment: Alignment.topCenter,
+      padding: const EdgeInsets.only(top: 6),
+      child: Text(
+        '${day.day}',
+        style: TextStyle(
+          fontSize: 14,
+          fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
+          color: c.amberDeep,
+        ),
+      ),
+    );
+  }
+
   List<CalendarEvent> _currentDayEvents() {
     final key = DateTime(_selectedDay.year, _selectedDay.month, _selectedDay.day);
     return _monthEvents.where((e) => e.dayKey == key).toList();
@@ -733,6 +786,15 @@ class _GoogleCalendarPageState extends State<GoogleCalendarPage> {
                     ),
                     const SizedBox(width: 10),
                   ],
+                // Λωρίδα με το χρώμα του ημερολογίου Google.
+                Container(
+                  width: 4, height: 22,
+                  margin: const EdgeInsets.only(right: 8),
+                  decoration: BoxDecoration(
+                    color: _eventColor(e, c),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
                 Container(
                   padding: const EdgeInsets.symmetric(
                       horizontal: 10, vertical: 3),
