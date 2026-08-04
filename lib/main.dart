@@ -195,13 +195,22 @@ class _LocationTaskHandler extends TaskHandler {
       final name    = prefs.getString(kPrefsNameKey)    ?? 'Driver';
       final vehicle = prefs.getString(kPrefsVehicleKey) ?? 'taxi';
 
+      // Η φόρμα στοιχείων δεν έχει αποθηκευτεί ακόμη → μη δημιουργείς
+      // presence doc. Αλλιώς ο μισοτελειωμένος χρήστης εμφανιζόταν στις
+      // Καθολικές Ρυθμίσεις χωρίς όνομα.
+      if (name == 'Driver') return;
+
       await FirebaseFirestore.instance
           .collection('presence')
           .doc(user.uid)
           .set({
         'lat':         pos.latitude,
         'lng':         pos.longitude,
-        'displayName': name,
+        // ⚠️ ΠΟΤΕ το placeholder 'Driver' στο Firestore: ο νέος οδηγός
+        // εμφανιζόταν στις Καθολικές Ρυθμίσεις σαν «Driver» και η ειδοποίηση
+        // έγκρισης «καιγόταν» με ψεύτικο όνομα πριν προλάβει να συμπληρώσει
+        // τη φόρμα. Γράφουμε όνομα μόνο όταν είναι πραγματικό.
+        if (name != 'Driver') 'displayName': name,
         'vehicleType': vehicle,
         'online':      true,
         'available':   available,

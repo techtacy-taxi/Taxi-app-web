@@ -262,6 +262,7 @@ Future<void> _showApprovalBg(
     FlutterLocalNotificationsPlugin fln, Map<String, dynamic> d,
     bool muted) async {
   final name    = (d['pendingName'] ?? '').toString();
+  final email   = (d['email'] ?? '').toString();
   final phone   = (d['phone'] ?? '').toString();
   final vModel  = (d['vehicleModel'] ?? '').toString();
   final plate   = (d['plateNumber'] ?? '').toString();
@@ -273,8 +274,10 @@ Future<void> _showApprovalBg(
     if (vModel.isNotEmpty || plate.isNotEmpty || vLabel.isNotEmpty)
       '🚗 ${[vLabel, vModel, plate].where((s) => s.isNotEmpty).join(' • ')}',
   ];
-  final body = name.isNotEmpty
-      ? '$name περιμένει έγκριση'
+  // Αν λείπει το όνομα, δείξε τουλάχιστον το email — να ξέρεις ποιος είναι.
+  final who = name.isNotEmpty ? name : (email.isNotEmpty ? email : '');
+  final body = who.isNotEmpty
+      ? '$who περιμένει έγκριση'
       : 'Νέος οδηγός περιμένει έγκριση';
   final big = ([body, ...lines]).join('\n');
 

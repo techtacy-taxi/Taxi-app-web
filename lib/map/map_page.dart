@@ -210,7 +210,12 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
     try { _startGroupsListener(); } catch (_) {}
     try { await _startRealtimePresence(); } catch (_) {}
     try { await _refreshVehicleIcon(); } catch (_) {}
-    try { await _setOnline(true); } catch (_) {}
+    // Ίδιος κανόνας με το _publishMyLocation: κανένα write στο presence πριν
+    // ολοκληρωθεί η φόρμα στοιχείων (το _setOnline δημιουργούσε online/
+    // available σε doc «φάντασμα»).
+    if (_formComplete || _isAdmin || _isMaster) {
+      try { await _setOnline(true); } catch (_) {}
+    }
     try { _startLocationUpdates(); } catch (_) {}
     try { _startVoiceListener(); } catch (_) {}
     if ((_isAdmin || _isMaster) && _uid != null) {
@@ -223,8 +228,15 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
       try { PublicBookingAlerts.instance.start(); } catch (_) {}
     }
     _lastPublishedPosition = null;
-    try { _publishMyLocation(force: true); } catch (_) {}
-    try { _startPeriodicLocationPublish(); } catch (_) {}
+    // ⚠️ ΔΕΝ δημιουργούμε presence doc πριν ο χρήστης πατήσει «Αποθήκευση»
+    // στη φόρμα στοιχείων. Πριν, το doc γραφόταν ήδη εδώ (στο login) με
+    // θέση/όχημα αλλά ΧΩΡΙΣ όνομα — και ο νέος οδηγός εμφανιζόταν στις
+    // Καθολικές Ρυθμίσεις ως «(χωρίς όνομα)» ακόμη κι αν εγκατέλειπε τη
+    // φόρμα και δεν ολοκλήρωνε ποτέ την εγγραφή.
+    if (_formComplete || _isAdmin || _isMaster) {
+      try { _publishMyLocation(force: true); } catch (_) {}
+      try { _startPeriodicLocationPublish(); } catch (_) {}
+    }
 
     if (mounted) setState(() => _initComplete = true);
 
@@ -409,6 +421,10 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
 
   Future<void> _publishMyLocation({bool force = false}) async {
     if (_uid == null) return;
+    // Δεύτερη γραμμή άμυνας: όσο η φόρμα στοιχείων δεν έχει αποθηκευτεί,
+    // δεν γράφουμε ΤΙΠΟΤΑ στο presence. (Οι admin/master εξαιρούνται — δεν
+    // έχουν απαραίτητα όχημα/πινακίδα συμπληρωμένα.)
+    if (!_formComplete && !_isAdmin && !_isMaster) return;
     Position? pos = _currentPosition;
     if (pos == null) {
       pos = await Geolocator.getCurrentPosition(
@@ -642,6 +658,7 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
     _isOnline = value;
     await _refreshVehicleIcon();
     if (_uid == null) return;
+    if (!_formComplete && !_isAdmin && !_isMaster) return;
     await FirebaseFirestore.instance.collection('presence').doc(_uid).update({
       'online': value, 'available': value ? _isAvailable : false,
       'updatedAt': FieldValue.serverTimestamp(),
@@ -845,6 +862,21 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
         if (homeOwner) 'available': false, // Home Owner: πάντα «Μη Διαθέσιμος», δεν έχει όχημα
       }, SetOptions(merge: true));
     }
+    // ⚠️ ΜΕΤΑ την πρώτη αποθήκευση (τώρα μόλις δημιουργήθηκε το presence doc):
+    //  • Ξαναγράφουμε το FCM token. Το _saveToken χρησιμοποιεί update() και
+    //    στο ξεκίνημα είχε αποτύχει αθόρυβα επειδή το doc δεν υπήρχε ακόμη —
+    //    ο νέος οδηγός δεν θα έπαιρνε ΚΑΜΙΑ ειδοποίηση δουλειάς μέχρι να
+    //    κλείσει και να ξανανοίξει την εφαρμογή.
+    //  • Ξεκινάμε το περιοδικό publish θέσης, που στο initState είχε
+    //    παραλειφθεί όσο η φόρμα ήταν ασυμπλήρωτη.
+    if (_uid != null) {
+      // ignore: unawaited_futures
+      Future(() => FcmService.initForUser(_uid!)).catchError((_) {});
+    }
+    if (!homeOwner) {
+      try { _startPeriodicLocationPublish(); } catch (_) {}
+    }
+
     if (!mounted) return;
     setState(() { _isApproved = currentApproval; _dialogShown = true; _isHomeOwner = homeOwner; });
   }

@@ -283,12 +283,15 @@ async function getMasterTokens() {
     .collection("presence")
     .where("master", "==", true)
     .get();
-  const tokens = [];
+  // Πολλαπλές συσκευές: διάβασε ΚΑΙ τη λίστα fcmTokens, όχι μόνο το παλιό
+  // μοναδικό πεδίο fcmToken.
+  const set = new Set();
   for (const doc of snap.docs) {
     const d = doc.data();
-    if (d.fcmToken) tokens.push(d.fcmToken);
+    if (Array.isArray(d.fcmTokens)) for (const t of d.fcmTokens) if (t) set.add(String(t));
+    if (d.fcmToken) set.add(String(d.fcmToken));
   }
-  return tokens;
+  return Array.from(set);
 }
 
 // ─── Νέα δουλειά ─────────────────────────────────────────────────────────────
@@ -563,68 +566,87 @@ exports.onJobExpired = onDocumentUpdated("jobs/{jobId}", async (event) => {
 });
 
 // ─── Νέος χρήστης προς έγκριση: ειδοποίηση στους masters ────────────────────
-// Χτυπάει όταν δημιουργείται presence doc με isApproved == false.
+//
+// ⚠️ ΠΡΟΗΓΟΥΜΕΝΟ BUG: οι δύο triggers (create/update) είχαν εύθραυστη «πύλη»
+// τύπου «πριν ΔΕΝ είχε στοιχεία, τώρα έχει». Η ροή εγγραφής όμως γράφει το
+// presence doc ΠΟΛΛΕΣ φορές:
+//   1) στο login το _publishMyLocation δημιουργεί το doc ΧΩΡΙΣ όνομα
+//   2) το background isolate έγραφε displayName:"Driver" (placeholder)
+//   3) τέλος ο οδηγός αποθηκεύει τη φόρμα με τα πραγματικά στοιχεία
+// Αν η ειδοποίηση «καιγόταν» στο βήμα 2 (με όνομα «Driver»), το βήμα 3 —
+// που έχει τα ΑΛΗΘΙΝΑ στοιχεία — θεωρούσε ότι «είχε ήδη στοιχεία» και
+// ΔΕΝ έστελνε τίποτα. Αποτέλεσμα: καμία ειδοποίηση, ή ειδοποίηση χωρίς όνομα.
+//
+// ΝΕΑ ΛΟΓΙΚΗ: μία κοινή συνάρτηση, που στέλνει ΜΟΝΟ όταν υπάρχουν ΑΛΗΘΙΝΑ
+// στοιχεία (πραγματικό όνομα ή τηλέφωνο — το placeholder "Driver" αγνοείται)
+// και το κλείδωμα γίνεται με transaction σε πεδίο `approvalNotifiedAt`, ώστε
+// να σταλεί ΑΚΡΙΒΩΣ μία φορά ανεξάρτητα από το πόσα writes θα γίνουν.
+async function maybeNotifyPendingApproval(uid, d) {
+  if (!d) return;
+  if (d.isApproved === true || d.master === true) return;
+
+  const name = `${d.displayName || ""} ${d.lastName || ""}`.trim();
+  const realName = name && name.toLowerCase() !== "driver";
+  if (!realName && !d.phone) return;   // ακόμη δεν έχει συμπληρώσει τη φόρμα
+  if (d.approvalNotifiedAt) return;    // γρήγορος έλεγχος πριν το transaction
+
+  // Ατομικό κλείδωμα: αν δύο triggers τρέξουν ταυτόχρονα (create + update),
+  // μόνο ο ένας θα περάσει και θα στείλει.
+  const db = getFirestore();
+  const ref = db.collection("presence").doc(String(uid));
+  const won = await db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists) return false;
+    const cur = snap.data() || {};
+    if (cur.isApproved === true) return false;
+    if (cur.approvalNotifiedAt) return false;
+    tx.update(ref, { approvalNotifiedAt: FieldValue.serverTimestamp() });
+    return true;
+  }).catch((e) => {
+    console.error("maybeNotifyPendingApproval transaction failed:", e.message);
+    return false;
+  });
+  if (!won) return;
+
+  const tokens = await getMasterTokens();
+  if (!tokens.length) {
+    console.warn("maybeNotifyPendingApproval: κανένα token master!");
+    return;
+  }
+
+  await sendDataOnly(tokens, {
+    type:         "approval",
+    title:        "👤 Νέο αίτημα έγκρισης",
+    pendingName:  String(realName ? name : ""),
+    phone:        String(d.phone || ""),
+    email:        String(d.email || ""),
+    vehicleModel: String(d.vehicleModel || ""),
+    plateNumber:  String(d.plateNumber || ""),
+    vehicleType:  String(d.vehicleType || ""),
+    referredBy:   String(d.referredBy || ""),
+    click_action: "FLUTTER_NOTIFICATION_CLICK",
+    // ⚠️ ΜΕΓΑΛΟ TTL (6 ώρες). Η προεπιλογή του sendDataOnly είναι 60s — φτιαγμένη
+    // για δουλειές προς οδηγούς, που είναι άχρηστες αν αργήσουν. Το αίτημα
+    // έγκρισης ΔΕΝ λήγει: με κλειστή εφαρμογή και το κινητό σε βαθύ Doze, η
+    // παράδοση μπορεί να αργήσει λεπτά και με 60s το μήνυμα ΠΕΤΙΟΤΑΝ σιωπηλά.
+  }, { ttlMs: 6 * 3600 * 1000 });
+  console.log("maybeNotifyPendingApproval: notified", tokens.length,
+              "masters για", uid, name || d.phone);
+}
+
 exports.onPendingApprovalCreated = onDocumentCreated(
   "presence/{uid}",
   async (event) => {
-    const d = event.data.data();
-    if (!d || d.isApproved === true) return;
-    // Στέλνουμε μόνο όταν υπάρχουν στοιχεία (μετά την αποθήκευση φόρμας),
-    // όχι για κενό doc που μπορεί να δημιουργηθεί νωρίτερα.
-    if (!d.displayName && !d.lastName && !d.phone) return;
-
-    const tokens = await getMasterTokens();
-    if (!tokens.length) return;
-
-    const name = `${d.displayName || ""} ${d.lastName || ""}`.trim();
-    await sendDataOnly(tokens, {
-      type:         "approval",
-      title:        "👤 Νέο αίτημα έγκρισης",
-      pendingName:  String(name),
-      phone:        String(d.phone || ""),
-      vehicleModel: String(d.vehicleModel || ""),
-      plateNumber:  String(d.plateNumber || ""),
-      vehicleType:  String(d.vehicleType || ""),
-      referredBy:   String(d.referredBy || ""),
-      click_action: "FLUTTER_NOTIFICATION_CLICK",
-    });
-    console.log("onPendingApprovalCreated: notified", tokens.length, "masters");
+    const d = event.data && event.data.data();
+    await maybeNotifyPendingApproval(event.params.uid, d);
   }
 );
 
-// ─── Έγκριση που γίνεται σε δεύτερο χρόνο (false → false αλλάζει αλλιώς) ─────
-// Καλύπτει την περίπτωση που το presence doc υπάρχει ήδη και απλώς
-// ξαναγίνεται isApproved:false (σπάνιο, αλλά ασφαλές).
 exports.onPendingApprovalUpdated = onDocumentUpdated(
   "presence/{uid}",
   async (event) => {
-    const before = event.data.before.data();
-    const after  = event.data.after.data();
-    if (!before || !after) return;
-    if (after.isApproved === true) return; // εγκεκριμένος → όχι ειδοποίηση
-
-    // Στέλνουμε όταν ο pending χρήστης ΜΟΛΙΣ συμπλήρωσε στοιχεία:
-    // πριν δεν είχε όνομα/τηλέφωνο, τώρα έχει (αποθήκευση φόρμας).
-    const hadDetails  = !!(before.displayName || before.lastName || before.phone);
-    const hasDetails  = !!(after.displayName  || after.lastName  || after.phone);
-    if (hadDetails || !hasDetails) return;
-
-    const tokens = await getMasterTokens();
-    if (!tokens.length) return;
-
-    const name = `${after.displayName || ""} ${after.lastName || ""}`.trim();
-    await sendDataOnly(tokens, {
-      type:         "approval",
-      title:        "👤 Νέο αίτημα έγκρισης",
-      pendingName:  String(name),
-      phone:        String(after.phone || ""),
-      vehicleModel: String(after.vehicleModel || ""),
-      plateNumber:  String(after.plateNumber || ""),
-      vehicleType:  String(after.vehicleType || ""),
-      referredBy:   String(after.referredBy || ""),
-      click_action: "FLUTTER_NOTIFICATION_CLICK",
-    });
-    console.log("onPendingApprovalUpdated: notified", tokens.length, "masters");
+    const after = event.data.after.data();
+    await maybeNotifyPendingApproval(event.params.uid, after);
   }
 );
 

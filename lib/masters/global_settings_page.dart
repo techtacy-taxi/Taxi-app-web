@@ -775,7 +775,7 @@ class AdminCard extends StatelessWidget {
     final formPrice      = (data['onlineFormPrice'] as num?)?.toDouble() ?? 0.0;
 
     final initials = name.isEmpty
-        ? '??'
+        ? (email.isNotEmpty ? email.substring(0, 1).toUpperCase() : '??')
         : name.trim().split(RegExp(r'\s+')).take(2).map((w) => w[0]).join().toUpperCase();
 
     String roleLabel = isMaster ? 'Master' : (isAdmin ? 'Διαχειριστής' : 'Οδηγός');
@@ -824,7 +824,12 @@ class AdminCard extends StatelessWidget {
           const SizedBox(width: 9),
           Expanded(
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(name.isEmpty ? '(χωρίς όνομα)' : name,
+              // Ο νέος χρήστης εμφανίζεται εδώ ΠΡΙΝ προλάβει να συμπληρώσει
+              // τη φόρμα (το presence doc δημιουργείται στο login). Αντί για
+              // ένα άχρηστο «(χωρίς όνομα)», δείχνουμε το email του.
+              Text(name.isEmpty
+                      ? (email.isNotEmpty ? email : '(χωρίς όνομα)')
+                      : name,
                   style: TextStyle(
                       fontSize: 13, fontWeight: FontWeight.w600, color: c.textMain)),
               if ((isAdmin || isMaster) && !isMaster)
@@ -913,9 +918,18 @@ class AdminCard extends StatelessWidget {
             child: FilledButton.icon(
               onPressed: () => _approve(context, true),
               icon: const Icon(Icons.check_circle_rounded, size: 18),
-              label: const Text('Έγκριση χρήστη'),
+              label: const Text('Έγκριση χρήστη',
+                  style: TextStyle(fontWeight: FontWeight.w700)),
               style: FilledButton.styleFrom(
-                backgroundColor: c.amberDeep,
+                // ⚠️ ΠΡΙΝ: backgroundColor: c.amberDeep, με το προεπιλεγμένο
+                // foreground του θέματος (onAmber = #412402, σκούρο καφέ).
+                // Στο ΑΝΟΙΧΤΟ θέμα το amberDeep είναι #854F0B — σκούρο καφέ
+                // πάνω σε σκούρο καφέ, δηλαδή πρακτικά αδιάβαστο.
+                // ΤΩΡΑ: το κανονικό ζευγάρι amber/onAmber, που έχει σωστή
+                // αντίθεση ΚΑΙ στα δύο θέματα (το amber είναι ίδιο #EF9F27).
+                backgroundColor: c.amber,
+                foregroundColor: c.onAmber,
+                padding: const EdgeInsets.symmetric(vertical: 12),
                 shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(12)),
               ),

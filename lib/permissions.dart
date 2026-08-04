@@ -54,7 +54,14 @@ Future<void> requestPermissions({
 Future<void> _saveLocationAlways(String? uid, bool hasAlways) async {
   if (uid == null) return;
   try {
-    await FirebaseFirestore.instance.collection('presence').doc(uid).set({
+    final ref = FirebaseFirestore.instance.collection('presence').doc(uid);
+    // ⚠️ ΔΕΝ δημιουργούμε doc εδώ. Ο wizard αδειών τρέχει ΠΡΙΝ τη φόρμα
+    // στοιχείων, οπότε το set(merge) γεννούσε presence doc για χρήστη που
+    // δεν είχε πατήσει ποτέ «Αποθήκευση» — και εμφανιζόταν στις Καθολικές
+    // Ρυθμίσεις ως «(χωρίς όνομα)». Γράφουμε ΜΟΝΟ αν το doc υπάρχει ήδη·
+    // αλλιώς η τιμή θα γραφτεί στο επόμενο άνοιγμα, μετά την αποθήκευση.
+    if (!(await ref.get()).exists) return;
+    await ref.set({
       'locationAlways': hasAlways,
       'updatedAt':      FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));

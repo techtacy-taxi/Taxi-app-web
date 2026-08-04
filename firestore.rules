@@ -122,7 +122,11 @@ service cloud.firestore {
       return !request.resource.data.diff(resource.data).affectedKeys()
         .hasAny(['master', 'admin', 'isApproved', 'calendarEnabled',
                  'webEnabled', 'icsExportEnabled',
-                 'calendarPrice', 'webPrice', 'icsPrice', 'tenantId', 'tenantOwner']);
+                 'calendarPrice', 'webPrice', 'icsPrice', 'tenantId', 'tenantOwner',
+                 // Το γράφει ΜΟΝΟ ο server (trigger έγκρισης). Αν μπορούσε να το
+                 // θέσει ο ίδιος ο χρήστης, θα «έσβηνε» την ειδοποίηση έγκρισης
+                 // προς τον master και θα περνούσε απαρατήρητος.
+                 'approvalNotifiedAt']);
     }
 
     // Σε νέο doc: δεν επιτρέπεται να αυτο-οριστείς master/admin/approved
