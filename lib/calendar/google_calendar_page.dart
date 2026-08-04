@@ -19,6 +19,7 @@ import 'package:table_calendar/table_calendar.dart';
 
 import '../app_theme.dart';
 import '../jobs/job_form.dart';
+import '../jobs/places_service.dart';
 import 'calendar_event_parser.dart';
 import 'converted_events_store.dart';
 import 'google_calendar_service.dart';
@@ -134,8 +135,11 @@ class _GoogleCalendarPageState extends State<GoogleCalendarPage> {
       title: e.title, description: e.description, location: e.location,
     );
 
-    // Το from/to του parser είναι ελεύθερο κείμενο — μπαίνει στη σημείωση
-    // και ο χρήστης επιλέγει διευθύνσεις με autocomplete μέσα στη φόρμα.
+    // Το from/to του parser είναι ελεύθερο κείμενο (χωρίς συντεταγμένες).
+    // Το βάζουμε ΚΑΤΕΥΘΕΙΑΝ στα πεδία «Από»/«Προς» ως PlacePick χωρίς lat/lng
+    // — πριν πήγαινε μόνο στη σημείωση και έπρεπε να το ξαναγράψεις με το
+    // χέρι. Ο χρήστης πατάει το πεδίο και διαλέγει την ακριβή διεύθυνση από
+    // το autocomplete όποτε χρειάζεται υπολογισμό διαδρομής.
     final created = await Navigator.of(context).push<bool>(MaterialPageRoute(
       builder: (_) => JobFormPage(
         adminUid:  widget.adminUid,
@@ -143,17 +147,20 @@ class _GoogleCalendarPageState extends State<GoogleCalendarPage> {
         isMaster:  widget.isMaster,
         calendarEventId: e.id,
         prefill: JobPrefill(
+          from: (parsed.from != null && parsed.from!.trim().isNotEmpty)
+              ? PlacePick(description: parsed.from!.trim())
+              : null,
+          to: (parsed.to != null && parsed.to!.trim().isNotEmpty)
+              ? PlacePick(description: parsed.to!.trim())
+              : null,
           clientName:   parsed.name,
           clientPhone:  parsed.phone,
           price:        parsed.price,
           scheduledAt:  e.start,
           persons:      parsed.persons,
           luggage:      parsed.luggage,
-          note: [
-            if (parsed.from != null) 'Από: ${parsed.from}',
-            if (parsed.to   != null) 'Προς: ${parsed.to}',
-            if (parsed.note != null) parsed.note!,
-          ].join('\n'),
+          // Το από/προς ΔΕΝ ξαναγράφεται στη σημείωση — μπήκε στα πεδία.
+          note: parsed.note,
           flightOrShip:   parsed.flightOrShip,
           vehicleType:    parsed.vehicleType,
           childSeatCount: parsed.childSeat,
@@ -719,8 +726,11 @@ class _GoogleCalendarPageState extends State<GoogleCalendarPage> {
         borderRadius: BorderRadius.circular(12),
         border: selected ? Border.all(color: c.amber, width: 1.6) : null,
       ),
-      alignment: Alignment.topCenter,
-      padding: const EdgeInsets.only(top: 6),
+      // ⚠️ Ο αριθμός ΚΕΝΤΡΑΡΙΣΜΕΝΟΣ, ακριβώς όπως στα κανονικά κελιά. Με
+      // topCenter «πηδούσε» ψηλότερα μόνο στο επιλεγμένο/σημερινό κελί και
+      // η γραμμή έδειχνε στραβή (φαίνεται έντονα στο web, όπου τα κελιά
+      // είναι ψηλά). Οι κουκκίδες μπαίνουν από πάνω με Positioned bottom.
+      alignment: Alignment.center,
       child: Text(
         '${day.day}',
         style: TextStyle(

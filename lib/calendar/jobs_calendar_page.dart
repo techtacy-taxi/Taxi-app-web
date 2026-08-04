@@ -86,8 +86,11 @@ class _JobsCalendarPageState extends State<JobsCalendarPage> {
         borderRadius: BorderRadius.circular(12),
         border: selected ? Border.all(color: c.amber, width: 1.6) : null,
       ),
-      alignment: Alignment.topCenter,
-      padding: const EdgeInsets.only(top: 6),
+      // ⚠️ Ο αριθμός ΚΕΝΤΡΑΡΙΣΜΕΝΟΣ, ακριβώς όπως στα κανονικά κελιά. Με
+      // topCenter «πηδούσε» ψηλότερα μόνο στο επιλεγμένο/σημερινό κελί και
+      // η γραμμή έδειχνε στραβή (φαίνεται έντονα στο web, όπου τα κελιά
+      // είναι ψηλά). Οι κουκκίδες μπαίνουν από πάνω με Positioned bottom.
+      alignment: Alignment.center,
       child: Text(
         '${day.day}',
         style: TextStyle(
