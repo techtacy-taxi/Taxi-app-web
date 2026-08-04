@@ -49,9 +49,21 @@ class _GoogleCalendarPageState extends State<GoogleCalendarPage> {
   List<CalendarEvent> _monthEvents = [];
   final Map<String, bool> _convertedCache = {};
 
+  // ── Μαζική μετατροπή ──────────────────────────────────────────────────────
+  // Λειτουργία επιλογής: διαλέγεις πολλά events (ακόμη και από διαφορετικές
+  // ημέρες — τα ids κρατιούνται για όλο τον μήνα) και μετά ανοίγει η φόρμα
+  // δουλειάς μία-μία, στο καπάκι: σώζεις τη μία → ανοίγει αμέσως η επόμενη.
+  bool _selectMode = false;
+  final Set<String> _selectedIds = {};
+  bool _converting = false;
+
   // Μεγέθη συρταριού (ποσοστά ύψους οθόνης).
   static const double _sheetMin = 0.30;
   static const double _sheetMax = 0.92;
+
+  // Ύψος της κάτω μπάρας ενεργειών — για padding στη λίστα ώστε να μην
+  // κρύβεται η τελευταία κάρτα από κάτω.
+  static const double _actionBarH = 74;
 
   @override
   void initState() {
@@ -116,7 +128,8 @@ class _GoogleCalendarPageState extends State<GoogleCalendarPage> {
     return keywords.any(text.contains);
   }
 
-  Future<void> _openConvertForm(CalendarEvent e) async {
+  /// Επιστρέφει true αν όντως δημιουργήθηκε δουλειά (χρειάζεται για την ουρά).
+  Future<bool> _openConvertForm(CalendarEvent e) async {
     final parsed = CalendarEventParser.parse(
       title: e.title, description: e.description, location: e.location,
     );
@@ -151,7 +164,179 @@ class _GoogleCalendarPageState extends State<GoogleCalendarPage> {
     if (created == true) {
       await ConvertedEventsStore.instance.markConverted(e.id);
       if (mounted) setState(() => _convertedCache[e.id] = true);
+      return true;
     }
+    return false;
+  }
+
+  // ── Λειτουργία επιλογής ───────────────────────────────────────────────────
+
+  void _enterSelectMode([String? firstId]) {
+    setState(() {
+      _selectMode = true;
+      if (firstId != null) _selectedIds.add(firstId);
+    });
+  }
+
+  void _exitSelectMode() {
+    setState(() { _selectMode = false; _selectedIds.clear(); });
+  }
+
+  void _toggleSelect(String id) {
+    setState(() {
+      if (!_selectedIds.remove(id)) _selectedIds.add(id);
+      // Αν άδειασε η επιλογή, μένουμε σε select mode — ο χρήστης βγαίνει με ✕.
+    });
+  }
+
+  void _toggleSelectAllDay(List<CalendarEvent> dayEvents) {
+    final ids = dayEvents.map((e) => e.id).toList();
+    final allSelected = ids.every(_selectedIds.contains);
+    setState(() {
+      if (allSelected) {
+        _selectedIds.removeAll(ids);
+      } else {
+        _selectedIds.addAll(ids);
+      }
+    });
+  }
+
+  // ── Η ουρά: μία-μία οι φόρμες, στο καπάκι ────────────────────────────────
+
+  Future<void> _runConvertQueue() async {
+    final queue = _monthEvents
+        .where((e) => _selectedIds.contains(e.id))
+        .toList()
+      ..sort((a, b) => a.start.compareTo(b.start));
+    if (queue.isEmpty) return;
+
+    setState(() { _selectMode = false; _converting = true; });
+
+    int done = 0;
+    int index = 0;
+    for (final e in queue) {
+      index++;
+      if (!mounted) break;
+      final ok = await _openConvertForm(e);
+      if (ok) {
+        done++;
+        continue;
+      }
+      // Βγήκε χωρίς αποθήκευση — ρωτάμε αν συνεχίζουμε στο επόμενο.
+      if (index >= queue.length) break;
+      if (!mounted) break;
+      final cont = await _askContinue(index, queue.length);
+      if (!cont) break;
+    }
+
+    if (!mounted) return;
+    setState(() { _converting = false; _selectedIds.clear(); });
+    await _showQueueSummary(done, queue.length);
+  }
+
+  Future<bool> _askContinue(int index, int total) async {
+    final c = AppColors.of(context);
+    final res = await showModalBottomSheet<bool>(
+      context: context,
+      backgroundColor: c.card,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 18, 20, 14),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Icon(Icons.pause_circle_outline_rounded, size: 34, color: c.amberDeep),
+            const SizedBox(height: 10),
+            Text('Δεν αποθηκεύτηκε',
+                style: TextStyle(
+                    fontSize: 16, fontWeight: FontWeight.w700, color: c.textMain)),
+            const SizedBox(height: 4),
+            Text('Απομένουν ${total - index} από $total events.',
+                style: TextStyle(fontSize: 13, color: c.textFaint)),
+            const SizedBox(height: 16),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton(
+                style: FilledButton.styleFrom(
+                  backgroundColor: c.amber,
+                  foregroundColor: c.onAmber,
+                  padding: const EdgeInsets.symmetric(vertical: 13),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16)),
+                ),
+                onPressed: () => Navigator.of(ctx).pop(true),
+                child: const Text('Παράλειψη και συνέχεια',
+                    style: TextStyle(fontWeight: FontWeight.w700)),
+              ),
+            ),
+            const SizedBox(height: 8),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton(
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: c.textFaint,
+                  padding: const EdgeInsets.symmetric(vertical: 13),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16)),
+                ),
+                onPressed: () => Navigator.of(ctx).pop(false),
+                child: const Text('Διακοπή'),
+              ),
+            ),
+          ]),
+        ),
+      ),
+    );
+    return res ?? false;
+  }
+
+  Future<void> _showQueueSummary(int done, int total) async {
+    if (!mounted) return;
+    final c = AppColors.of(context);
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: c.card,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 20, 20, 14),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Icon(
+              done == total
+                  ? Icons.check_circle_rounded
+                  : Icons.info_outline_rounded,
+              size: 38,
+              color: done == total ? const Color(0xFF97C459) : c.amberDeep,
+            ),
+            const SizedBox(height: 10),
+            Text(
+              done == 0
+                  ? 'Δεν μετατράπηκε καμία'
+                  : 'Μετατράπηκαν $done από $total',
+              style: TextStyle(
+                  fontSize: 16, fontWeight: FontWeight.w700, color: c.textMain),
+            ),
+            const SizedBox(height: 16),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton(
+                style: FilledButton.styleFrom(
+                  backgroundColor: c.amber,
+                  foregroundColor: c.onAmber,
+                  padding: const EdgeInsets.symmetric(vertical: 13),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16)),
+                ),
+                onPressed: () => Navigator.of(ctx).pop(),
+                child: const Text('ΟΚ',
+                    style: TextStyle(fontWeight: FontWeight.w700)),
+              ),
+            ),
+          ]),
+        ),
+      ),
+    );
   }
 
   @override
@@ -159,20 +344,54 @@ class _GoogleCalendarPageState extends State<GoogleCalendarPage> {
     final c = AppColors.of(context);
     return Scaffold(
       backgroundColor: c.scaffold,
-      appBar: AppBar(
-        title: const Text('Google Calendar'),
-        backgroundColor: c.scaffold,
-        foregroundColor: c.textMain,
-        elevation: 0,
-        actions: [
-          if (_connected)
-            IconButton(
-              onPressed: _load,
-              icon: Icon(Icons.refresh_rounded, color: c.textFaint),
-              tooltip: 'Ανανέωση',
+      appBar: _selectMode
+          ? AppBar(
+              backgroundColor: c.amberSoft,
+              foregroundColor: c.amberDeep,
+              elevation: 0,
+              leading: IconButton(
+                icon: const Icon(Icons.close_rounded),
+                onPressed: _exitSelectMode,
+                tooltip: 'Άκυρο',
+              ),
+              title: Text(
+                _selectedIds.isEmpty
+                    ? 'Επίλεξε events'
+                    : '${_selectedIds.length} επιλεγμένα',
+                style: TextStyle(
+                    fontSize: 17,
+                    fontWeight: FontWeight.w700,
+                    color: c.amberDeep),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => _toggleSelectAllDay(_currentDayEvents()),
+                  style: TextButton.styleFrom(foregroundColor: c.amberDeep),
+                  child: const Text('Όλα της ημέρας',
+                      style: TextStyle(fontWeight: FontWeight.w600)),
+                ),
+              ],
+            )
+          : AppBar(
+              title: const Text('Google Calendar'),
+              backgroundColor: c.scaffold,
+              foregroundColor: c.textMain,
+              elevation: 0,
+              actions: [
+                if (_connected && _monthEvents.isNotEmpty)
+                  IconButton(
+                    onPressed: _converting ? null : () => _enterSelectMode(),
+                    icon: Icon(Icons.checklist_rounded, color: c.textFaint),
+                    tooltip: 'Μαζική μετατροπή',
+                  ),
+                if (_connected)
+                  IconButton(
+                    onPressed: _load,
+                    icon: Icon(Icons.refresh_rounded, color: c.textFaint),
+                    tooltip: 'Ανανέωση',
+                  ),
+              ],
             ),
-        ],
-      ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : !_connected
@@ -356,7 +575,14 @@ class _GoogleCalendarPageState extends State<GoogleCalendarPage> {
               child: ListView(
                 controller: scrollCtrl,
                 padding: EdgeInsets.fromLTRB(
-                    14, 8, 14, 16 + (safeBottom > 0 ? safeBottom : 10)),
+                    14,
+                    8,
+                    14,
+                    16 +
+                        (safeBottom > 0 ? safeBottom : 10) +
+                        // Χώρος για την μπάρα «Μετατροπή N σε δουλειές», ώστε
+                        // να μην κρύβεται η τελευταία κάρτα από κάτω.
+                        (_selectMode ? _actionBarH : 0)),
                 children: [
                   // Χερούλι
                   Center(
@@ -400,8 +626,62 @@ class _GoogleCalendarPageState extends State<GoogleCalendarPage> {
             );
           },
         ),
+
+        // ── Κάτω μπάρα: «Μετατροπή N σε δουλειές» ──────────────────────────
+        // Μπαίνει ΤΕΛΕΥΤΑΙΑ στο Stack ώστε να είναι πάνω από το συρτάρι, και
+        // σέβεται το navigation bar του Android μέσω SafeArea.
+        if (_selectMode)
+          Positioned(
+            left: 0, right: 0, bottom: 0,
+            child: SafeArea(
+              top: false,
+              child: Container(
+                padding: const EdgeInsets.fromLTRB(14, 10, 14, 12),
+                decoration: BoxDecoration(
+                  color: c.card,
+                  border: Border(top: BorderSide(color: c.cardBorder, width: 0.8)),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.12),
+                      blurRadius: 16,
+                      offset: const Offset(0, -4),
+                    ),
+                  ],
+                ),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.icon(
+                    onPressed: _selectedIds.isEmpty ? null : _runConvertQueue,
+                    icon: const Icon(Icons.compare_arrows_rounded, size: 18),
+                    label: Text(
+                      _selectedIds.isEmpty
+                          ? 'Επίλεξε τουλάχιστον ένα event'
+                          : 'Μετατροπή ${_selectedIds.length} '
+                            '${_selectedIds.length == 1 ? "σε δουλειά" : "σε δουλειές"}',
+                      style: const TextStyle(
+                          fontSize: 15, fontWeight: FontWeight.w700),
+                    ),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: c.amber,
+                      foregroundColor: c.onAmber,
+                      disabledBackgroundColor: c.cardBorder,
+                      disabledForegroundColor: c.textFaint,
+                      padding: const EdgeInsets.symmetric(vertical: 15),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(24)),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
       ]);
     });
+  }
+
+  List<CalendarEvent> _currentDayEvents() {
+    final key = DateTime(_selectedDay.year, _selectedDay.month, _selectedDay.day);
+    return _monthEvents.where((e) => e.dayKey == key).toList();
   }
 
   String _weekdayDate(DateTime d) {
@@ -416,21 +696,43 @@ class _GoogleCalendarPageState extends State<GoogleCalendarPage> {
     final time = '${e.start.hour.toString().padLeft(2, "0")}:'
         '${e.start.minute.toString().padLeft(2, "0")}';
 
+    final picked = _selectedIds.contains(e.id);
+
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: Opacity(
-        opacity: converted ? 0.72 : 1,
-        child: Container(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: c.scaffold,
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: c.cardBorder, width: 0.8),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(children: [
+        opacity: converted && !_selectMode ? 0.72 : 1,
+        child: GestureDetector(
+          // Παρατεταμένο πάτημα → μπαίνει σε λειτουργία επιλογής με αυτό το
+          // event ήδη τσεκαρισμένο. Σε λειτουργία επιλογής, το απλό πάτημα
+          // οπουδήποτε στην κάρτα κάνει toggle.
+          onLongPress: _selectMode ? null : () => _enterSelectMode(e.id),
+          onTap: _selectMode ? () => _toggleSelect(e.id) : null,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 140),
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: picked ? c.amberSoft : c.scaffold,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                color: picked ? c.amber : c.cardBorder,
+                width: picked ? 1.4 : 0.8,
+              ),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(children: [
+                  if (_selectMode) ...[
+                    Icon(
+                      picked
+                          ? Icons.check_circle_rounded
+                          : Icons.radio_button_unchecked_rounded,
+                      size: 22,
+                      color: picked ? c.amberDeep : c.textFaint,
+                    ),
+                    const SizedBox(width: 10),
+                  ],
                 Container(
                   padding: const EdgeInsets.symmetric(
                       horizontal: 10, vertical: 3),
@@ -465,7 +767,20 @@ class _GoogleCalendarPageState extends State<GoogleCalendarPage> {
                     style: TextStyle(fontSize: 12, color: c.textFaint)),
               ],
               const SizedBox(height: 10),
-              if (converted)
+              // Σε λειτουργία επιλογής τα κουμπιά ενέργειας κρύβονται — η
+              // μετατροπή γίνεται μαζικά από την κάτω μπάρα.
+              if (_selectMode)
+                Text(
+                  converted
+                      ? 'Έχει ήδη μετατραπεί — θα ξαναγίνει αν το επιλέξεις'
+                      : (looksTransfer
+                          ? 'Έτοιμο για μετατροπή'
+                          : 'Δεν μοιάζει με μεταφορά'),
+                  style: TextStyle(
+                      fontSize: 11.5,
+                      color: picked ? c.amberDeep : c.textFaint),
+                )
+              else if (converted)
                 // Κουμπί (ίδιο στυλ με «Μετατροπή σε δουλειά») που δηλώνει
                 // ότι έγινε ήδη — με πάτημα μπορείς να τη βγάλεις ξανά.
                 SizedBox(
@@ -504,6 +819,7 @@ class _GoogleCalendarPageState extends State<GoogleCalendarPage> {
                 ),
               ],
             ],
+            ),
           ),
         ),
       ),
