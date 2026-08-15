@@ -23,6 +23,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 
@@ -58,9 +59,37 @@ class _SavedJobsTabState extends State<SavedJobsTab> {
   final Set<String> _selected = {};
   bool _sending = false;
 
-  // Φίλτρα master
+  // Φίλτρα master — ΔΙΑΤΗΡΟΥΝΤΑΙ ανάμεσα στις συνεδρίες (SharedPreferences),
+  // ώστε να μη χρειάζεται να ξαναδιαλέγεις το ίδιο φίλτρο κάθε φορά που
+  // ανοίγεις τις «Αποθηκευμένες».
   bool   _onlyMine = false;            // μόνο δικές μου
   String _ownerFilter = '__all__';     // __all__ ή ownerUid
+
+  static const String _kPrefOnlyMine    = 'saved_jobs_only_mine_v1';
+  static const String _kPrefOwnerFilter = 'saved_jobs_owner_filter_v1';
+
+  /// Φορτώνει την τελευταία επιλογή φίλτρων. Καλείται μία φορά στο initState.
+  Future<void> _loadFilterPrefs() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final onlyMine = prefs.getBool(_kPrefOnlyMine) ?? false;
+      final owner    = prefs.getString(_kPrefOwnerFilter) ?? '__all__';
+      if (!mounted) return;
+      setState(() {
+        _onlyMine    = onlyMine;
+        _ownerFilter = owner;
+      });
+    } catch (_) {}
+  }
+
+  /// Αποθηκεύει την τρέχουσα επιλογή φίλτρων.
+  Future<void> _saveFilterPrefs() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_kPrefOnlyMine, _onlyMine);
+      await prefs.setString(_kPrefOwnerFilter, _ownerFilter);
+    } catch (_) {}
+  }
 
   // ── Αναζήτηση — Booking ID, όνομα πελάτη, τηλέφωνο, διαδρομή, δημιουργός.
   String _searchQuery = '';
@@ -126,6 +155,8 @@ class _SavedJobsTabState extends State<SavedJobsTab> {
   @override
   void initState() {
     super.initState();
+    // Επαναφορά της τελευταίας επιλογής φίλτρων (μόνο ο master τα βλέπει).
+    if (widget.isMaster) _loadFilterPrefs();
     _loadMyTenantId().then((_) => _loadZones());
     // Ο master βλέπει ούτως ή άλλως τα πάντα — δεν χρειάζεται shares.
     if (!widget.isMaster) {
@@ -337,10 +368,13 @@ class _SavedJobsTabState extends State<SavedJobsTab> {
         FilterChip(
           label: const Text('Μόνο δικές μου'),
           selected: _onlyMine,
-          onSelected: (v) => setState(() {
-            _onlyMine = v;
-            if (v) _ownerFilter = '__all__';
-          }),
+          onSelected: (v) {
+            setState(() {
+              _onlyMine = v;
+              if (v) _ownerFilter = '__all__';
+            });
+            _saveFilterPrefs();   // θυμήσου την επιλογή για την επόμενη φορά
+          },
           selectedColor: Colors.amber.shade200,
           checkmarkColor: Colors.black,
         ),
@@ -372,7 +406,10 @@ class _SavedJobsTabState extends State<SavedJobsTab> {
             ],
             onChanged: _onlyMine
                 ? null
-                : (v) => setState(() => _ownerFilter = v ?? '__all__'),
+                : (v) {
+                    setState(() => _ownerFilter = v ?? '__all__');
+                    _saveFilterPrefs();   // θυμήσου την επιλογή
+                  },
           ),
         ),
       ]),

@@ -2531,6 +2531,31 @@ class _JobFormPageState extends State<JobFormPage> {
               ),
             ),
           ],
+
+          // ── Δημιουργία link πληρωμής ────────────────────────────────────
+          // Το ίδιο κουμπί υπάρχει και πάνω δεξιά στο AppBar (εικονίδιο
+          // συνδετήρα). Εδώ κάτω, μαζί με «Αποστολή»/«Αποθήκευση», ώστε να
+          // μη χρειάζεται να γυρίσεις στην κορυφή αφού συμπληρώσεις το ποσό
+          // προκαταβολής — που βρίσκεται ούτως ή άλλως στο κάτω μισό.
+          const SizedBox(height: 10),
+          OutlinedButton.icon(
+            onPressed: _generatingLink ? null : _generatePaymentLink,
+            style: OutlinedButton.styleFrom(
+              foregroundColor: const Color(0xFF00897B),
+              side: const BorderSide(color: Color(0xFF00897B)),
+              padding: const EdgeInsets.symmetric(vertical: 16),
+            ),
+            icon: _generatingLink
+                ? const SizedBox(
+                    width: 20, height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2))
+                : const Icon(Icons.link_rounded),
+            label: Text(
+              _generatingLink ? 'Δημιουργία...' : 'Δημιουργία link πληρωμής',
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            ),
+          ),
+
           SizedBox(height: 32 + MediaQuery.of(context).padding.bottom),
         ],
       ),
