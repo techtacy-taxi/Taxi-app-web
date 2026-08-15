@@ -848,6 +848,19 @@ class NotificationsService {
   static final ValueNotifier<String?> pendingViewBatchId =
       ValueNotifier<String?>(null);
 
+  /// Μετρητής «πατήθηκε ειδοποίηση ΝΕΑΣ ΚΡΑΤΗΣΗΣ ΑΠΟ ΦΟΡΜΑ».
+  ///
+  /// ⚠️ ΓΙΑΤΙ ΧΡΕΙΑΖΕΤΑΙ: το payload αυτής της ειδοποίησης έχει ΜΟΝΟ
+  /// savedJobId (ΟΧΙ jobId). Και οι δύο tap handlers έψαχναν data['jobId'],
+  /// το έβρισκαν null και έβγαιναν χωρίς να κάνουν τίποτα — οπότε πατούσες
+  /// την ειδοποίηση, σταματούσε ο ήχος και ΔΕΝ εμφανιζόταν κανένα popup.
+  /// Ταυτόχρονα το _absorbBackgroundNotified() είχε ήδη σημειώσει την
+  /// κράτηση ως «ειδωμένη», άρα ούτε ο Firestore listener την εμφάνιζε.
+  ///
+  /// Τώρα: κάθε tap αυξάνει τον μετρητή, το PublicBookingAlerts τον ακούει
+  /// και ανοίγει το κανονικό popup με «ΟΚ».
+  static final ValueNotifier<int> publicBookingTapTick = ValueNotifier<int>(0);
+
   /// Αυξάνεται όταν πατηθεί reminder ραντεβού ενώ η εφαρμογή είναι ανοιχτή,
   /// ώστε ο JobListener να εμφανίσει αμέσως την κάρτα.
   static final ValueNotifier<int> reminderTapTick = ValueNotifier<int>(0);
@@ -923,6 +936,9 @@ class NotificationsService {
             if (batchId != null && batchId.isNotEmpty) {
               pendingViewBatchId.value = batchId;
             }
+          } else if (data['type'] == 'public_booking') {
+            // Νέα κράτηση από φόρμα (cold start) — ζήτα το popup με «ΟΚ».
+            publicBookingTapTick.value++;
           } else if (jobId != null && jobId.isNotEmpty) {
             pendingViewJobId.value = jobId;
           }
@@ -969,6 +985,11 @@ class NotificationsService {
         if (batchId != null && batchId.isNotEmpty) {
           pendingViewBatchId.value = batchId;
         }
+        return;
+      }
+      if (data['type'] == 'public_booking') {
+        // Νέα κράτηση από φόρμα — ζήτα το popup με «ΟΚ».
+        publicBookingTapTick.value++;
         return;
       }
       final jobId = data['jobId'] as String?;

@@ -3713,9 +3713,17 @@ exports.submitPublicBooking = onRequest(
             const subject = isEl
               ? "✅ Κράτηση #" + bookingNumber + " καταχωρήθηκε — " + subjFrom + " → " + subjTo
               : "✅ Booking #" + bookingNumber + " received — " + subjFrom + " → " + subjTo;
-            const logoHtml = logoUrl
-              ? "<img src=\"" + logoUrl + "\" alt=\"" + businessName + "\" style=\"max-height:56px;margin-bottom:16px;\"><br>"
-              : "";
+            // ── ΚΕΦΑΛΙΔΑ: λογότυπο (αν υπάρχει) + ΠΑΝΤΑ το όνομα επιχείρησης ──
+            // Πριν έμπαινε ΜΟΝΟ η εικόνα· αν έλειπε το logoUrl, η κορυφή του
+            // email ήταν εντελώς άδεια και ο πελάτης δεν έβλεπε πουθενά ποιος
+            // του στέλνει. Τώρα το όνομα εμφανίζεται πάντα.
+            const logoHtml =
+              "<div style=\"text-align:center;margin-bottom:20px;\">" +
+              (logoUrl
+                ? "<img src=\"" + logoUrl + "\" alt=\"" + businessName + "\" style=\"max-height:56px;display:block;margin:0 auto 10px;\">"
+                : "") +
+              "<div style=\"font-size:19px;font-weight:bold;color:#222;\">" + businessName + "</div>" +
+              "</div>";
             const footerContactLine = [footerPhone, footerEmail].filter(Boolean).join(" · ");
             const footerHtml =
               "<table style=\"margin-top:28px;border-top:1px solid #eee;padding-top:16px;\"><tr>" +
@@ -4042,17 +4050,43 @@ function vivaHosts(demo) {
 // ── OAuth2 access token (Smart Checkout Client ID/Secret) ───────────────────
 async function getVivaAccessToken(demo, clientId, clientSecret) {
   const hosts = vivaHosts(demo);
-  const basic = Buffer.from(clientId + ":" + clientSecret).toString("base64");
+
+  // ⚠️ ΚΡΙΣΙΜΟ: trim() στα credentials. Ένα κενό ή newline που μπήκε κατά
+  // την αντιγραφή στο Secret Manager κάνει το Basic header malformed, και
+  // το Akamai WAF του LIVE accounts.vivapayments.com το κόβει με HTML
+  // "Access Denied" (403) — ΟΧΙ με το κανονικό JSON invalid_client (401).
+  // Στο demo δεν υπάρχει WAF, γι' αυτό το πρόβλημα εμφανίζεται μόνο live.
+  const cid = String(clientId || "").trim();
+  const csec = String(clientSecret || "").trim();
+  if (!cid || !csec) {
+    console.error("getVivaAccessToken: λείπουν credentials",
+      { hasClientId: !!cid, hasClientSecret: !!csec, demo: !!demo });
+    return null;
+  }
+
+  const basic = Buffer.from(cid + ":" + csec).toString("base64");
   const resp = await fetch(hosts.accounts + "/connect/token", {
     method: "POST",
     headers: {
       "Authorization": "Basic " + basic,
       "Content-Type": "application/x-www-form-urlencoded",
+      // Το Akamai WAF απορρίπτει αιτήματα χωρίς αναγνωρίσιμο User-Agent.
+      "User-Agent": "AthensTaxi/1.0 (+https://taxiathenstransfers.com)",
+      "Accept": "application/json",
     },
     body: "grant_type=client_credentials",
   });
   if (!resp.ok) {
-    console.error("getVivaAccessToken error:", resp.status, await resp.text());
+    const bodyTxt = await resp.text();
+    // Διαγνωστικά ΧΩΡΙΣ να εκτεθούν τα ίδια τα κλειδιά: μόνο μήκη και
+    // κατάληξη του Client ID, ώστε να φαίνεται αν είναι λάθος/κομμένο.
+    console.error("getVivaAccessToken error:", resp.status,
+      "| host:", hosts.accounts,
+      "| demo:", !!demo,
+      "| clientIdLen:", cid.length,
+      "| clientIdTail:", cid.slice(-24),
+      "| secretLen:", csec.length,
+      "| body:", bodyTxt.slice(0, 400));
     return null;
   }
   const data = await resp.json();
@@ -4793,9 +4827,15 @@ async function finalizeSuccessfulPayment(db, pendingRef, pd, providerMeta) {
           ? "✅ Κράτηση #" + bookingNumber + " επιβεβαιώθηκε — " + subjFrom + " → " + subjTo
           : "✅ Booking #" + bookingNumber + " confirmed — " + subjFrom + " → " + subjTo;
 
-        const logoHtml = logoUrl
-          ? "<img src=\"" + logoUrl + "\" alt=\"" + businessName + "\" style=\"max-height:56px;margin-bottom:16px;\"><br>"
-          : "";
+        // ── ΚΕΦΑΛΙΔΑ: λογότυπο (αν υπάρχει) + ΠΑΝΤΑ το όνομα επιχείρησης ──
+        // Βλ. σχόλιο στο αντίστοιχο σημείο του άλλου email template.
+        const logoHtml =
+          "<div style=\"text-align:center;margin-bottom:20px;\">" +
+          (logoUrl
+            ? "<img src=\"" + logoUrl + "\" alt=\"" + businessName + "\" style=\"max-height:56px;display:block;margin:0 auto 10px;\">"
+            : "") +
+          "<div style=\"font-size:19px;font-weight:bold;color:#222;\">" + businessName + "</div>" +
+          "</div>";
         const footerContactLine = [footerPhone, footerEmail].filter(Boolean).join(" · ");
         const footerHtml =
           "<table style=\"margin-top:28px;border-top:1px solid #eee;padding-top:16px;\"><tr>" +

@@ -39,6 +39,12 @@ class PublicBookingAlerts {
   void Function(void Function())? _setStateInDialog;
   Timer? _dialogRetryTimer;
 
+  // Τελευταία τιμή του publicBookingTapTick που έχουμε ήδη εξυπηρετήσει.
+  // Χρειάζεται γιατί σε cold start ο μετρητής αυξάνεται ΠΡΙΝ τρέξει το
+  // start() — άρα δεν αρκεί μόνο ο listener, ελέγχουμε και στην εκκίνηση.
+  int _lastTapTick = 0;
+  VoidCallback? _tapListener;
+
   /// Διαβάζει τα savedJobId που ειδοποιήθηκαν ήδη από το background isolate
   /// και τα βάζει στα _seenIds, ώστε ο foreground listener να μην ξαναχτυπήσει
   /// για την ίδια κράτηση μόλις ανοίξει η εφαρμογή από την ειδοποίηση.
@@ -112,7 +118,29 @@ class PublicBookingAlerts {
         debugPrint('PublicBookingAlerts listener error: $e');
       });
     }
-    // 2) FCM — εφεδρικό.
+    // 2β) Πάτημα της native ειδοποίησης «Νέα κράτηση από φόρμα».
+    //
+    // ⚠️ Χωρίς αυτό, το tap απλώς σταματούσε τον ήχο και ΔΕΝ εμφάνιζε τίποτα:
+    // το payload έχει μόνο savedJobId (όχι jobId), οπότε οι tap handlers δεν
+    // έκαναν καμία ενέργεια, ενώ το _absorbBackgroundNotified() είχε ήδη
+    // σημειώσει την κράτηση ως «ειδωμένη» για τον Firestore listener.
+    if (_tapListener == null) {
+      _tapListener = () {
+        final t = NotificationsService.publicBookingTapTick.value;
+        if (t <= _lastTapTick) return;
+        _lastTapTick = t;
+        _bump();
+      };
+      NotificationsService.publicBookingTapTick.addListener(_tapListener!);
+    }
+    // Cold start: ο μετρητής μπορεί να αυξήθηκε πριν στηθεί ο listener.
+    final tapNow = NotificationsService.publicBookingTapTick.value;
+    if (tapNow > _lastTapTick) {
+      _lastTapTick = tapNow;
+      _bump();
+    }
+
+    // 3) FCM — εφεδρικό.
     _fcmSub ??= FirebaseMessaging.onMessage.listen((msg) {
       final type = (msg.data['type'] ?? '').toString();
       if (type == 'public_booking') {
@@ -126,6 +154,10 @@ class PublicBookingAlerts {
 
   void dispose() {
     _dialogRetryTimer?.cancel(); _dialogRetryTimer = null;
+    if (_tapListener != null) {
+      NotificationsService.publicBookingTapTick.removeListener(_tapListener!);
+      _tapListener = null;
+    }
     _fsSub?.cancel(); _fsSub = null;
     _fcmSub?.cancel(); _fcmSub = null;
     _primed = false;
