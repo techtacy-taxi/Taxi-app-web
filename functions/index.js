@@ -4319,11 +4319,7 @@ exports.createVivaOrder = onRequest(
           // URL → .../index.html (Αγγλικά) και ένα → .../el/booking2.html
           // (Ελληνικά) — αλλιώς ο πελάτης της αγγλικής φόρμας θα γυρνάει σε
           // ελληνική σελίδα (ή αντίστροφα) μετά την πληρωμή.
-          sourceCode: tenantCfg
-            ? (lang === "el"
-                ? (tenantCfg.vivaSourceCode || "Default")
-                : (tenantCfg.vivaSourceCodeEn || tenantCfg.vivaSourceCode || "Default"))
-            : "1325",
+          ...(await vivaSourceCodeParam(tenantId, tenantCfg, lang)),
         }),
       });
       if (!orderResp.ok) {
@@ -4579,9 +4575,7 @@ exports.createManualBookingPaymentLink = onCall(
           },
           paymentTimeout: 43200, // 12 ώρες — βλ. σχόλιο πάνω από τη function
           merchantTrns: pendingRef.id,
-          sourceCode: tenantCfg
-            ? (lang === "el" ? (tenantCfg.vivaSourceCode || "Default") : (tenantCfg.vivaSourceCodeEn || tenantCfg.vivaSourceCode || "Default"))
-            : "1325",
+          ...(await vivaSourceCodeParam(tenantId, tenantCfg, lang)),
         }),
       });
       if (!orderResp.ok) {
@@ -5983,6 +5977,35 @@ async function getTenantVivaCredentials(tenantId) {
   return { clientId, clientSecret, merchantId, apiKey };
 }
 
+// ── Viva Source Code — ΕΝΙΑΙΑ λογική για ΟΛΟΥΣ (default + κάθε tenant) ──
+// Διαβάζεται ΠΑΝΤΑ από το Firestore doc tenants/{tenantId}, δηλαδή από τη
+// σελίδα «Ρυθμίσεις Viva» του admin panel. Αλλάζεις τον κωδικό εκεί και
+// ισχύει ΑΜΕΣΩΣ, χωρίς deploy — για σένα ακριβώς όπως και για τον κάθε
+// tenant. ΔΕΝ υπάρχει πια hardcoded τιμή πουθενά.
+//
+// Αν το πεδίο είναι κενό, ΔΕΝ στέλνουμε καθόλου sourceCode στη Viva: τότε
+// χρησιμοποιείται το προεπιλεγμένο Source του λογαριασμού, ώστε η πληρωμή
+// να μη σκάει ποτέ. (Προσοχή: τότε ισχύουν τα Success/Failure URL εκείνου
+// του Source, όχι τα δικά σου.)
+async function vivaSourceCodeParam(tenantId, tenantCfg, lang) {
+  let cfg = tenantCfg;
+  if (!cfg) {
+    try {
+      const d = await getFirestore().collection("tenants")
+        .doc(s(tenantId) || "default").get();
+      cfg = d.exists ? d.data() : null;
+    } catch (e) {
+      console.error("vivaSourceCodeParam: αποτυχία ανάγνωσης tenant doc", e);
+      cfg = null;
+    }
+  }
+  if (!cfg) return {};
+  const el = s(cfg.vivaSourceCode);
+  const en = s(cfg.vivaSourceCodeEn);
+  const code = (lang === "el") ? el : (en || el);
+  return code ? { sourceCode: code } : {};
+}
+
 async function getTenantStripeCredentials(tenantId) {
   const [secretKey, publishableKey, webhookSecret] = await Promise.all([
     readSecret(tenantSecretId(tenantId, "stripe-secret-key")),
@@ -7283,11 +7306,36 @@ exports.getTenantVivaCredentialsForOwner = onCall(
   async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Χρειάζεται σύνδεση.");
     const tenantId = s((request.data || {}).tenantId);
-    if (!tenantId || tenantId === "default") {
+    if (!tenantId) {
       throw new HttpsError("invalid-argument", "Μη έγκυρο tenantId.");
     }
     const isSuperAdmin = request.auth.token.email === "techtacy@gmail.com";
     const db = getFirestore();
+
+    // ── "default" = ο ΔΙΚΟΣ ΣΟΥ λογαριασμός. Τα credentials του ζουν στα
+    // global secrets (VIVA_*), όχι στα tenant-prefixed. Επιστρέφουμε μόνο
+    // τα Source Codes / demo flag, ώστε η σελίδα ρυθμίσεων να τα δείχνει
+    // συμπληρωμένα — ίδια εμπειρία με κάθε άλλον tenant.
+    if (tenantId === "default") {
+      if (!isSuperAdmin) {
+        throw new HttpsError("permission-denied", "Μόνο ο master.");
+      }
+      const dDoc = await db.collection("tenants").doc("default").get();
+      const t0 = dDoc.exists ? dDoc.data() : {};
+      const mask0 = (v) => (v ? v.slice(0, 4) + "••••••••" : "");
+      return {
+        ok: true,
+        vivaClientIdMasked:     mask0(await readSecret("VIVA_CLIENT_ID")),
+        vivaClientSecretMasked: mask0(await readSecret("VIVA_CLIENT_SECRET")),
+        vivaMerchantIdMasked:   mask0(await readSecret("VIVA_MERCHANT_ID")),
+        vivaApiKeyMasked:       mask0(await readSecret("VIVA_API_KEY")),
+        vivaSourceCode:         t0.vivaSourceCode || "",
+        vivaSourceCodeEn:       t0.vivaSourceCodeEn || "",
+        vivaDemo:               vivaIsDemo(await readSecret("VIVA_DEMO")),
+        hasVivaCredentials:     true,
+      };
+    }
+
     if (!isSuperAdmin) {
       const presDoc = await db.collection("presence").doc(request.auth.uid).get();
       const pres = presDoc.data() || {};
@@ -7379,6 +7427,23 @@ exports.updateDefaultVivaCredentials = onCall(
         throw new HttpsError("internal", "Αποτυχία αποθήκευσης VIVA_DEMO: " + e.message);
       }
     }
+
+    // ── Source Codes → tenants/default (ΟΧΙ Secret Manager: δεν είναι μυστικά) ──
+    // Ακριβώς η ίδια λογική με κάθε άλλον tenant, ώστε ο κωδικός να
+    // διαβάζεται ζωντανά από τη vivaSourceCodeParam() σε κάθε πληρωμή.
+    const srcUpdates = {};
+    if (d.vivaSourceCode != null) srcUpdates.vivaSourceCode = s(d.vivaSourceCode) || null;
+    if (d.vivaSourceCodeEn != null) srcUpdates.vivaSourceCodeEn = s(d.vivaSourceCodeEn) || null;
+    if (d.vivaDemo != null) srcUpdates.vivaDemo = d.vivaDemo !== false;
+    if (Object.keys(srcUpdates).length) {
+      try {
+        await getFirestore().collection("tenants").doc("default")
+          .set(srcUpdates, { merge: true });
+      } catch (e) {
+        throw new HttpsError("internal", "Αποτυχία αποθήκευσης Source Code: " + e.message);
+      }
+    }
+
     return {
       ok: true,
       needsRedeploy: false,

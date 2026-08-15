@@ -270,11 +270,11 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
         // Μη κρίσιμο — η σελίδα δουλεύει κανονικά με Viva ακόμα κι αν αυτό αποτύχει.
       }
 
-      if (_isDefault) {
-        // Οι δικές σου ρυθμίσεις — απλά δείχνουμε το πεδίο Demo (αν είναι
-        // γνωστό) και αφήνουμε τα υπόλοιπα κενά (τα βάζεις μόνο αν αλλάζεις).
-        _demo = true; // προεπιλογή ασφαλής· ο master ξέρει την τρέχουσα κατάσταση
-      } else {
+      {
+        // ── ΕΝΙΑΙΟ: ίδια φόρτωση για τον δικό σου (default) λογαριασμό ΚΑΙ
+        // για κάθε tenant. Τα Source Codes και το demo flag έρχονται πάντα
+        // από τον server, ώστε να τα βλέπεις συμπληρωμένα και να μη χρειάζεται
+        // ποτέ hardcoded τιμή στον κώδικα.
         final callable =
             FirebaseFunctions.instance.httpsCallable('getTenantVivaCredentialsForOwner');
         final res = await callable.call({'tenantId': _tenantId});
@@ -507,6 +507,10 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
           if (_clientSecretCtrl.text.trim().isNotEmpty) 'vivaClientSecret': _clientSecretCtrl.text.trim(),
           if (_merchantIdCtrl.text.trim().isNotEmpty) 'vivaMerchantId': _merchantIdCtrl.text.trim(),
           if (_apiKeyCtrl.text.trim().isNotEmpty) 'vivaApiKey': _apiKeyCtrl.text.trim(),
+          // Τα Source Codes αποθηκεύονται ΚΑΙ για τον δικό σου λογαριασμό —
+          // ίδια συμπεριφορά με κάθε tenant, ισχύουν αμέσως χωρίς deploy.
+          'vivaSourceCode': _sourceCodeCtrl.text.trim(),
+          'vivaSourceCodeEn': _sourceCodeEnCtrl.text.trim(),
           'vivaDemo': _demo,
         });
         // Στοιχεία επιχείρησης — τώρα δουλεύει και για τον δικό σου (default)
