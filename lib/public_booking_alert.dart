@@ -25,6 +25,7 @@ import 'package:flutter/material.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'notifications_service.dart';
+import 'jobs/new_saved_badge_store.dart';
 
 class PublicBookingAlerts {
   PublicBookingAlerts._();
@@ -203,6 +204,9 @@ class PublicBookingAlerts {
         // το popup. Αλλιώς, αν ο master πατήσει «ΟΚ» πολύ γρήγορα, το stop
         // τρέχει πριν προλάβει να ξεκινήσει το startRingtoneLoop (async —
         // φόρτωμα mp3) και ο ήχος «ξεκινάει μετά το ΟΚ», σαν να μη σταματάει.
+        // Σήμα «ΝΕΑ» στη λίστα Αποθηκευμένων — σβήνει μόνο όταν ο χρήστης
+        // ανοίξει την καρτέλα λεπτομερειών αυτής της κράτησης.
+        NewSavedBadgeStore.markNew(id);
         showPublicBookingNotification(savedJobId: id, from: from, to: to).then((_) {
           _bump();
         });
@@ -318,19 +322,45 @@ class PublicBookingAlerts {
                         ),
                       ),
                       const SizedBox(height: 20),
+                      // ── «Δες την τώρα» → ανοίγει τις Αποθηκευμένες ──
                       SizedBox(
                         height: 48,
-                        child: FilledButton(
+                        child: FilledButton.icon(
                           style: FilledButton.styleFrom(
                             backgroundColor: const Color(0xFFFFB300),
                             foregroundColor: const Color(0xFF5A3D00),
                             shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(12)),
                           ),
-                          onPressed: () => Navigator.of(dctx).pop(),
-                          child: const Text('OK',
-                              style: TextStyle(
+                          onPressed: () {
+                            Navigator.of(dctx).pop();
+                            // Το map_page (Android) / admin_shell (web) το
+                            // ακούει και ανοίγει την καρτέλα Αποθηκευμένες.
+                            openSavedJobsRequest.value++;
+                          },
+                          icon: const Icon(Icons.folder_open_rounded, size: 20),
+                          label: Text(
+                              n == 1 ? 'Δες την τώρα' : 'Δες τες τώρα',
+                              style: const TextStyle(
                                   fontSize: 16, fontWeight: FontWeight.w900)),
+                        ),
+                      ),
+                      const SizedBox(height: 9),
+                      // ── «Αργότερα» → κλείνει, ΑΛΛΑ το σήμα «ΝΕΑ» μένει ──
+                      SizedBox(
+                        height: 46,
+                        child: OutlinedButton(
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: Colors.black54,
+                            side: BorderSide(color: Colors.grey.shade400,
+                                width: 1.5),
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12)),
+                          ),
+                          onPressed: () => Navigator.of(dctx).pop(),
+                          child: const Text('Αργότερα',
+                              style: TextStyle(
+                                  fontSize: 15, fontWeight: FontWeight.w700)),
                         ),
                       ),
                     ],

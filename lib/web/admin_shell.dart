@@ -26,6 +26,7 @@ import 'package:flutter/material.dart';
 
 import '../app_theme.dart';
 import '../jobs/job_admin_page.dart';
+import '../jobs/new_saved_badge_store.dart';
 import '../jobs/billing_page.dart';
 import '../calendar/jobs_calendar_page.dart';
 import '../voice/groups_admin.dart';
@@ -71,6 +72,10 @@ class _AdminShellState extends State<AdminShell> {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) WebBookingAlerts.instance.start(context);
       });
+      // «Δες τες τώρα» στο popup νέας κράτησης → ενότητα «Δουλειές».
+      // Το JobAdminPage ακούει ΚΑΙ ΤΟ ΙΔΙΟ το openSavedJobsRequest και
+      // μεταπηδά στην καρτέλα «Αποθηκευμένες» μόλις εμφανιστεί.
+      openSavedJobsRequest.addListener(_onOpenSavedJobsRequest);
     }
     // ── Ζωντανή παρακολούθηση του δικού μας presence — ΑΚΑΡΙΑΙΑ αντίδραση
     // αν ο master αλλάξει δικαιώματα ΕΝΩ είμαστε ήδη μέσα στο web panel: το
@@ -138,6 +143,22 @@ class _AdminShellState extends State<AdminShell> {
       MaterialPageRoute(builder: (_) => const WebAuthGateway()),
       (_) => false,
     );
+  }
+
+  /// Επιλέγει την ενότητα «Δουλειές» ώστε να φανεί το JobAdminPage, το
+  /// οποίο με τη σειρά του μεταπηδά στην καρτέλα «Αποθηκευμένες».
+  void _onOpenSavedJobsRequest() {
+    if (!mounted) return;
+    final i = _sections.indexWhere((sec) => sec.label == 'Δουλειές');
+    if (i < 0) return;
+    if (i != _index) {
+      // Η σελίδα δεν υπάρχει ακόμη (το shell δεν είναι IndexedStack) — άφησε
+      // σημείωση ώστε να ανοίξει κατευθείαν στις Αποθηκευμένες.
+      SavedTabNav.pendingOpenSavedTab = true;
+      setState(() => _index = i);
+    }
+    // Αν είναι ήδη η τρέχουσα ενότητα, ο listener του JobAdminPage κάνει
+    // μόνος του τη μεταπήδηση καρτέλας.
   }
 
   List<_Section> _buildSections() {
@@ -252,6 +273,7 @@ class _AdminShellState extends State<AdminShell> {
 
   @override
   void dispose() {
+    openSavedJobsRequest.removeListener(_onOpenSavedJobsRequest);
     _presenceSub?.cancel();
     WebBookingAlerts.instance.dispose();
     super.dispose();

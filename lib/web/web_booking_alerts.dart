@@ -23,6 +23,7 @@
 // θα χρειαζόταν service worker· εδώ καλύπτουμε το «ανοιχτό panel».)
 
 import 'dart:async';
+import '../jobs/new_saved_badge_store.dart';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -117,6 +118,10 @@ class WebBookingAlerts {
           DateTime.now().difference(savedAt) > const Duration(minutes: 2)) {
         continue;
       }
+
+      // Σήμα «ΝΕΑ» στη λίστα Αποθηκευμένων — σβήνει μόνο όταν ανοιχτεί
+      // η καρτέλα λεπτομερειών της κράτησης.
+      NewSavedBadgeStore.markNew(id);
 
       final from = (data['from'] ?? '').toString();
       final to = (data['to'] ?? '').toString();
@@ -247,9 +252,10 @@ class WebBookingAlerts {
                       style: TextStyle(fontSize: 13, color: ac.textFaint),
                     ),
                     const SizedBox(height: 16),
+                    // ── «Δες την τώρα» → ανοίγει τις Αποθηκευμένες ──
                     SizedBox(
                       width: double.infinity,
-                      child: FilledButton(
+                      child: FilledButton.icon(
                         style: FilledButton.styleFrom(
                           backgroundColor: ac.amber,
                           foregroundColor: ac.onAmber,
@@ -258,10 +264,33 @@ class WebBookingAlerts {
                             borderRadius: BorderRadius.circular(16),
                           ),
                         ),
-                        onPressed: () => Navigator.of(dctx).pop(),
-                        child: const Text('ΟΚ',
+                        onPressed: () {
+                          Navigator.of(dctx).pop();
+                          openSavedJobsRequest.value++;
+                        },
+                        icon: const Icon(Icons.folder_open_rounded, size: 20),
+                        label: const Text('Δες τες τώρα',
                             style: TextStyle(
                                 fontSize: 16, fontWeight: FontWeight.w700)),
+                      ),
+                    ),
+                    const SizedBox(height: 9),
+                    // ── «Αργότερα» → κλείνει, ΑΛΛΑ το σήμα «ΝΕΑ» μένει ──
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton(
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: ac.textFaint,
+                          side: BorderSide(color: ac.cardBorder, width: 1.5),
+                          padding: const EdgeInsets.symmetric(vertical: 13),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                        ),
+                        onPressed: () => Navigator.of(dctx).pop(),
+                        child: const Text('Αργότερα',
+                            style: TextStyle(
+                                fontSize: 15, fontWeight: FontWeight.w600)),
                       ),
                     ),
                   ],

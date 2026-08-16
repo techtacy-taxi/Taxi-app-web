@@ -36,6 +36,7 @@ import 'job_service.dart';
 import 'job_details_sheet.dart';
 import 'job_shared_widgets.dart';
 import 'saved_job_service.dart';
+import 'new_saved_badge_store.dart';
 import '../pricing/pricing_zones_page.dart' show PricingZone;
 
 class SavedJobsTab extends StatefulWidget {
@@ -80,6 +81,10 @@ class _SavedJobsTabState extends State<SavedJobsTab> {
         _ownerFilter = owner;
       });
     } catch (_) {}
+  }
+
+  void _onBadgeRevision() {
+    if (mounted) setState(() {});
   }
 
   /// Αποθηκεύει την τρέχουσα επιλογή φίλτρων.
@@ -155,6 +160,11 @@ class _SavedJobsTabState extends State<SavedJobsTab> {
   @override
   void initState() {
     super.initState();
+    // Σήματα «ΝΕΑ»: φόρτωσε από τη συσκευή και ξαναχτίσε σε κάθε αλλαγή.
+    NewSavedBadgeStore.ensureLoaded().then((_) {
+      if (mounted) setState(() {});
+    });
+    NewSavedBadgeStore.revision.addListener(_onBadgeRevision);
     // Επαναφορά της τελευταίας επιλογής φίλτρων (μόνο ο master τα βλέπει).
     if (widget.isMaster) _loadFilterPrefs();
     _loadMyTenantId().then((_) => _loadZones());
@@ -168,6 +178,7 @@ class _SavedJobsTabState extends State<SavedJobsTab> {
 
   @override
   void dispose() {
+    NewSavedBadgeStore.revision.removeListener(_onBadgeRevision);
     _shareSub?.cancel();
     super.dispose();
   }
@@ -262,6 +273,13 @@ class _SavedJobsTabState extends State<SavedJobsTab> {
               ),
             ),
 
+            // ── Μετρητής μη ειδωμένων νέων κρατήσεων ──
+            // Μετράει ΜΟΝΟ όσες φαίνονται τώρα (μετά από φίλτρα/αναζήτηση),
+            // ώστε ο αριθμός να συμφωνεί πάντα με ό,τι βλέπεις.
+            if (NewSavedBadgeStore.countVisible(items.map((e) => e.id)) > 0)
+              _buildNewCounter(
+                  NewSavedBadgeStore.countVisible(items.map((e) => e.id))),
+
             // ── Φίλτρα (μόνο master) ──
             if (widget.isMaster) _buildMasterFilters(snap.data ?? const []),
 
@@ -301,6 +319,7 @@ class _SavedJobsTabState extends State<SavedJobsTab> {
                           index: i,
                           child: _SavedJobCard(
                             saved:      items[i],
+                            isNew:      NewSavedBadgeStore.isNew(items[i].id),
                             selected:   _selected.contains(items[i].id),
                             showOwner:  widget.isMaster || isForeign,
                             isMaster:   widget.isMaster,
@@ -352,6 +371,35 @@ class _SavedJobsTabState extends State<SavedJobsTab> {
   );
 
   // ─── Φίλτρα master ──────────────────────────────────────────────────────
+  /// Λωρίδα «Χ νέες κρατήσεις» πάνω από τη λίστα.
+  Widget _buildNewCounter(int n) {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFEBEE),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0xFFD32F2F), width: 1.2),
+      ),
+      child: Row(children: [
+        const Icon(Icons.fiber_new_rounded,
+            color: Color(0xFFD32F2F), size: 19),
+        const SizedBox(width: 9),
+        Expanded(
+          child: Text(
+            n == 1
+                ? '1 νέα κράτηση που δεν έχεις ανοίξει'
+                : '$n νέες κρατήσεις που δεν έχεις ανοίξει',
+            style: const TextStyle(
+                fontSize: 13,
+                color: Color(0xFFB71C1C),
+                fontWeight: FontWeight.w700),
+          ),
+        ),
+      ]),
+    );
+  }
+
   Widget _buildMasterFilters(List<SavedJob> all) {
     // Μοναδικοί δημιουργοί + πλήθος ανά δημιουργό
     final owners = <String, String>{};
@@ -971,6 +1019,10 @@ class _SavedJobsTabState extends State<SavedJobsTab> {
 
   // ─── Άνοιγμα λεπτομερειών (όπως στις ανοιχτές δουλειές) ──────────────────
   void _openDetails(SavedJob s) {
+    // ── Εδώ ΣΒΗΝΕΙ το σήμα «ΝΕΑ» ──
+    // Μόνο το άνοιγμα της καρτέλας μετράει ως «την είδα». Το να φανεί απλώς
+    // η κάρτα στη λίστα ΔΕΝ αρκεί.
+    NewSavedBadgeStore.markSeen(s.id);
     showModalBottomSheet(
       context:            context,
       isScrollControlled: true,
@@ -1220,6 +1272,8 @@ class _SavedJobsTabState extends State<SavedJobsTab> {
 
 class _SavedJobCard extends StatelessWidget {
   final SavedJob     saved;
+  /// Νέα κράτηση που ΔΕΝ έχει ανοιχτεί ακόμη → κόκκινο σήμα «ΝΕΑ».
+  final bool         isNew;
   final bool         selected;
   final bool         showOwner;
   final bool         canSend;
@@ -1235,6 +1289,7 @@ class _SavedJobCard extends StatelessWidget {
 
   const _SavedJobCard({
     required this.saved,
+    this.isNew = false,
     required this.selected,
     required this.showOwner,
     this.canSend   = true,
@@ -1260,20 +1315,26 @@ class _SavedJobCard extends StatelessWidget {
       margin: const EdgeInsets.only(bottom: 10),
       elevation: 1.5,
       shadowColor: Colors.black26,
+      // ΝΕΑ (μη ειδωμένη) → απαλό ροζ φόντο + κόκκινο περίγραμμα, ώστε να
+      // ξεχωρίζει αμέσως μέσα στη λίστα.
       color: selected
           ? Colors.amber.shade50
-          : (isForm
-              ? const Color(0xFFFFF8E1)
-              : (isReturn ? const Color(0xFFF3E5F5) : Colors.white)),
+          : (isNew
+              ? const Color(0xFFFFF7F6)
+              : (isForm
+                  ? const Color(0xFFFFF8E1)
+                  : (isReturn ? const Color(0xFFF3E5F5) : Colors.white))),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(14),
         side: BorderSide(
             color: selected
                 ? Colors.amber
-                : (isForm
-                    ? const Color(0xFFFFB300)
-                    : (isReturn ? const Color(0xFF7B1FA2) : Colors.grey.shade400)),
-            width: selected ? 2 : ((isForm || isReturn) ? 1.5 : 1.2)),
+                : (isNew
+                    ? const Color(0xFFD32F2F)
+                    : (isForm
+                        ? const Color(0xFFFFB300)
+                        : (isReturn ? const Color(0xFF7B1FA2) : Colors.grey.shade400))),
+            width: selected ? 2 : (isNew ? 2 : ((isForm || isReturn) ? 1.5 : 1.2))),
       ),
       child: InkWell(
         onTap: onTap,
@@ -1283,6 +1344,40 @@ class _SavedJobCard extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              // ── Σήμα «ΝΕΑ» — μη ειδωμένη κράτηση ──
+              // Σβήνει ΜΟΝΟ όταν ανοίξεις την καρτέλα λεπτομερειών.
+              if (isNew) ...[
+                Row(children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFD32F2F),
+                      borderRadius: BorderRadius.circular(9),
+                    ),
+                    child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                      Icon(Icons.fiber_new_rounded,
+                          color: Colors.white, size: 15),
+                      SizedBox(width: 5),
+                      Text('ΝΕΑ',
+                          style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 11,
+                              letterSpacing: 0.9,
+                              fontWeight: FontWeight.w900)),
+                    ]),
+                  ),
+                  const SizedBox(width: 8),
+                  const Expanded(
+                    child: Text('Δεν την έχεις ανοίξει ακόμη',
+                        style: TextStyle(
+                            fontSize: 11.5,
+                            color: Color(0xFFD32F2F),
+                            fontWeight: FontWeight.w600)),
+                  ),
+                ]),
+                const SizedBox(height: 8),
+              ],
               // Badge ΑΠΟ ΦΟΡΜΑ (πάνω-πάνω) — ήρθε από τη δημόσια φόρμα του site
               if (isForm) ...[
                 Container(

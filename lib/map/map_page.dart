@@ -33,6 +33,7 @@ import 'home_top_overlay.dart';
 import 'marker_builder.dart';
 import '../ics_intent.dart';
 import '../jobs/job_admin_page.dart';
+import '../jobs/new_saved_badge_store.dart';
 import '../jobs/job_shared_widgets.dart';
 import '../jobs/job_form.dart';
 import '../jobs/places_service.dart';
@@ -226,6 +227,8 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
     // εξασφαλίζει ότι ο καθένας βλέπει/ακούει ΜΟΝΟ τις δικές του κρατήσεις.
     if (_isAdmin || _isMaster) {
       try { PublicBookingAlerts.instance.start(); } catch (_) {}
+      // «Δες την τώρα» στο popup νέας κράτησης → άνοιξε τις Αποθηκευμένες.
+      openSavedJobsRequest.addListener(_onOpenSavedJobsRequest);
     }
     _lastPublishedPosition = null;
     // ⚠️ ΔΕΝ δημιουργούμε presence doc πριν ο χρήστης πατήσει «Αποθήκευση»
@@ -364,8 +367,35 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
     }
   }
 
+  /// Ανοίγει τη σελίδα Δουλειές στην καρτέλα «Αποθηκευμένες».
+  /// Καλείται όταν ο χρήστης πατήσει «Δες την τώρα» στο popup νέας κράτησης.
+  void _onOpenSavedJobsRequest() {
+    if (!mounted) return;
+    // Αν το JobAdminPage είναι ΗΔΗ ανοιχτό, ο δικός του listener αλλάζει
+    // καρτέλα. Χωρίς αυτόν τον έλεγχο θα στοιβάζαμε δεύτερη ίδια σελίδα.
+    if (SavedTabNav.jobAdminPageOpen) return;
+    // Το JobAdminPage υπολογίζει μόνο του τη σωστή θέση της καρτέλας
+    // «Αποθηκευμένες» (εξαρτάται από ρόλο), οπότε δεν την καρφώνουμε εδώ.
+    SavedTabNav.pendingOpenSavedTab = true;
+    final myGroupIds = _allGroups
+        .where((g) => g.memberUids.contains(_uid))
+        .map((g) => g.id)
+        .toList();
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => JobAdminPage(
+        adminUid:        _uid ?? '',
+        adminName:       '$_displayName $_lastName'.trim(),
+        isAdmin:         _isAdmin || _isMaster,
+        isMaster:        _isMaster,
+        managedGroupIds: _isMaster ? <String>[] : _managedGroupIds,
+        userGroupIds:    myGroupIds,
+      ),
+    ));
+  }
+
   @override
   void dispose() {
+    openSavedJobsRequest.removeListener(_onOpenSavedJobsRequest);
     WidgetsBinding.instance.removeObserver(this);
     ThemeController.mode.removeListener(_applyMapStyle);
     MapThemeController.mode.removeListener(_applyMapStyle);

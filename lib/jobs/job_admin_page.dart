@@ -15,6 +15,7 @@ import 'job_model.dart';
 import 'job_service.dart';
 import 'job_shared_widgets.dart';
 import 'saved_jobs_tab.dart';
+import 'new_saved_badge_store.dart';
 import '../voice/voice_models.dart';
 import '../voice/share_service.dart';
 import '../app_theme.dart';
@@ -31,6 +32,10 @@ class JobAdminPage extends StatefulWidget {
   final List<String> managedGroupIds;
   final List<String> userGroupIds;
 
+  /// Καρτέλα που θα ανοίξει πρώτη. Χρησιμοποιείται όταν ο χρήστης πατήσει
+  /// «Δες την τώρα» στο popup νέας κράτησης (→ Αποθηκευμένες).
+  final int? initialTabIndex;
+
   const JobAdminPage({
     super.key,
     required this.adminUid,
@@ -39,6 +44,7 @@ class JobAdminPage extends StatefulWidget {
     this.isMaster        = false,
     this.managedGroupIds = const [],
     this.userGroupIds    = const [],
+    this.initialTabIndex,
   });
 
   @override
@@ -49,6 +55,10 @@ class _JobAdminPageState extends State<JobAdminPage>
     with SingleTickerProviderStateMixin {
 
   late TabController _tabCtrl;
+
+  /// Καρτέλα «Αποθηκευμένες» = index 1 (μετά τις «Ανοιχτές»), αλλά μόνο
+  /// όταν υπάρχει η καρτέλα «Ανοιχτές» και ο χρήστης είναι admin/master.
+  int get savedTabIndex => (_hasOpenTab && (widget.isAdmin || widget.isMaster)) ? 1 : -1;
 
   bool get _isDriverInGroup =>
       !widget.isAdmin && widget.userGroupIds.isNotEmpty;
@@ -69,11 +79,37 @@ class _JobAdminPageState extends State<JobAdminPage>
   @override
   void initState() {
     super.initState();
-    _tabCtrl = TabController(length: _tabCount, vsync: this);
+    // Αν το αίτημα «Δες τες τώρα» ήρθε ΠΡΙΝ δημιουργηθεί αυτή η σελίδα
+    // (web: το admin_shell φτιάχνει τη σελίδα μόλις αλλάξει ενότητα),
+    // ξεκινάμε κατευθείαν στην καρτέλα Αποθηκευμένες.
+    final pending = SavedTabNav.consumePending();
+    final wanted = pending && savedTabIndex >= 0
+        ? savedTabIndex
+        : widget.initialTabIndex;
+
+    _tabCtrl = TabController(
+      length: _tabCount,
+      vsync: this,
+      initialIndex: (wanted != null && wanted >= 0 && wanted < _tabCount)
+          ? wanted
+          : 0,
+    );
+    SavedTabNav.jobAdminPageOpen = true;
+    // Αν η σελίδα είναι ΗΔΗ ανοιχτή και πατηθεί «Δες την τώρα» στο popup,
+    // απλώς μεταπηδάμε στην καρτέλα — χωρίς νέα σελίδα.
+    openSavedJobsRequest.addListener(_onOpenSavedRequest);
+  }
+
+  void _onOpenSavedRequest() {
+    if (!mounted) return;
+    final i = savedTabIndex;
+    if (i >= 0 && i < _tabCount) _tabCtrl.animateTo(i);
   }
 
   @override
   void dispose() {
+    SavedTabNav.jobAdminPageOpen = false;
+    openSavedJobsRequest.removeListener(_onOpenSavedRequest);
     _tabCtrl.dispose();
     super.dispose();
   }
