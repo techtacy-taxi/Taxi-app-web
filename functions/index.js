@@ -651,18 +651,66 @@ exports.onPendingApprovalUpdated = onDocumentUpdated(
 );
 
 // ─── Helper: tokens ΟΛΩΝ των εγκεκριμένων οδηγών ────────────────────────────
-async function getAllApprovedTokens() {
+async function getAllApprovedTokens(excludeUid) {
   const db = getFirestore();
   const snap = await db
     .collection("presence")
     .where("isApproved", "==", true)
     .get();
+  const skip = s(excludeUid);
   const tokens = [];
   for (const doc of snap.docs) {
+    // Ο ΑΠΟΣΤΟΛΕΑΣ δεν χρειάζεται ειδοποίηση για το δικό του broadcast.
+    // ⚠️ Χωρίς αυτό, ο master που πατούσε «Ειδοποίηση αναβάθμισης σε όλους»
+    // έπαιρνε ο ίδιος ειδοποίηση — αλλά το app ΣΚΟΠΙΜΑ δεν του δείχνει
+    // popup (job_badge.dart: «Ο master που το έστειλε δεν χρειάζεται popup»).
+    // Αποτέλεσμα: ειδοποίηση που, όταν την πατούσε, δεν έκανε τίποτα.
+    if (skip && doc.id === skip) continue;
     const d = doc.data();
     if (d.fcmToken) tokens.push(d.fcmToken);
   }
   return tokens;
+}
+
+// ─── Αγγλική εκδοχή διεύθυνσης για τα ΑΓΓΛΙΚΑ email ────────────────────────
+//
+// ΤΟ ΠΡΟΒΛΗΜΑ: οι διευθύνσεις αποθηκεύονται όπως τις έγραψε/επέλεξε αυτός
+// που έκανε την κράτηση. Αν ο πελάτης ή ο admin τις διάλεξε στα ελληνικά,
+// το ΑΓΓΛΙΚΟ email έδειχνε «Ευαγγελίστριας 23, Αθήνα 105 60, Ελλάδα» — που
+// ο ξένος πελάτης δεν μπορεί καν να διαβάσει ή να δώσει σε οδηγό.
+//
+// Η ΛΥΣΗ: αντίστροφη γεωκωδικοποίηση των αποθηκευμένων συντεταγμένων με
+// language=en. Οι συντεταγμένες υπάρχουν ήδη (fromLat/fromLng, toLat/toLng).
+//
+// Χρησιμοποιεί ΤΟ ΙΔΙΟ Geocoding endpoint και ΤΟ ΙΔΙΟ κλειδί με την ήδη
+// υπάρχουσα placesReverseGeocode (που καλεί ο picker χάρτη με την πινέζα),
+// απλώς με language=en αντί για el. Άρα το API είναι ήδη ενεργό.
+//
+// Σε οποιαδήποτε αποτυχία επιστρέφει την ΑΡΧΙΚΗ διεύθυνση — το email φεύγει
+// κανονικά, απλώς με τη διεύθυνση όπως ήταν. Ποτέ δεν μπλοκάρει πληρωμή.
+async function addressInEnglish(lat, lng, fallback) {
+  const fb = s(fallback);
+  if (lat == null || lng == null || isNaN(lat) || isNaN(lng)) return fb;
+  try {
+    const url = "https://maps.googleapis.com/maps/api/geocode/json?latlng=" +
+      encodeURIComponent(lat + "," + lng) +
+      "&language=en&key=" + encodeURIComponent(ROUTES_API_KEY.value());
+    const resp = await fetch(url);
+    if (!resp.ok) {
+      console.error("addressInEnglish: HTTP", resp.status);
+      return fb;
+    }
+    const j = await resp.json();
+    if (j.status !== "OK" || !Array.isArray(j.results) || !j.results.length) {
+      console.error("addressInEnglish: status", j.status, j.error_message || "");
+      return fb;
+    }
+    const addr = s(j.results[0].formatted_address);
+    return addr || fb;
+  } catch (e) {
+    console.error("addressInEnglish error:", e.message);
+    return fb;
+  }
 }
 
 // ─── Broadcast αναβάθμισης από master → push σε ΟΛΟΥΣ ──────────────────────
@@ -672,7 +720,9 @@ async function getAllApprovedTokens() {
 // παραμένει ως fallback όταν η εφαρμογή είναι ανοιχτή.
 async function handleBroadcast(data) {
   if (!data || data.type !== "upgrade") return;
-  const tokens = await getAllApprovedTokens();
+  // Εξαιρούμε τον master που το έστειλε — δεν χρειάζεται να ειδοποιηθεί
+  // για κάτι που μόλις έκανε ο ίδιος.
+  const tokens = await getAllApprovedTokens(data.sentBy);
   if (!tokens.length) {
     console.log("broadcast upgrade: no tokens");
     return;
@@ -3749,13 +3799,19 @@ exports.submitPublicBooking = onRequest(
               (note ? "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Σχόλια:</td><td>" + note + "</td></tr>" : "") +
               "</table>" +
               "<p>" + waLine + "</p>";
+            // Αγγλικές διευθύνσεις ΜΟΝΟ για το αγγλικό email.
+            const fromEn2 = isEl ? from
+              : await addressInEnglish(fromLat, fromLng, from);
+            const toEn2 = isEl ? to
+              : await addressInEnglish(toLat, toLng, to);
+
             const bodyEn =
               "<h2 style=\"color:#1a1a2e;\">Your booking has been received!</h2>" +
               "<p>Hi " + name + ",</p>" +
               "<p>No online payment is required — you pay the driver directly.</p>" +
               "<table style=\"border-collapse:collapse;margin:12px 0;\">" +
               "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Booking ID:</td><td><b>#" + bookingNumber + "</b></td></tr>" +
-              "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Route:</td><td><b>" + from + " → " + to + "</b></td></tr>" +
+              "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Route:</td><td><b>" + fromEn2 + " → " + toEn2 + "</b></td></tr>" +
               "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Date/time:</td><td>" + whenStr + "</td></tr>" +
               "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Persons/Luggage:</td><td>" + persons + " / " + luggage + (childSeatCount ? " · Child seats: " + childSeatCount : "") + "</td></tr>" +
               "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Vehicle:</td><td>" + vehicleLabelEn + "</td></tr>" +
@@ -4455,7 +4511,9 @@ exports.createStripeCheckoutSession = onRequest(
 exports.createManualBookingPaymentLink = onCall(
   {
     region: "us-central1",
-    secrets: [VIVA_CLIENT_ID, VIVA_CLIENT_SECRET, VIVA_DEMO],
+    // ROUTES_API_KEY: για αγγλική εκδοχή διευθύνσεων στο email επιβεβαίωσης
+    // (addressInEnglish, μέσω finalizeSuccessfulPayment).
+    secrets: [VIVA_CLIENT_ID, VIVA_CLIENT_SECRET, VIVA_DEMO, ROUTES_API_KEY],
   },
   async (request) => {
     if (!request.auth) {
@@ -4464,6 +4522,12 @@ exports.createManualBookingPaymentLink = onCall(
     const d = request.data || {};
     const tenantId = s(d.tenantId) || "default";
     const from = s(d.from), to = s(d.to);
+    // Συντεταγμένες από τη φόρμα (αν επιλέχθηκαν μέσω αναζήτησης/πινέζας).
+    // Χρησιμοποιούνται ΜΟΝΟ για τη μετάφραση διεύθυνσης στο αγγλικό email.
+    const fromLatManual = Number.isFinite(Number(d.fromLat)) ? Number(d.fromLat) : null;
+    const fromLngManual = Number.isFinite(Number(d.fromLng)) ? Number(d.fromLng) : null;
+    const toLatManual   = Number.isFinite(Number(d.toLat))   ? Number(d.toLat)   : null;
+    const toLngManual   = Number.isFinite(Number(d.toLng))   ? Number(d.toLng)   : null;
     const clientName = s(d.clientName), clientPhone = s(d.clientPhone);
     const date = s(d.date), time = s(d.time);
     const price = Number(d.price);
@@ -4519,7 +4583,10 @@ exports.createManualBookingPaymentLink = onCall(
       origin: "manual_admin_link",
       tenantId,
       from, to,
-      fromLat: null, fromLng: null, toLat: null, toLng: null,
+      // Πριν ήταν ΠΑΝΤΑ null → το αγγλικό email δεν είχε ποτέ δεδομένα για
+      // να μεταφράσει τη διεύθυνση, οπότε έμενε πάντα στα ελληνικά.
+      fromLat: fromLatManual, fromLng: fromLngManual,
+      toLat:   toLatManual,   toLng:   toLngManual,
       clientName, clientPhone, clientEmail,
       flightOrShip, persons, luggage, childSeatCount,
       vehicleType,
@@ -4875,13 +4942,20 @@ async function finalizeSuccessfulPayment(db, pendingRef, pd, providerMeta) {
           iviewLineEl +
           "</table>" +
           "<p>" + waLine + "</p>";
+        // Αγγλικές διευθύνσεις ΜΟΝΟ για το αγγλικό email (fallback στις
+        // αρχικές αν το Geocoding API δεν απαντήσει).
+        const fromEn = isEl ? pd.from
+          : await addressInEnglish(pd.fromLat, pd.fromLng, pd.from);
+        const toEn = isEl ? pd.to
+          : await addressInEnglish(pd.toLat, pd.toLng, pd.to);
+
         const bodyEn =
           "<h2 style=\"color:#1a1a2e;\">Your booking is confirmed!</h2>" +
           "<p>Hi " + pd.clientName + ",</p>" +
           "<p>Your deposit was paid successfully and your booking is now confirmed.</p>" +
           "<table style=\"border-collapse:collapse;margin:12px 0;\">" +
           "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Booking ID:</td><td><b>#" + bookingNumber + "</b></td></tr>" +
-          "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Route:</td><td><b>" + pd.from + " → " + pd.to + "</b></td></tr>" +
+          "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Route:</td><td><b>" + fromEn + " → " + toEn + "</b></td></tr>" +
           "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Date/time:</td><td>" + whenStr + "</td></tr>" +
           "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Paid:</td><td>€" + pd.depositAmount + (pd.fullyPaid ? " (full payment)" : " (deposit)") + "</td></tr>" +
           (pd.price > 0.005
@@ -4941,7 +5015,11 @@ async function finalizeSuccessfulPayment(db, pendingRef, pd, providerMeta) {
 exports.vivaWebhook = onRequest(
   {
     region: "us-central1", memory: "256MiB",
-    secrets: [GCAL_CLIENT_SECRET, VIVA_MERCHANT_ID, VIVA_API_KEY, VIVA_DEMO, RESEND_API_KEY],
+    // ROUTES_API_KEY: χρειάζεται για την αγγλική εκδοχή των διευθύνσεων στο
+    // email επιβεβαίωσης (addressInEnglish). ΧΩΡΙΣ αυτό το binding, το
+    // .value() σκάει — γι' αυτό είναι δεσμευμένο εδώ ρητά.
+    secrets: [GCAL_CLIENT_SECRET, VIVA_MERCHANT_ID, VIVA_API_KEY, VIVA_DEMO,
+              RESEND_API_KEY, ROUTES_API_KEY],
   },
   async (req, res) => {
     // ── Multi-tenant: κάθε tenant καταχωρεί το webhook URL με ?tenantId=xyz
@@ -5081,7 +5159,9 @@ exports.vivaWebhook = onRequest(
 
 
 exports.stripeWebhook = onRequest(
-  { region: "us-central1", memory: "256MiB" },
+  // ROUTES_API_KEY: το ίδιο email επιβεβαίωσης (finalizeSuccessfulPayment)
+  // στέλνεται και από εδώ, και χρειάζεται την αγγλική εκδοχή διευθύνσεων.
+  { region: "us-central1", memory: "256MiB", secrets: [ROUTES_API_KEY] },
   async (req, res) => {
     if (req.method !== "POST") return res.status(405).end();
 

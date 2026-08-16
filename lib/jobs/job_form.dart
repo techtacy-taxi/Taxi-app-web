@@ -1392,6 +1392,13 @@ class _JobFormPageState extends State<JobFormPage> {
         'depositAmount':   depositAmount,
         'note': _noteCtrl.text.trim().isNotEmpty ? _noteCtrl.text.trim() : null,
         'lang': _linkLang,
+        // Συντεταγμένες — χρειάζονται ώστε το ΑΓΓΛΙΚΟ email επιβεβαίωσης να
+        // δείχνει τη διεύθυνση μεταφρασμένη (addressInEnglish στο backend).
+        // Χωρίς αυτές, το email έμενε στα ελληνικά ό,τι γλώσσα κι αν πάτησες.
+        if (_fromPick?.lat != null) 'fromLat': _fromPick!.lat,
+        if (_fromPick?.lng != null) 'fromLng': _fromPick!.lng,
+        if (_toPick?.lat != null)   'toLat':   _toPick!.lat,
+        if (_toPick?.lng != null)   'toLng':   _toPick!.lng,
       });
 
       final data = Map<String, dynamic>.from(res.data as Map);
