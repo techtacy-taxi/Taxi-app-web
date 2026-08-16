@@ -440,8 +440,8 @@ class PlaceField extends StatelessWidget {
             Icon(Icons.search_rounded, size: 20, color: Colors.grey[500]),
           const SizedBox(width: 6),
           // ── Πινέζα: επιλογή ακριβούς σημείου στον χάρτη ──────────────────
-          // Εμφανίζεται ΜΟΝΟ όταν ο χάρτης-picker είναι διαθέσιμος (κινητό).
-          // Στο web κρύβεται — η εύρεση σημείου γίνεται μέσω αναζήτησης Google.
+          // Διαθέσιμη ΚΑΙ στο Android ΚΑΙ στο web admin panel (το web
+          // χρησιμοποιεί τον ίδιο picker — βλ. _map_picker_web.dart).
           if (kMapPickerAvailable)
             Material(
               color: Colors.red.shade50,
