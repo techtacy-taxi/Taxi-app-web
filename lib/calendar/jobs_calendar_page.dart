@@ -403,6 +403,59 @@ class _JobsCalendarPageState extends State<JobsCalendarPage> {
 
   // ── Χρώματα ──────────────────────────────────────────────────────────────
 
+  /// Επεξηγηματικό popup: τι σημαίνει κάθε χρώμα στο ημερολόγιο.
+  void _showColorLegend(BuildContext context, AppColors c) {
+    final items = <(_EntryKind, String)>[
+      (_EntryKind.appointment, 'Δουλειά με ραντεβού (προγραμματισμένη ώρα)'),
+      (_EntryKind.immediate,   'Άμεση δουλειά'),
+      (_EntryKind.assigned,    'Την ανέλαβε κάποιος οδηγός'),
+      (_EntryKind.saved,       'Αποθηκευμένη — δεν έχει σταλεί/ανατεθεί ακόμη'),
+      (_EntryKind.done,        'Ολοκληρωμένη'),
+      (_EntryKind.cancelled,   'Ακυρωμένη'),
+    ];
+    showDialog(
+      context: context,
+      builder: (dctx) => AlertDialog(
+        backgroundColor: c.card,
+        title: Text('Χρώματα ημερολογίου',
+            style: TextStyle(color: c.textMain, fontWeight: FontWeight.w800)),
+        content: SizedBox(
+          width: 320,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (final item in items)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 6),
+                  child: Row(children: [
+                    Container(
+                      width: 16, height: 16,
+                      decoration: BoxDecoration(
+                        color: _statusColor(c, item.$1),
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(item.$2,
+                          style: TextStyle(fontSize: 13.5, color: c.textMain)),
+                    ),
+                  ]),
+                ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dctx).pop(),
+            child: Text('Κατάλαβα',
+                style: TextStyle(color: c.amberDeep, fontWeight: FontWeight.w700)),
+          ),
+        ],
+      ),
+    );
+  }
+
   /// Βασικό χρώμα κατάστασης (γέμισμα μπάρας/κουκκίδας).
   Color _statusColor(AppColors c, _EntryKind kind) {
     switch (kind) {
@@ -445,22 +498,28 @@ class _JobsCalendarPageState extends State<JobsCalendarPage> {
         backgroundColor: c.scaffold,
         foregroundColor: c.textMain,
         elevation: 0,
-        actions: widget.isMaster
-            ? [
-                IconButton(
-                  tooltip: _onlyMine
-                      ? 'Βλέπεις μόνο τις δικές σου δουλειές'
-                      : 'Βλέπεις όλες τις δουλειές του οργανισμού',
-                  icon: Icon(
-                    _onlyMine
-                        ? Icons.visibility_off_rounded
-                        : Icons.visibility_rounded,
-                    color: _onlyMine ? c.textFaint : c.amberDeep,
-                  ),
-                  onPressed: _toggleOnlyMine,
-                ),
-              ]
-            : null,
+        actions: [
+          // Επεξήγηση χρωμάτων — ορατό σε ΟΛΟΥΣ (admin ΚΑΙ master), ώστε
+          // ο καθένας να ξέρει τι σημαίνει κάθε χρώμα στο ημερολόγιό του.
+          IconButton(
+            tooltip: 'Τι σημαίνει κάθε χρώμα',
+            icon: Icon(Icons.info_outline_rounded, color: c.textFaint),
+            onPressed: () => _showColorLegend(context, c),
+          ),
+          if (widget.isMaster)
+            IconButton(
+              tooltip: _onlyMine
+                  ? 'Βλέπεις μόνο τις δικές σου δουλειές'
+                  : 'Βλέπεις όλες τις δουλειές του οργανισμού',
+              icon: Icon(
+                _onlyMine
+                    ? Icons.visibility_off_rounded
+                    : Icons.visibility_rounded,
+                color: _onlyMine ? c.textFaint : c.amberDeep,
+              ),
+              onPressed: _toggleOnlyMine,
+            ),
+        ],
       ),
       body: StreamBuilder<List<_CalEntry>>(
         stream: _monthEntries(),
