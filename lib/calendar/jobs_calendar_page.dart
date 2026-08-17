@@ -125,6 +125,17 @@ class _JobsCalendarPageState extends State<JobsCalendarPage> {
   // κατά ownerUid είτε κατά tenantId — μία φορά, για πάντα.
   String? _myTenantId;
 
+  /// True μόνο αν ο χρήστης ΕΧΕΙ ΔΙΚΗ ΤΟΥ online φόρμα (πεδίο `tenantOwner`
+  /// στο presence) — δηλαδή ο master ή ένας tenant owner όπως ο Σερέτης.
+  ///
+  /// ⚠️ ΓΙΑΤΙ ΧΡΕΙΑΖΕΤΑΙ: ο master ΚΑΙ κάθε απλός admin του οργανισμού του
+  /// έχουν ΚΑΙ ΟΙ ΔΥΟ tenantId 'default' (όποιος δεν έχει δικό του tenant
+  /// παίρνει 'default' — και στη βάση ΚΑΙ στα Firestore rules, που
+  /// διαβάζουν .get('tenantId', 'default')). Άρα το tenantId ΜΟΝΟ ΤΟΥ
+  /// ΔΕΝ ξεχωρίζει τον master από τους admin του, και οι κρατήσεις της
+  /// ΔΙΚΗΣ ΤΟΥ online φόρμας εμφανίζονταν στο ημερολόγιο ΚΑΘΕ admin.
+  bool _isTenantOwner = false;
+
   @override
   void initState() {
     super.initState();
@@ -137,12 +148,21 @@ class _JobsCalendarPageState extends State<JobsCalendarPage> {
     try {
       final doc = await FirebaseFirestore.instance
           .collection('presence').doc(widget.uid).get();
-      final tid = (doc.data()?['tenantId'] as String?)?.trim();
+      final data = doc.data();
+      final tid = (data?['tenantId'] as String?)?.trim();
+      final owner = data?['tenantOwner'] == true;
       if (!mounted) return;
-      setState(() => _myTenantId =
-          (tid == null || tid.isEmpty) ? 'default' : tid);
+      setState(() {
+        _myTenantId = (tid == null || tid.isEmpty) ? 'default' : tid;
+        _isTenantOwner = owner;
+      });
     } catch (_) {
-      if (mounted) setState(() => _myTenantId = 'default');
+      if (mounted) {
+        setState(() {
+          _myTenantId = 'default';
+          _isTenantOwner = false;
+        });
+      }
     }
   }
 
@@ -151,9 +171,24 @@ class _JobsCalendarPageState extends State<JobsCalendarPage> {
   bool _savedJobIsMine(SavedJob sj, Map<String, dynamic> raw) {
     if (widget.isMaster) return true;            // ο master τα βλέπει όλα
     if (sj.ownerUid == widget.uid) return true;  // δική του κατά owner
-    final jobTenant = (raw['tenantId'] as String?)?.trim();
-    if (jobTenant != null && jobTenant.isNotEmpty && jobTenant == _myTenantId) {
-      return true;                               // δική του κατά online φόρμα
+
+    // ── Κατά online φόρμα — ΜΟΝΟ για tenant owners ──
+    //
+    // ⚠️ ΔΙΑΡΡΟΗ ΠΟΥ ΔΙΟΡΘΩΝΕΤΑΙ: πριν αρκούσε να ταιριάζει το tenantId.
+    // Όμως ο master ΚΑΙ κάθε απλός admin του έχουν ΚΑΙ ΟΙ ΔΥΟ 'default'
+    // (όποιος δεν έχει δικό του tenant παίρνει 'default'). Αποτέλεσμα:
+    // ΚΑΘΕ admin έβλεπε στο ημερολόγιό του τις κρατήσεις από τη ΔΙΚΗ ΤΟΥ
+    // MASTER online φόρμα.
+    //
+    // Ο σωστός διαχωριστής ΔΕΝ είναι το tenantId (που συμπίπτει), αλλά το
+    // αν ο χρήστης έχει ΔΙΚΗ ΤΟΥ φόρμα: το πεδίο `tenantOwner`. Ένας απλός
+    // admin ΔΕΝ έχει, οπότε δεν δικαιούται καμία κράτηση φόρμας — βλέπει
+    // μόνο ό,τι έφτιαξε ή ανέλαβε ο ίδιος (μέσω ownerUid παραπάνω).
+    if (_isTenantOwner) {
+      final jobTenant = (raw['tenantId'] as String?)?.trim();
+      if (jobTenant != null && jobTenant.isNotEmpty && jobTenant == _myTenantId) {
+        return true;                             // δική του κατά online φόρμα
+      }
     }
     return false;
   }
@@ -330,10 +365,36 @@ class _JobsCalendarPageState extends State<JobsCalendarPage> {
       // Πριν κοιτούσαμε ΜΟΝΟ το createdBy, οπότε δουλειά που οδήγησε ο ίδιος
       // αλλά την είχε βγάλει άλλος admin ΔΕΝ φαινόταν με κλειστό μάτι.
       if (widget.isMaster && _onlyMine) {
-        return entries
-            .where((e) =>
-                e.job.createdBy == widget.uid || e.job.takenBy == widget.uid)
-            .toList();
+        return entries.where((e) {
+          if (e.job.createdBy == widget.uid) return true;
+          if (e.job.takenBy == widget.uid) return true;
+
+          // ⚠️ ΚΡΑΤΗΣΕΙΣ ΑΠΟ ΤΗΝ ONLINE ΦΟΡΜΑ:
+          // Τις γράφει ο SERVER (Cloud Function), ΟΧΙ ο χρήστης — οπότε το
+          // createdBy είναι ΚΕΝΟ. Ο server βάζει ownerUid + tenantId.
+          // Πριν, με κλειστό μάτι, οι δικές σου κρατήσεις από τη δική σου
+          // φόρμα ΕΞΑΦΑΝΙΖΟΝΤΑΝ, ενώ είναι απολύτως δικές σου.
+          final sj = e.savedJob;
+          if (sj != null) {
+            // Δική σου κατά owner (καλύπτει και τις κρατήσεις φόρμας, όπου
+            // ο server βάζει ownerUid = ο δικός σου uid).
+            if (sj.ownerUid == widget.uid) return true;
+
+            // Κατά tenant — ΜΟΝΟ για κρατήσεις από ONLINE ΦΟΡΜΑ.
+            // ⚠️ ΓΙΑΤΙ ΤΟ ΠΕΡΙΟΡΙΖΟΥΜΕ: ένας απλός admin του οργανισμού σου
+            // έχει ΚΙ ΑΥΤΟΣ tenantId 'default'. Αν δεχόμασταν το tenantId
+            // για ΚΑΘΕ αποθηκευμένη, οι ΧΕΙΡΟΚΙΝΗΤΑ αποθηκευμένες δουλειές
+            // ΤΟΥ θα εμφανίζονταν σε σένα με ΚΛΕΙΣΤΟ μάτι — δηλαδή ακριβώς
+            // το αντίθετο από αυτό που σημαίνει «μόνο οι δικές μου».
+            // Οι κρατήσεις φόρμας δεν έχουν αυτό το πρόβλημα: ο admin δεν
+            // έχει δική του φόρμα στον tenant σου.
+            if (sj.isFromPublicForm) {
+              final t = sj.tenantId;
+              if (t != null && t.isNotEmpty && t == _myTenantId) return true;
+            }
+          }
+          return false;
+        }).toList();
       }
       return entries;
     });
