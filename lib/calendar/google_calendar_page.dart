@@ -346,6 +346,136 @@ class _GoogleCalendarPageState extends State<GoogleCalendarPage> {
     );
   }
 
+  /// Επεξηγηματικό popup: τα χρώματα του Google Calendar + η κατάσταση
+  /// «μετατράπηκε σε δουλειά».
+  void _showColorLegend(BuildContext context, AppColors c) {
+    showDialog(
+      context: context,
+      builder: (dctx) => AlertDialog(
+        backgroundColor: c.card,
+        title: Text('Χρώματα ημερολογίου',
+            style: TextStyle(color: c.textMain, fontWeight: FontWeight.w800)),
+        content: SizedBox(
+          width: 320,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // ── Η ΔΙΚΗ ΣΟΥ σύμβαση χρωμάτων ──
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: c.amberSoft,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(children: [
+                        Container(
+                          width: 14, height: 14,
+                          decoration: const BoxDecoration(
+                            color: Color(0xFF0B8043), // Basil
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text('Πράσινο (Βασιλικός) = Βαν',
+                              style: TextStyle(
+                                  fontSize: 13.5,
+                                  fontWeight: FontWeight.w700,
+                                  color: c.textMain)),
+                        ),
+                      ]),
+                      const SizedBox(height: 8),
+                      Row(children: [
+                        Container(
+                          width: 14, height: 14,
+                          decoration: const BoxDecoration(
+                            color: Color(0xFF039BE5), // Peacock
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text('Μπλε (Peacock/Blueberry) = Ταξί',
+                              style: TextStyle(
+                                  fontSize: 13.5,
+                                  fontWeight: FontWeight.w700,
+                                  color: c.textMain)),
+                        ),
+                      ]),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 12),
+                // ── Κατάσταση μετατροπής ──
+                Row(children: [
+                  Container(
+                    width: 14, height: 14,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      border: Border.all(color: c.textFaint, width: 2),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                        'Δαχτυλίδι (τρύπα στη μέση) = έχει ήδη '
+                        'μετατραπεί σε δουλειά',
+                        style: TextStyle(fontSize: 13.5, color: c.textMain)),
+                  ),
+                ]),
+                const SizedBox(height: 14),
+                Text('Όλα τα χρώματα Google Calendar',
+                    style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: c.textFaint)),
+                const SizedBox(height: 4),
+                Text(
+                    'Το Google Calendar αναγνωρίζει ΜΟΝΟ αυτά τα 11 επίσημα '
+                    'χρώματα. Αν το Samsung Calendar δείχνει μια απόχρωση '
+                    'πιο κοντά σε κοβάλτιο, στο παρασκήνιο είναι ΠΑΛΙ ένα '
+                    'από τα παρακάτω — το Samsung απλώς το ζωγραφίζει λίγο '
+                    'διαφορετικά.',
+                    style: TextStyle(fontSize: 12, color: c.textFaint)),
+                const SizedBox(height: 10),
+                for (final entry in _googleEventColors.entries)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 4),
+                    child: Row(children: [
+                      Container(
+                        width: 16, height: 16,
+                        decoration: BoxDecoration(
+                          color: entry.value,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Text(_googleColorNames[entry.key] ?? '',
+                          style:
+                              TextStyle(fontSize: 13, color: c.textMain)),
+                    ]),
+                  ),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dctx).pop(),
+            child: Text('Κατάλαβα',
+                style:
+                    TextStyle(color: c.amberDeep, fontWeight: FontWeight.w700)),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
@@ -385,6 +515,11 @@ class _GoogleCalendarPageState extends State<GoogleCalendarPage> {
               foregroundColor: c.textMain,
               elevation: 0,
               actions: [
+                IconButton(
+                  tooltip: 'Τι σημαίνει κάθε χρώμα',
+                  icon: Icon(Icons.info_outline_rounded, color: c.textFaint),
+                  onPressed: () => _showColorLegend(context, c),
+                ),
                 if (_connected && _monthEvents.isNotEmpty)
                   IconButton(
                     onPressed: _converting ? null : () => _enterSelectMode(),
@@ -706,6 +841,21 @@ class _GoogleCalendarPageState extends State<GoogleCalendarPage> {
     '9':  Color(0xFF3F51B5), // Blueberry
     '10': Color(0xFF0B8043), // Basil
     '11': Color(0xFFD50000), // Tomato
+  };
+
+  /// Ίδια σειρά με το _googleEventColors — ονόματα όπως τα δίνει η Google.
+  static const Map<String, String> _googleColorNames = {
+    '1':  'Lavender',
+    '2':  'Sage',
+    '3':  'Grape',
+    '4':  'Flamingo',
+    '5':  'Banana',
+    '6':  'Tangerine',
+    '7':  'Peacock',
+    '8':  'Graphite',
+    '9':  'Blueberry',
+    '10': 'Basil',
+    '11': 'Tomato',
   };
 
   Color _eventColor(CalendarEvent e, AppColors c) =>
