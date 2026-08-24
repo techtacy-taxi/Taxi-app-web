@@ -4926,6 +4926,83 @@ async function finalizeSuccessfulPayment(db, pendingRef, pd, providerMeta) {
           ? "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Receipt:</td><td><a href=\"" + receiptResult.iviewUrl + "\">View online</a></td></tr>"
           : "";
 
+        // ── Αναλυτικά στοιχεία κράτησης στο email (EL + EN) ──
+        // Ισχύει και για τις online φόρμες (public_form) και για τα links
+        // πληρωμής που φτιάχνει ο admin από το app (manual_admin_link),
+        // γιατί και οι δύο ροές καταλήγουν εδώ με το ίδιο pd object.
+        const esc = (v) => String(v == null ? "" : v)
+          .replace(/&/g, "&amp;").replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+        const row = (label, value) => value === "" || value == null
+          ? ""
+          : "<tr><td style=\"padding:4px 12px 4px 0;color:#666;vertical-align:top;\">" +
+            label + ":</td><td>" + value + "</td></tr>";
+
+        const vLabelsEl = { taxi: "Ταξί", van: "Βαν", bus: "Λεωφορείο", shuttle: "Shuttle", any: "Οποιοδήποτε" };
+        const vLabelsEn = { taxi: "Taxi", van: "Van", bus: "Bus", shuttle: "Shuttle", any: "Any" };
+        const vehicleEl = pd.vehicleBreakdownNote
+          ? esc(pd.vehicleBreakdownNote)
+          : esc(vLabelsEl[pd.vehicleType] || vLabelsEl.taxi);
+        const vehicleEn = pd.vehicleBreakdownNote
+          ? esc(pd.vehicleBreakdownNote)
+          : esc(vLabelsEn[pd.vehicleType] || vLabelsEn.taxi);
+
+        const kmStr = (pd.routeKm && Number(pd.routeKm) > 0)
+          ? Number(pd.routeKm).toFixed(1) : "";
+        const paxEl = esc(pd.persons) + " άτομα · " + esc(pd.luggage) + " βαλίτσες" +
+          (pd.childSeatCount > 0 ? " · " + esc(pd.childSeatCount) + " παιδικά καθίσματα" : "");
+        const paxEn = esc(pd.persons) + " passengers · " + esc(pd.luggage) + " suitcases" +
+          (pd.childSeatCount > 0 ? " · " + esc(pd.childSeatCount) + " child seats" : "");
+        // Τα σχόλια σε <pre>-style ώστε να κρατούν τις αλλαγές γραμμής.
+        const noteHtml = pd.note
+          ? "<span style=\"white-space:pre-wrap;\">" + esc(pd.note) + "</span>" : "";
+        const invoiceEl = pd.wantsInvoice
+          ? [pd.invoiceCompanyName, pd.invoiceAfm ? "ΑΦΜ " + pd.invoiceAfm : ""]
+              .filter(Boolean).map(esc).join(" · ") || "Ναι"
+          : "";
+        const invoiceEn = pd.wantsInvoice
+          ? [pd.invoiceCompanyName, pd.invoiceAfm ? "VAT No. " + pd.invoiceAfm : ""]
+              .filter(Boolean).map(esc).join(" · ") || "Yes"
+          : "";
+        const totalAmount = Number(pd.depositAmount || 0) + Number(pd.price || 0);
+
+        const detailsEl =
+          row("Επιβάτες", paxEl) +
+          row("Όχημα", vehicleEl) +
+          row("Πτήση/Πλοίο", pd.flightOrShip ? esc(pd.flightOrShip) : "") +
+          row("Απόσταση", kmStr ? kmStr + " χλμ" : "") +
+          row("Όνομα", esc(pd.clientName)) +
+          row("Τηλέφωνο", esc(pd.clientPhone)) +
+          row("Τιμολόγιο", invoiceEl) +
+          row("Σχόλια", noteHtml);
+        const detailsEn =
+          row("Passengers", paxEn) +
+          row("Vehicle", vehicleEn) +
+          row("Flight/Ship", pd.flightOrShip ? esc(pd.flightOrShip) : "") +
+          row("Distance", kmStr ? kmStr + " km" : "") +
+          row("Name", esc(pd.clientName)) +
+          row("Phone", esc(pd.clientPhone)) +
+          row("Invoice", invoiceEn) +
+          row("Notes", noteHtml);
+
+        // Ανάλυση ποσού — ώστε ο πελάτης να ξέρει ακριβώς τι πλήρωσε.
+        const moneyEl =
+          "<tr><td colspan=\"2\" style=\"padding-top:10px;\"></td></tr>" +
+          row("Συνολική τιμή διαδρομής", "<b>" + totalAmount.toFixed(2) + "€</b>") +
+          row("Πληρώθηκε online", "<b style=\"color:#1a7f37;\">" + Number(pd.depositAmount).toFixed(2) + "€</b>" +
+            (pd.fullyPaid ? " (πλήρης πληρωμή)" : " (προκαταβολή)")) +
+          (pd.price > 0.005
+            ? row("Υπόλοιπο στον οδηγό", "<b>" + Number(pd.price).toFixed(2) + "€</b>")
+            : row("Υπόλοιπο στον οδηγό", "<b style=\"color:#1a7f37;\">0.00€ — δεν οφείλετε τίποτα</b>"));
+        const moneyEn =
+          "<tr><td colspan=\"2\" style=\"padding-top:10px;\"></td></tr>" +
+          row("Total trip price", "<b>€" + totalAmount.toFixed(2) + "</b>") +
+          row("Paid online", "<b style=\"color:#1a7f37;\">€" + Number(pd.depositAmount).toFixed(2) + "</b>" +
+            (pd.fullyPaid ? " (full payment)" : " (deposit)")) +
+          (pd.price > 0.005
+            ? row("Balance to the driver", "<b>€" + Number(pd.price).toFixed(2) + "</b>")
+            : row("Balance to the driver", "<b style=\"color:#1a7f37;\">€0.00 — nothing left to pay</b>"));
+
         const bodyEl =
           "<h2 style=\"color:#1a1a2e;\">Η κράτησή σας επιβεβαιώθηκε!</h2>" +
           "<p>Γεια σας " + pd.clientName + ",</p>" +
@@ -4934,10 +5011,8 @@ async function finalizeSuccessfulPayment(db, pendingRef, pd, providerMeta) {
           "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Booking ID:</td><td><b>#" + bookingNumber + "</b></td></tr>" +
           "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Διαδρομή:</td><td><b>" + pd.from + " → " + pd.to + "</b></td></tr>" +
           "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Ημερομηνία/ώρα:</td><td>" + whenStr + "</td></tr>" +
-          "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Πληρώθηκε:</td><td>" + pd.depositAmount + "€" + (pd.fullyPaid ? " (πλήρης πληρωμή)" : " (προκαταβολή)") + "</td></tr>" +
-          (pd.price > 0.005
-            ? "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Θα πληρώσετε στον οδηγό:</td><td><b>" + pd.price.toFixed(2) + "€</b></td></tr>"
-            : "") +
+          detailsEl +
+          moneyEl +
           markLineEl +
           iviewLineEl +
           "</table>" +
@@ -4957,10 +5032,8 @@ async function finalizeSuccessfulPayment(db, pendingRef, pd, providerMeta) {
           "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Booking ID:</td><td><b>#" + bookingNumber + "</b></td></tr>" +
           "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Route:</td><td><b>" + fromEn + " → " + toEn + "</b></td></tr>" +
           "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Date/time:</td><td>" + whenStr + "</td></tr>" +
-          "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">Paid:</td><td>€" + pd.depositAmount + (pd.fullyPaid ? " (full payment)" : " (deposit)") + "</td></tr>" +
-          (pd.price > 0.005
-            ? "<tr><td style=\"padding:4px 12px 4px 0;color:#666;\">To pay the driver:</td><td><b>€" + pd.price.toFixed(2) + "</b></td></tr>"
-            : "") +
+          detailsEn +
+          moneyEn +
           markLineEn +
           iviewLineEn +
           "</table>" +
