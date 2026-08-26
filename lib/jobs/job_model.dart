@@ -28,6 +28,16 @@ bool isLikelyFlightNumber(String? raw) {
   return RegExp(r'^([A-Z]\d|\d[A-Z]|[A-Z]{2,3})\d{1,4}[A-Z]?$').hasMatch(t);
 }
 
+/// URL προς το FlightRadar24 για τη ΣΗΜΕΡΙΝΗ πτήση με αυτόν τον αριθμό.
+/// Ο αριθμός κανονικοποιείται πρώτα (κεφαλαία, λατινικά, χωρίς κενά/παύλες)
+/// γιατί το FlightRadar24 δέχεται μόνο αυτή τη μορφή (π.χ. "Α3 889" → a3889).
+/// Επιστρέφει null αν δεν πρόκειται για αριθμό πτήσης (π.χ. όνομα πλοίου).
+String? flightRadarUrl(String? raw) {
+  if (!isLikelyFlightNumber(raw)) return null;
+  final code = normalizeFlightNumber(raw!).toLowerCase();
+  return 'https://www.flightradar24.com/data/flights/$code';
+}
+
 // ─── Status ───────────────────────────────────────────────────────────────────
 
 enum JobStatus { open, taken, boarded, expired, done, cancelled }
@@ -80,8 +90,17 @@ class Job {
   /// null/0 = καμία καθυστέρηση ή δεν έχει ελεγχθεί ακόμα.
   final int?       flightDelayMinutes;
   /// true = είτε δεν είναι πτήση, είτε ήδη ελέγχθηκε (ο server δεν θα
-  /// ξαναδοκιμάσει). false = εκκρεμεί έλεγχος (θα τρέξει 45' πριν το ραντεβού).
-  final bool       flightChecked;
+  /// ξαναδοκιμάσει). false = εκκρεμεί έλεγχος (θα τρέξει πριν το ραντεβού).
+  ///
+  /// ΓΙΑΤΙ nullable: αν κάποιο σημείο του κώδικα φτιάξει Job χωρίς να το
+  /// περάσει ρητά (π.χ. μετατροπή αποθηκευμένης κράτησης → δουλειά, ή
+  /// δημιουργία επιστροφής), το toMap() το ΥΠΟΛΟΓΙΖΕΙ από το flightOrShip.
+  /// Έτσι δεν μπορεί να «ξεχαστεί» και να μη γίνει ποτέ έλεγχος πτήσης.
+  final bool?      flightCheckedRaw;
+
+  /// Η πραγματική τιμή: ό,τι ήρθε από Firestore, αλλιώς υπολογισμένη.
+  bool get flightChecked =>
+      flightCheckedRaw ?? !isLikelyFlightNumber(flightOrShip);
   /// Λεπτά ΠΡΙΝ το ραντεβού για ειδοποιήσεις. 10 & 30 είναι πάντα κλειδωμένα·
   /// ο χρήστης μπορεί να προσθέσει κι άλλα (π.χ. 90). Ταξινομημένα φθίνουσα.
   final List<int>  reminderOffsets;
@@ -163,7 +182,7 @@ class Job {
     this.scheduledAt,
     this.originalScheduledAt,
     this.flightDelayMinutes,
-    this.flightChecked = true,
+    this.flightCheckedRaw,
     this.reminderOffsets = const [30, 10],
     required this.createdAt,
     this.takenAt,
@@ -271,7 +290,7 @@ class Job {
       scheduledAt:      (d['scheduledAt'] as Timestamp?)?.toDate(),
       originalScheduledAt: (d['originalScheduledAt'] as Timestamp?)?.toDate(),
       flightDelayMinutes: (d['flightDelayMinutes'] as num?)?.toInt(),
-      flightChecked:    (d['flightChecked'] as bool?) ?? true,
+      flightCheckedRaw: d['flightChecked'] as bool?,
       reminderOffsets:  _parseOffsets(d['reminderOffsets']),
       createdAt:        (d['createdAt']   as Timestamp?)?.toDate() ?? DateTime.now(),
       takenAt:          (d['takenAt']       as Timestamp?)?.toDate(),
@@ -402,7 +421,8 @@ class Job {
     origin: origin,
     scheduledAt: scheduledAt, reminderOffsets: reminderOffsets,
     originalScheduledAt: originalScheduledAt,
-    flightDelayMinutes: flightDelayMinutes, flightChecked: flightChecked,
+    flightDelayMinutes: flightDelayMinutes,
+    flightCheckedRaw: flightCheckedRaw,
     createdAt: createdAt, takenAt: takenAt,
     doneAt: doneAt, cancelledAt: cancelledAt, groupId: groupId,
     targetUids: targetUids, targetNames: targetNames, timeoutMins: timeoutMins,

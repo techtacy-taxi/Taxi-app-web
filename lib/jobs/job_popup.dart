@@ -27,6 +27,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:vibration/vibration.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../app_theme.dart';
 import '../notifications_service.dart';
 import 'job_model.dart';
@@ -549,29 +550,52 @@ class _JobPopupContentState extends State<_JobPopupContent>
                 if (job.flightOrShip != null &&
                     job.flightOrShip!.isNotEmpty) ...[
                   const SizedBox(height: 12),
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 12, vertical: 10),
-                    decoration: BoxDecoration(
-                      color:        c.amberSoft,
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                    child: Row(children: [
-                      Icon(Icons.flight_rounded,
-                          size: 17, color: c.amberDeep),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text('Πτήση / Πλοίο: ${job.flightOrShip!}',
-                            style: TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w600,
-                                color: c.isDark
-                                    ? c.amberDeep
-                                    : const Color(0xFF633806))),
+                  Builder(builder: (_) {
+                    // Αν είναι αριθμός πτήσης → άνοιγμα FlightRadar24 με tap.
+                    final frUrl = flightRadarUrl(job.flightOrShip);
+                    final box = Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 10),
+                      decoration: BoxDecoration(
+                        color:        c.amberSoft,
+                        borderRadius: BorderRadius.circular(14),
                       ),
-                    ]),
-                  ),
+                      child: Row(children: [
+                        Icon(frUrl != null
+                                ? Icons.flight_rounded
+                                : Icons.directions_boat_rounded,
+                            size: 17, color: c.amberDeep),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text('Πτήση / Πλοίο: ${job.flightOrShip!}',
+                              style: TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w600,
+                                  decoration: frUrl != null
+                                      ? TextDecoration.underline
+                                      : null,
+                                  color: c.isDark
+                                      ? c.amberDeep
+                                      : const Color(0xFF633806))),
+                        ),
+                        if (frUrl != null)
+                          Icon(Icons.open_in_new_rounded,
+                              size: 14, color: c.amberDeep),
+                      ]),
+                    );
+                    if (frUrl == null) return box;
+                    return InkWell(
+                      borderRadius: BorderRadius.circular(14),
+                      onTap: () async {
+                        try {
+                          await launchUrl(Uri.parse(frUrl),
+                              mode: LaunchMode.externalApplication);
+                        } catch (_) {}
+                      },
+                      child: box,
+                    );
+                  }),
                 ],
 
                 // ── Σημειώσεις ──

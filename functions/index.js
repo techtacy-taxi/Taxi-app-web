@@ -7815,13 +7815,22 @@ exports.checkFlightDelays = onSchedule(
   async () => {
     const db = getFirestore();
     const now = new Date();
-    const windowStart = new Date(now.getTime() + 40 * 60 * 1000);
-    const windowEnd = new Date(now.getTime() + 50 * 60 * 1000);
+    // Παράθυρο ελέγχου: από ΤΩΡΑ έως +45 λεπτά.
+    // ΓΙΑΤΙ ΟΧΙ στενό παράθυρο γύρω στα 45': αν κάποιος πάρει τη δουλειά
+    // π.χ. 20 λεπτά πριν το ραντεβού, ένα στενό παράθυρο 40-50' θα την είχε
+    // ήδη προσπεράσει και δεν θα γινόταν ΠΟΤΕ αναζήτηση πτήσης. Με εύρος
+    // 0-45' πιάνεται πάντα στην επόμενη εκτέλεση (κάθε 5'), όσο αργά κι αν
+    // αναληφθεί. Το flightChecked εξασφαλίζει ότι γίνεται ΜΙΑ μόνο κλήση.
+    const windowStart = now;
+    const windowEnd = new Date(now.getTime() + 45 * 60 * 1000);
     const { Timestamp } = require("firebase-admin/firestore");
 
     let snap;
     try {
-      snap = await db.collection("saved_jobs")
+      // ⚠️ ΚΡΙΣΙΜΟ: collection "jobs" (ΟΧΙ saved_jobs) — μόνο εκεί υπάρχουν
+      // τα πεδία status/takenBy. Τα saved_jobs είναι αποθηκευμένες
+      // κρατήσεις που ΔΕΝ έχουν ανατεθεί σε οδηγό.
+      snap = await db.collection("jobs")
         .where("status", "==", "taken")
         .where("scheduledAt", ">=", Timestamp.fromDate(windowStart))
         .where("scheduledAt", "<=", Timestamp.fromDate(windowEnd))
@@ -7846,7 +7855,12 @@ exports.checkFlightDelays = onSchedule(
       }
       try {
         const flightNum = normalizeFlightNumber(flightRaw);
-        const dateLocal = athensNaiveDate(now).toISOString().slice(0, 10);
+        // ΚΡΙΣΙΜΟ: η ημερομηνία πρέπει να είναι αυτή ΤΟΥ ΡΑΝΤΕΒΟΥ, όχι του
+        // "τώρα". Γύρω από τα μεσάνυχτα διαφέρουν: στις 23:50 με ραντεβού
+        // 00:30 της επόμενης, το "σήμερα" θα έδινε λάθος μέρα → 0 αποτελέσματα.
+        const jobDate = job.scheduledAt && job.scheduledAt.toDate
+          ? job.scheduledAt.toDate() : now;
+        const dateLocal = athensNaiveDate(jobDate).toISOString().slice(0, 10);
         const status = await fetchFlightStatus(access.apiKey, flightNum, dateLocal);
         await incrementAeroDataBoxUsage(db);
 

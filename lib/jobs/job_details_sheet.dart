@@ -786,16 +786,42 @@ class JobDetailsSheet extends StatelessWidget {
                         fontSize: 14.5, fontWeight: FontWeight.w700,
                         color: c.textMain)),
               if (job.flightOrShip != null && job.flightOrShip!.isNotEmpty)
-                Row(children: [
-                  Icon(Icons.flight_land_rounded,
-                      size: 14, color: c.textFaint),
-                  const SizedBox(width: 4),
-                  Flexible(
-                    child: Text(job.flightOrShip!,
-                        style: TextStyle(
-                            fontSize: 12, color: c.textFaint)),
-                  ),
-                ])
+                Builder(builder: (_) {
+                  // Αν είναι αριθμός πτήσης → tappable link στο FlightRadar24
+                  // (σημερινή πτήση). Αν είναι πλοίο/όνομα → απλό κείμενο.
+                  final frUrl = flightRadarUrl(job.flightOrShip);
+                  final row = Row(children: [
+                    Icon(frUrl != null
+                            ? Icons.flight_land_rounded
+                            : Icons.directions_boat_rounded,
+                        size: 14,
+                        color: frUrl != null ? c.blueDeep : c.textFaint),
+                    const SizedBox(width: 4),
+                    Flexible(
+                      child: Text(job.flightOrShip!,
+                          style: TextStyle(
+                              fontSize: 12,
+                              color: frUrl != null ? c.blueDeep : c.textFaint,
+                              decoration: frUrl != null
+                                  ? TextDecoration.underline
+                                  : null)),
+                    ),
+                    if (frUrl != null) ...[
+                      const SizedBox(width: 3),
+                      Icon(Icons.open_in_new_rounded, size: 11, color: c.blueDeep),
+                    ],
+                  ]);
+                  if (frUrl == null) return row;
+                  return InkWell(
+                    onTap: () async {
+                      final uri = Uri.parse(frUrl);
+                      try {
+                        await launchUrl(uri, mode: LaunchMode.externalApplication);
+                      } catch (_) {}
+                    },
+                    child: row,
+                  );
+                })
               else if (phone.isNotEmpty)
                 Text(phone,
                     style: TextStyle(

@@ -1130,9 +1130,6 @@ class _JobFormPageState extends State<JobFormPage> {
       clientPhone:      _clientPhoneCtrl.text.trim().isNotEmpty ? _clientPhoneCtrl.text.trim() : null,
       clientEmail:      _clientEmailCtrl.text.trim().isNotEmpty ? _clientEmailCtrl.text.trim() : null,
       flightOrShip:     _flightShipCtrl.text.trim().isNotEmpty ? _flightShipCtrl.text.trim() : null,
-      // Αν είναι πράγματι πτήση → false (εκκρεμεί έλεγχος από το server 45'
-      // πριν το ραντεβού). Αν όχι πτήση ή δεν επεξεργαστήκαμε το πεδίο → true.
-      flightChecked:    !isLikelyFlightNumber(_flightShipCtrl.text.trim()),
       isReturn:         widget.editJob?.isReturn ?? widget.editSavedJob?.isReturn ?? false,
       availableOnly:    _availableOnly,
       exclusiveTarget:  _exclusiveTarget,
@@ -1258,6 +1255,18 @@ class _JobFormPageState extends State<JobFormPage> {
         // Resend δουλειάς που δεν έχει ανατεθεί
         final isUntaken = widget.editJob!.takenBy == null;
         final resendMap = job.toMap();
+        // ── Πτήσεις: μην ξαναχρεωθεί κλήση API χωρίς λόγο ──────────────
+        // Το job.toMap() θέτει flightChecked=false για κάθε πτήση. Σε
+        // ΕΠΕΞΕΡΓΑΣΙΑ όμως, αν ο αριθμός πτήσης ΔΕΝ άλλαξε και ο έλεγχος
+        // έχει ήδη γίνει, το μηδενίζαμε και γινόταν 2η κλήση (και 2η
+        // χρέωση). Ξαναελέγχουμε ΜΟΝΟ αν άλλαξε πράγματι ο αριθμός.
+        final oldFlight = (widget.editJob!.flightOrShip ?? '').trim();
+        final newFlight = (job.flightOrShip ?? '').trim();
+        final flightUnchanged = normalizeFlightNumber(oldFlight) ==
+            normalizeFlightNumber(newFlight);
+        if (flightUnchanged && widget.editJob!.flightChecked) {
+          resendMap['flightChecked'] = true;
+        }
         if (isUntaken) {
           // Ξανα-βγαίνει ΑΠΟ ΤΗΝ ΑΡΧΗ με τα δεδομένα της φόρμας —
           // σαν νέα δουλειά, σεβόμενη ομάδα/οδηγό/διαθέσιμους.
