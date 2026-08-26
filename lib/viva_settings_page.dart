@@ -307,6 +307,7 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
               _logoUrlCtrl.text        = bi['logoUrl'] as String? ?? '';
               _mapsApiKeyCtrl.text     = bi['mapsApiKey'] as String? ?? '';
               _hasOwnResendKey         = bi['hasOwnResendKey'] as bool? ?? false;
+              _hasOwnAeroKey           = bi['hasAeroDataBoxKey'] as bool? ?? false;
               _emailsEnabled           = bi['emailsEnabled'] as bool? ?? true;
               _afmCtrl.text            = bi['afm'] as String? ?? '';
               _doyCtrl.text            = bi['doy'] as String? ?? '';
@@ -637,7 +638,7 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
         body: const Center(child: CircularProgressIndicator()),
       );
     }
-    final tabCount = _isDefault ? 4 : 5;
+    final tabCount = _isDefault ? 5 : 6;   // +1: καρτέλα «Πτήσεις»
     return DefaultTabController(
       length: tabCount,
       child: Scaffold(
@@ -679,6 +680,7 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
               if (!_isDefault)
                 const Tab(icon: Icon(Icons.mail_rounded, size: 20), text: 'Email'),
               const Tab(icon: Icon(Icons.receipt_long_rounded, size: 20), text: 'Απόδειξη'),
+              const Tab(icon: Icon(Icons.flight_land_rounded, size: 20), text: 'Πτήσεις'),
             ],
           ),
         ),
@@ -695,6 +697,7 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
                     _buildBusinessTab(),
                     if (!_isDefault) _buildEmailTab(),
                     _buildReceiptTab(),
+                    _buildFlightTab(),
                   ],
                 ),
               ),
@@ -1248,6 +1251,51 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
   }
 
   // ─── Tab 4: Email (Resend) — μόνο για tenants, όχι για default ──────────
+  // ── Πτήσεις (AeroDataBox) ───────────────────────────────────────────────
+  final _aeroKeyCtrl = TextEditingController();
+  bool _savingAeroKey = false;
+  bool _hasOwnAeroKey = false;
+
+  Future<void> _saveAeroKey() async {
+    setState(() => _savingAeroKey = true);
+    try {
+      // Ο master (tenant "default") έχει ΚΕΝΤΡΙΚΟ κλειδί, όχι per-tenant —
+      // η updateTenantAeroDataBoxKey απορρίπτει ρητά το "default".
+      if (_isDefault) {
+        await FirebaseFunctions.instance
+            .httpsCallable('updateGlobalAeroDataBoxKey')
+            .call({'apiKey': _aeroKeyCtrl.text.trim()});
+      } else {
+        await FirebaseFunctions.instance
+            .httpsCallable('updateTenantAeroDataBoxKey')
+            .call({
+          'tenantId': _tenantId,
+          'apiKey': _aeroKeyCtrl.text.trim(),
+        });
+      }
+      final had = _aeroKeyCtrl.text.trim().isNotEmpty;
+      setState(() {
+        _hasOwnAeroKey = had;
+        _aeroKeyCtrl.clear();
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(had
+              ? 'Αποθηκεύτηκε — οι πληροφορίες πτήσεων θα χρησιμοποιούν το δικό σου κλειδί.'
+              : 'Αφαιρέθηκε — θα χρησιμοποιείται το κεντρικό κλειδί (αν σου έχει δοθεί πρόσβαση).'),
+          backgroundColor: const Color(0xFF1E8E3E),
+        ));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Σφάλμα: $e'), backgroundColor: Colors.red.shade700));
+      }
+    } finally {
+      if (mounted) setState(() => _savingAeroKey = false);
+    }
+  }
+
   Future<void> _saveResendKey() async {
     setState(() => _savingResendKey = true);
     try {
@@ -1277,6 +1325,132 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
     } finally {
       if (mounted) setState(() => _savingResendKey = false);
     }
+  }
+
+  // ─── Tab: Πτήσεις (AeroDataBox) ──────────────────────────────────────────
+  Widget _buildFlightTab() {
+    return _tabWrap(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            Icon(Icons.flight_land_rounded, size: 18, color: Colors.indigo[700]),
+            const SizedBox(width: 6),
+            const Expanded(
+              child: Text('Πληροφορίες πτήσεων',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+            ),
+            if (_hasOwnAeroKey)
+              const Text('Ενεργό ✓',
+                  style: TextStyle(
+                      fontSize: 11.5,
+                      color: Color(0xFF1E8E3E),
+                      fontWeight: FontWeight.w700)),
+          ]),
+          const SizedBox(height: 8),
+          const Text(
+            'Όταν μια δουλειά έχει αριθμό πτήσης, η εφαρμογή ελέγχει αυτόματα '
+            '45 λεπτά πριν το ραντεβού αν η πτήση έχει καθυστέρηση — και '
+            'μετακινεί μόνη της την ώρα του ραντεβού, δείχνοντας και την '
+            'αρχική ώρα. Ο έλεγχος γίνεται ΜΟΝΟ αφού κάποιος οδηγός αναλάβει '
+            'τη δουλειά (μία φορά ανά δουλειά).',
+            style: TextStyle(fontSize: 12.5, height: 1.45),
+          ),
+          const SizedBox(height: 14),
+
+          // ── Πώς φτιάχνεις δικό σου κλειδί ──
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: const Color(0xFFEFF4FF),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: const Color(0xFFC9D9F5)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: const [
+                Text('Πώς φτιάχνεις δικό σου κλειδί (δωρεάν)',
+                    style: TextStyle(
+                        fontWeight: FontWeight.bold, fontSize: 12.5)),
+                SizedBox(height: 8),
+                Text(
+                  '1.  Μπες στο rapidapi.com και κάνε δωρεάν εγγραφή '
+                  '(με email ή λογαριασμό Google).\n\n'
+                  '2.  Πάνω στο πλαίσιο αναζήτησης γράψε «AeroDataBox» και '
+                  'άνοιξε το πρώτο αποτέλεσμα.\n\n'
+                  '3.  Δεξιά διάλεξε το πλάνο «Basic» (Free) και πάτα '
+                  '«Subscribe». Δεν χρειάζεται πιστωτική κάρτα.\n\n'
+                  '4.  Στη σελίδα του API θα δεις ένα πεδίο με τίτλο '
+                  '«X-RapidAPI-Key» και έναν μακρύ κωδικό δίπλα. Αυτό είναι '
+                  'το κλειδί σου.\n\n'
+                  '5.  Αντέγραψέ το και επικόλλησέ το στο πεδίο παρακάτω, '
+                  'μετά πάτα «Αποθήκευση».',
+                  style: TextStyle(fontSize: 12, height: 1.5),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 14),
+
+          const Text('Το κλειδί σου (X-RapidAPI-Key)',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12.5)),
+          const SizedBox(height: 6),
+          TextField(
+            controller: _aeroKeyCtrl,
+            obscureText: true,
+            decoration: InputDecoration(
+              hintText: _hasOwnAeroKey
+                  ? 'Έχει ήδη οριστεί — γράψε νέο για αλλαγή'
+                  : 'Επικόλλησε εδώ το κλειδί σου',
+              isDense: true,
+              border: const OutlineInputBorder(),
+            ),
+          ),
+          const SizedBox(height: 6),
+          const Text(
+            'Άφησε το κενό και πάτα Αποθήκευση για να ΑΦΑΙΡΕΣΕΙΣ το δικό σου '
+            'κλειδί.',
+            style: TextStyle(fontSize: 11, color: Colors.black54),
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              onPressed: _savingAeroKey ? null : _saveAeroKey,
+              icon: _savingAeroKey
+                  ? const SizedBox(
+                      width: 16, height: 16,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: Colors.white))
+                  : const Icon(Icons.save_rounded, size: 18),
+              label: Text(_savingAeroKey ? 'Αποθήκευση…' : 'Αποθήκευση κλειδιού'),
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(11),
+            decoration: BoxDecoration(
+              color: const Color(0xFFFFF8E6),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: const Color(0xFFF0DCA8)),
+            ),
+            child: const Text(
+              'Με δικό σου κλειδί: όλες οι δουλειές σου έχουν πληροφορίες '
+              'πτήσεων, χωρίς καμία χρέωση από εμάς — πληρώνεις μόνο ό,τι '
+              'χρεώνει το δικό σου πλάνο RapidAPI (το δωρεάν πλάνο αρκεί για '
+              'εκατοντάδες δουλειές τον μήνα).\n\n'
+              'Χωρίς δικό σου κλειδί: χρησιμοποιείται το κεντρικό κλειδί, '
+              'αλλά μόνο αν σου έχει δοθεί πρόσβαση — και μπορεί να ισχύει '
+              'μικρή χρέωση ανά δουλειά.',
+              style: TextStyle(fontSize: 11.5, height: 1.45),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _buildEmailTab() {

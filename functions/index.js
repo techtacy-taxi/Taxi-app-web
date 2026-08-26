@@ -7425,6 +7425,7 @@ exports.getTenantBusinessInfo = onRequest(
         mapEnabled:     t.mapEnabled     !== false,
         placesEnabled:  t.placesEnabled  !== false,
         hasOwnResendKey: t.hasOwnResendKey === true,
+        hasAeroDataBoxKey: t.hasAeroDataBoxKey === true,
         emailsEnabled:   t.emailsEnabled  !== false,
         // ── Φορολογικά στοιχεία + πάροχος ηλεκτρονικής τιμολόγησης ──
         afm:            t.afm            || null,

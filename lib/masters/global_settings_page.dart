@@ -1043,6 +1043,37 @@ class AdminCard extends StatelessWidget {
           ]),
         ],
 
+        // ── Πληροφορίες πτήσεων (AeroDataBox) ──────────────────────────
+        // Ισχύει ΚΑΙ για οδηγούς ΚΑΙ για διαχειριστές — όποιος αναλαμβάνει
+        // δουλειά μπορεί να χρειαστεί ενημέρωση καθυστέρησης πτήσης.
+        // ΟΧΙ για τον master (έχει πάντα πρόσβαση, χωρίς διακόπτη/χρέωση).
+        // Default ΚΛΕΙΣΤΟ: το flightApiEnabled λείπει → false.
+        if (!isMaster && !isPending) ...[
+          const SizedBox(height: 9),
+          Row(children: [
+            Expanded(
+              child: _priceRow(context, c,
+                  icon: Icons.flight_land_rounded,
+                  label: 'Πληροφορίες πτήσεων',
+                  enabled: flightApiEnabled,
+                  price: flightApiFee,
+                  priceSuffix: '€ / δουλειά',
+                  decimals: 2,
+                  onToggle: (v) => _toggleField('flightApiEnabled', v),
+                  onEditPrice: () => _editPerBookingPrice(context,
+                      field: 'flightApiFeePerBooking',
+                      label: 'Χρέωση πληροφοριών πτήσεων',
+                      current: flightApiFee,
+                      currentEnabled: flightApiEnabled)),
+            ),
+            IconButton(
+              icon: Icon(Icons.help_outline_rounded, size: 19, color: c.textFaint),
+              tooltip: 'Τι είναι αυτό;',
+              onPressed: () => _showFlightApiInfoDialog(context),
+            ),
+          ]),
+        ],
+
         if (isAdmin || isMaster) ...[
           const SizedBox(height: 9),
           _priceRow(context, c,
@@ -1069,32 +1100,6 @@ class AdminCard extends StatelessWidget {
               onToggle: (v) => _toggleField('icsExportEnabled', v),
               onEditPrice: () => _editPrice(context,
                   field: 'icsPrice', label: 'Δουλειές στο ημερολόγιό μου', current: icsPrice)),
-          // ── Πληροφορίες πτήσεων (AeroDataBox) — δείχνει καθυστερήσεις ──
-          // Ενεργό μόνο με το ΚΕΝΤΡΙΚΟ κλειδί (αν ο tenant του χρήστη ΔΕΝ
-          // έχει δικό του κλειδί — αλλιώς έχει πάντα πρόσβαση, χωρίς αυτό
-          // το switch/χρέωση, γιατί το δικό του κλειδί/κόστος).
-          Row(children: [
-            Expanded(
-              child: _priceRow(context, c,
-                  icon: Icons.flight_land_rounded,
-                  label: 'Πληροφορίες πτήσεων',
-                  enabled: flightApiEnabled,
-                  price: flightApiFee,
-                  priceSuffix: '€ / δουλειά',
-                  decimals: 2,
-                  onToggle: (v) => _toggleField('flightApiEnabled', v),
-                  onEditPrice: () => _editPerBookingPrice(context,
-                      field: 'flightApiFeePerBooking',
-                      label: 'Χρέωση πληροφοριών πτήσεων',
-                      current: flightApiFee,
-                      currentEnabled: flightApiEnabled)),
-            ),
-            IconButton(
-              icon: Icon(Icons.help_outline_rounded, size: 19, color: c.textFaint),
-              tooltip: 'Τι είναι αυτό;',
-              onPressed: () => _showFlightApiInfoDialog(context),
-            ),
-          ]),
 
           const SizedBox(height: 6),
           _onlineFormBlock(context, c,
