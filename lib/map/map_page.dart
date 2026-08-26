@@ -21,6 +21,7 @@ import '../fcm_service.dart';
 import '../owner_alerts.dart';
 import '../owner_home_page.dart';
 import '../public_booking_alert.dart';
+import '../jobs/flight_delay_alert.dart';
 import '../permissions.dart';
 import '../access_guard.dart';
 import '../profile_form.dart';
@@ -219,6 +220,9 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
     }
     try { _startLocationUpdates(); } catch (_) {}
     try { _startVoiceListener(); } catch (_) {}
+    // Ειδοποίηση «Η ώρα άλλαξε λόγω πτήσης» — για ΚΑΘΕ συνδεδεμένο χρήστη
+    // (δημιουργός ΚΑΙ οδηγός βλέπουν popup, όχι μόνο admin/master).
+    try { FlightDelayAlerts.instance.start(); } catch (_) {}
     if ((_isAdmin || _isMaster) && _uid != null) {
       try { OwnerAlerts.instance.start(_uid!); } catch (_) {}
     }
@@ -396,6 +400,7 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
   @override
   void dispose() {
     openSavedJobsRequest.removeListener(_onOpenSavedJobsRequest);
+    try { FlightDelayAlerts.instance.dispose(); } catch (_) {}
     WidgetsBinding.instance.removeObserver(this);
     ThemeController.mode.removeListener(_applyMapStyle);
     MapThemeController.mode.removeListener(_applyMapStyle);

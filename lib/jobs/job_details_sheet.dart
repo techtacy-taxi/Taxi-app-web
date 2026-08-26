@@ -21,6 +21,7 @@ import 'ics_export_service.dart';
 import 'ics_access.dart';
 import 'job_map_distance.dart';
 import '../widgets/vehicle_type_icon.dart';
+import 'flight_delay_badge.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ΚΟΙΝΗ ΡΟΗ «ΤΕΛΟΣ ΔΙΑΔΡΟΜΗΣ» (+ προαιρετική ΕΠΙΣΤΡΟΦΗ)
@@ -573,7 +574,8 @@ class JobDetailsSheet extends StatelessWidget {
     final fgSoft = isNow ? const Color(0xFFBA7517) : const Color(0xFF185FA5);
     final chipBg = isNow ? const Color(0xFF412402) : const Color(0xFF0C447C);
 
-    return Container(
+    return Column(children: [
+      Container(
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 11),
       decoration: BoxDecoration(
@@ -617,7 +619,9 @@ class JobDetailsSheet extends StatelessWidget {
           ]),
         ),
       ]),
-    );
+      ),
+      FlightDelayTimeBlock(job: job),
+    ]);
   }
 
   // ─── 2) Μπλοκ πληρωμής (στυλ popup) ───────────────────────────────────────

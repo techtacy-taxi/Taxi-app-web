@@ -8,6 +8,7 @@ import 'job_model.dart';
 import 'job_service.dart';
 import 'job_shared_widgets.dart';
 import 'job_details_sheet.dart';
+import 'flight_delay_badge.dart';
 import '../voice/voice_models.dart';
 
 class AdminJobCard extends StatelessWidget {
@@ -152,6 +153,7 @@ class AdminJobCard extends StatelessWidget {
                 ),
               ]),
             ),
+            FlightDelaySubline(job: job),
           ],
           const SizedBox(height: 8),
           // ── Ταινία «ΠΡΟΠΛΗΡΩΜΕΝΗ» — μόνο όταν πληρώθηκε ΟΛΟΚΛΗΡΗ η τιμή

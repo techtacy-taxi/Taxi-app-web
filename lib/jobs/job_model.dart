@@ -4,6 +4,30 @@
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+// ─── Πτήση ή πλοίο; ─────────────────────────────────────────────────────
+// ΙΔΙΑ λογική με το functions/index.js (isLikelyFlightNumber) — πρέπει να
+// μένουν συγχρονισμένα. Πρότυπο IATA/ICAO: 2-3 αλφαριθμητικοί χαρακτήρες
+// κωδικού αερογραμμής (π.χ. A3, LH, 9W) + 1-4 ψηφία + προαιρετικό γράμμα.
+const Map<String, String> _greekToLatinLookalike = {
+  'Α': 'A', 'Β': 'B', 'Ε': 'E', 'Ζ': 'Z', 'Η': 'H', 'Ι': 'I', 'Κ': 'K',
+  'Μ': 'M', 'Ν': 'N', 'Ο': 'O', 'Ρ': 'P', 'Τ': 'T', 'Υ': 'Y', 'Χ': 'X',
+  'α': 'a', 'β': 'b', 'ε': 'e', 'ζ': 'z', 'η': 'h', 'ι': 'i', 'κ': 'k',
+  'μ': 'm', 'ν': 'n', 'ο': 'o', 'ρ': 'p', 'τ': 't', 'υ': 'y', 'χ': 'x',
+};
+
+String normalizeFlightNumber(String raw) {
+  var t = raw.trim();
+  t = t.split('').map((ch) => _greekToLatinLookalike[ch] ?? ch).join();
+  t = t.replaceAll(RegExp(r'[\s\-.]'), '').toUpperCase();
+  return t;
+}
+
+bool isLikelyFlightNumber(String? raw) {
+  if (raw == null || raw.trim().isEmpty) return false;
+  final t = normalizeFlightNumber(raw);
+  return RegExp(r'^([A-Z]\d|\d[A-Z]|[A-Z]{2,3})\d{1,4}[A-Z]?$').hasMatch(t);
+}
+
 // ─── Status ───────────────────────────────────────────────────────────────────
 
 enum JobStatus { open, taken, boarded, expired, done, cancelled }
@@ -49,6 +73,15 @@ class Job {
   /// (μετατροπή από Google Calendar) | 'manual' (νέα δημιουργία στη φόρμα).
   final String?    origin;
   final DateTime?  scheduledAt;
+  /// Αρχική ώρα ραντεβού ΠΡΙΝ αλλάξει λόγω καθυστέρησης πτήσης — null αν
+  /// δεν έχει αλλάξει ποτέ. Χρησιμοποιείται για να δείχνουμε «Αρχικά ήταν X».
+  final DateTime?  originalScheduledAt;
+  /// Καθυστέρηση πτήσης σε λεπτά, από το τελευταίο έλεγχο AeroDataBox.
+  /// null/0 = καμία καθυστέρηση ή δεν έχει ελεγχθεί ακόμα.
+  final int?       flightDelayMinutes;
+  /// true = είτε δεν είναι πτήση, είτε ήδη ελέγχθηκε (ο server δεν θα
+  /// ξαναδοκιμάσει). false = εκκρεμεί έλεγχος (θα τρέξει 45' πριν το ραντεβού).
+  final bool       flightChecked;
   /// Λεπτά ΠΡΙΝ το ραντεβού για ειδοποιήσεις. 10 & 30 είναι πάντα κλειδωμένα·
   /// ο χρήστης μπορεί να προσθέσει κι άλλα (π.χ. 90). Ταξινομημένα φθίνουσα.
   final List<int>  reminderOffsets;
@@ -128,6 +161,9 @@ class Job {
     this.sourceName,
     this.origin,
     this.scheduledAt,
+    this.originalScheduledAt,
+    this.flightDelayMinutes,
+    this.flightChecked = true,
     this.reminderOffsets = const [30, 10],
     required this.createdAt,
     this.takenAt,
@@ -233,6 +269,9 @@ class Job {
       sourceName:       d['sourceName'],
       origin:           d['origin'] as String?,
       scheduledAt:      (d['scheduledAt'] as Timestamp?)?.toDate(),
+      originalScheduledAt: (d['originalScheduledAt'] as Timestamp?)?.toDate(),
+      flightDelayMinutes: (d['flightDelayMinutes'] as num?)?.toInt(),
+      flightChecked:    (d['flightChecked'] as bool?) ?? true,
       reminderOffsets:  _parseOffsets(d['reminderOffsets']),
       createdAt:        (d['createdAt']   as Timestamp?)?.toDate() ?? DateTime.now(),
       takenAt:          (d['takenAt']       as Timestamp?)?.toDate(),
@@ -315,6 +354,9 @@ class Job {
     if (sourceName  != null) 'sourceName':  sourceName,
     if (origin      != null) 'origin':      origin,
     if (scheduledAt != null) 'scheduledAt': Timestamp.fromDate(scheduledAt!),
+    // flightChecked ΠΡΕΠΕΙ να μπει false όταν πρόκειται όντως για πτήση,
+    // αλλιώς ο server-side scheduler (checkFlightDelays) δεν θα τη βρει.
+    'flightChecked': flightChecked,
     'reminderOffsets': reminderOffsets,
     'createdAt':        FieldValue.serverTimestamp(),
     if (groupId     != null) 'groupId':     groupId,
@@ -359,6 +401,8 @@ class Job {
     takenByName: takenByName, note: note, sourceId: sourceId, sourceName: sourceName,
     origin: origin,
     scheduledAt: scheduledAt, reminderOffsets: reminderOffsets,
+    originalScheduledAt: originalScheduledAt,
+    flightDelayMinutes: flightDelayMinutes, flightChecked: flightChecked,
     createdAt: createdAt, takenAt: takenAt,
     doneAt: doneAt, cancelledAt: cancelledAt, groupId: groupId,
     targetUids: targetUids, targetNames: targetNames, timeoutMins: timeoutMins,

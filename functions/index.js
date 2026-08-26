@@ -2153,8 +2153,14 @@ exports.onJobBilling = onDocumentUpdated("jobs/{jobId}", async (event) => {
     // Γι' αυτό ελέγχουμε != 0 (όχι > 0).
     const chargeSource = commission    !== 0 && !selfPosted;
     const chargeApp    = appCommission  >  0 && !driverIsMaster;
+    // Χρέωση API πτήσεων — μπήκε στο job από το checkFlightDelays όταν
+    // όντως έγινε κλήση με το global κλειδί ΚΑΙ ο οδηγός έχει ενεργό
+    // flightApiEnabled με ποσό > 0. Ίδιο σημείο χρέωσης με appCommission.
+    const flightFee     = Number(job.flightFeeApplicable) || 0;
+    const chargeFlight  = flightFee > 0 && !driverIsMaster;
     const billedTotal  = (chargeSource ? commission : 0) +
-                         (chargeApp    ? appCommission : 0);
+                         (chargeApp    ? appCommission : 0) +
+                         (chargeFlight ? flightFee : 0);
 
     const driverRef = db.collection("presence").doc(driverUid);
     // Αρνητικό γιαούρτι → προστίθεται στον τζίρο (ο οδηγός το εισέπραξε).
@@ -2172,7 +2178,7 @@ exports.onJobBilling = onDocumentUpdated("jobs/{jobId}", async (event) => {
     tx.update(driverRef, driverUpd);
 
     // Αν δεν υπάρχει ούτε χρέωση ούτε πίστωση → τέλος.
-    if (!chargeSource && !chargeApp) return { ok: true, billed: 0 };
+    if (!chargeSource && !chargeApp && !chargeFlight) return { ok: true, billed: 0 };
 
     const monthKey = _monthKeyJS(job.doneAt ? job.doneAt.toDate() : new Date());
     const base = {
@@ -2208,6 +2214,15 @@ exports.onJobBilling = onDocumentUpdated("jobs/{jobId}", async (event) => {
         ...base,
         category:      "app_commission",
         amount:        appCommission,
+        recipientUid:  MASTER_RECIPIENT,
+        recipientName: "Master",
+      });
+    }
+    if (chargeFlight) {
+      tx.set(db.collection("billing_tx").doc(), {
+        ...base,
+        category:      "flight_api_fee",
+        amount:        flightFee,
         recipientUid:  MASTER_RECIPIENT,
         recipientName: "Master",
       });
@@ -2560,6 +2575,27 @@ const BOOKING_ALLOWED_ORIGINS = [
 
 // ── helper: ασφαλές κείμενο (όχι undefined/null) ────────────────────────────
 function s(v) { return (v == null ? "" : String(v)).trim(); }
+
+// ── Πτήση ή πλοίο; ──────────────────────────────────────────────────────
+// Πρότυπο IATA/ICAO flight number: 2-3 αλφαριθμητικοί χαρακτήρες κωδικού
+// αερογραμμής (π.χ. A3, LH, 9W) + 1-4 ψηφία + προαιρετικό γράμμα.
+const GREEK_TO_LATIN_LOOKALIKE = {
+  "Α":"A","Β":"B","Ε":"E","Ζ":"Z","Η":"H","Ι":"I","Κ":"K","Μ":"M",
+  "Ν":"N","Ο":"O","Ρ":"P","Τ":"T","Υ":"Y","Χ":"X",
+  "α":"a","β":"b","ε":"e","ζ":"z","η":"h","ι":"i","κ":"k","μ":"m",
+  "ν":"n","ο":"o","ρ":"p","τ":"t","υ":"y","χ":"x",
+};
+function normalizeFlightNumber(raw) {
+  let t = s(raw);
+  t = t.replace(/[ΑΒΕΖΗΙΚΜΝΟΡΤΥΧαβεζηικμνορτυχ]/g, (ch) => GREEK_TO_LATIN_LOOKALIKE[ch] || ch);
+  t = t.replace(/[\s\-.]/g, "").toUpperCase();
+  return t;
+}
+function isLikelyFlightNumber(raw) {
+  const t = normalizeFlightNumber(raw);
+  return /^([A-Z]\d|\d[A-Z]|[A-Z]{2,3})\d{1,4}[A-Z]?$/.test(t);
+}
+
 
 // ════════════════════════════════════════════════════════════════════════════
 //  ΤΙΜΟΛΟΓΗΣΗ ΔΗΜΟΣΙΑΣ ΦΟΡΜΑΣ (estimatePrice + submitPublicBooking)
@@ -3697,6 +3733,7 @@ exports.submitPublicBooking = onRequest(
         childSeat:      childSeatCount > 0,
         vehicleType:    vehicleType,     // 'taxi' | 'van'
         note:           fullNote,
+        flightChecked:  !isLikelyFlightNumber(flight),   // true = δεν χρειάζεται έλεγχος API
         price:          estimate.price,   // υπολογισμένη τιμή (ζώνη ή δυναμικός τύπος)
         // Προμήθεια app ανά κράτηση, δηλωμένη από τον master.
         // Global προμήθεια app (ίδιο doc με τη σελίδα «Διαχειριστές» στο Flutter) —
@@ -4775,6 +4812,7 @@ async function finalizeSuccessfulPayment(db, pendingRef, pd, providerMeta) {
     routePolyline:  pd.routePolyline || null,
     vehicleType:    pd.vehicleType,
     note:           fullNote,
+    flightChecked:  !isLikelyFlightNumber(pd.flightOrShip),
     price:          pd.price,
     appCommission:  appCommissionPerBooking,
     scheduledAt:    Timestamp.fromDate(startDate),
@@ -7642,5 +7680,343 @@ exports.updateDefaultVivaCredentials = onCall(
       needsRedeploy: false,
       message: "Αποθηκεύτηκε και ισχύει ήδη — καμία ανάγκη για deploy.",
     };
+  }
+);
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  ΠΤΗΣΕΙΣ — AeroDataBox integration (ώρα άφιξης + καθυστέρηση)
+//
+//  ΠΩΣ ΔΟΥΛΕΥΕΙ ΤΟ ΚΛΕΙΔΙ:
+//  1) Αν ο tenant έχει δικό του κλειδί (tenants/{id}, Secret Manager
+//     "tenant-{id}-aerodatabox-key") → ΠΑΝΤΑ αυτό, χωρίς διακόπτη/χρέωση.
+//  2) Αλλιώς, το global κλειδί (AERODATABOX_API_KEY) — ΜΟΝΟ αν ο οδηγός
+//     που πήρε τη δουλειά έχει presence/{uid}.flightApiEnabled === true.
+//     Ο master (techtacy@gmail.com) έχει πάντα πρόσβαση, χωρίς διακόπτη.
+//  3) Αλλιώς → καμία κλήση, η δουλειά μένει χωρίς ενημέρωση πτήσης.
+//
+//  ΧΡΕΩΣΗ: presence/{uid}.flightApiFeePerBooking (override), αλλιώς
+//  app_settings/config.flightApiFeePerBooking (global default, 0 = δωρεάν).
+//  Χρεώνεται στο ΙΔΙΟ σημείο με το appCommission, μέσα στο onJobBilling.
+// ═══════════════════════════════════════════════════════════════════════════
+
+async function resolveFlightApiAccess(db, tenantId, driverUid) {
+  // 1) Tenant's own key — πάντα προτεραιότητα, χωρίς περιορισμούς.
+  if (tenantId && tenantId !== "default") {
+    const ownKey = await readSecret(tenantSecretId(tenantId, "aerodatabox-key"));
+    if (ownKey) return { apiKey: ownKey, source: "tenant", feeAmount: 0 };
+  }
+
+  // 2) Global key — μόνο master (πάντα) ή όσοι έχουν ενεργό το διακόπτη.
+  let isMasterDriver = false;
+  let driverData = null;
+  try {
+    const pDoc = await db.collection("presence").doc(driverUid).get();
+    driverData = pDoc.exists ? pDoc.data() : null;
+    isMasterDriver = !!(driverData && driverData.master === true);
+  } catch (e) { /* αγνόησε — απλά δεν θα έχει πρόσβαση */ }
+
+  const hasAccess = isMasterDriver || (driverData && driverData.flightApiEnabled === true);
+  if (!hasAccess) return null;
+
+  const globalKey = await readSecret("AERODATABOX_API_KEY");
+  if (!globalKey) return null;
+
+  let feeAmount = 0;
+  if (!isMasterDriver) {
+    if (driverData && typeof driverData.flightApiFeePerBooking === "number") {
+      feeAmount = driverData.flightApiFeePerBooking;
+    } else {
+      try {
+        const cfgDoc = await db.collection("app_settings").doc("config").get();
+        const cfg = cfgDoc.exists ? cfgDoc.data() : null;
+        if (cfg && typeof cfg.flightApiFeePerBooking === "number") {
+          feeAmount = cfg.flightApiFeePerBooking;
+        }
+      } catch (e) { /* default 0 */ }
+    }
+  }
+  return { apiKey: globalKey, source: "global", feeAmount: Math.max(0, feeAmount) };
+}
+
+// Μετρητής χρήσης (ημέρα/μήνας), για τον master στις Καθολικές Ρυθμίσεις.
+async function incrementAeroDataBoxUsage(db) {
+  const now = athensNaiveDate(new Date());
+  const dayKey = now.toISOString().slice(0, 10);       // YYYY-MM-DD
+  const monthKey = dayKey.slice(0, 7);                  // YYYY-MM
+  const ref = db.collection("platform_stats").doc("aerodatabox_usage");
+  try {
+    await ref.set({
+      [`daily.${dayKey}`]: FieldValue.increment(1),
+      [`monthly.${monthKey}`]: FieldValue.increment(1),
+      updatedAt: FieldValue.serverTimestamp(),
+    }, { merge: true });
+  } catch (e) {
+    console.error("incrementAeroDataBoxUsage error:", e.message || e);
+  }
+}
+
+exports.getAeroDataBoxUsage = onCall(async (request) => {
+  const uid = request.auth && request.auth.uid;
+  if (!uid) throw new HttpsError("unauthenticated", "Απαιτείται σύνδεση.");
+  const db = getFirestore();
+  const me = await db.collection("presence").doc(uid).get();
+  if (!me.exists || me.data().master !== true) {
+    throw new HttpsError("permission-denied", "Μόνο για τον master.");
+  }
+  const doc = await db.collection("platform_stats").doc("aerodatabox_usage").get();
+  const data = doc.exists ? doc.data() : {};
+  const now = athensNaiveDate(new Date());
+  const dayKey = now.toISOString().slice(0, 10);
+  const monthKey = dayKey.slice(0, 7);
+  return {
+    ok: true,
+    today: (data.daily && data.daily[dayKey]) || 0,
+    thisMonth: (data.monthly && data.monthly[monthKey]) || 0,
+  };
+});
+
+// Κλήση στο AeroDataBox (μία flight αναζήτηση = 1 request).
+async function fetchFlightStatus(apiKey, flightNumber, dateLocal) {
+  const url = `https://aerodatabox.p.rapidapi.com/flights/number/${encodeURIComponent(flightNumber)}/${dateLocal}`;
+  const resp = await fetch(url, {
+    method: "GET",
+    headers: {
+      "x-rapidapi-key": apiKey,
+      "x-rapidapi-host": "aerodatabox.p.rapidapi.com",
+    },
+  });
+  if (!resp.ok) {
+    console.warn("AeroDataBox HTTP", resp.status, flightNumber);
+    return null;
+  }
+  const arr = await resp.json();
+  if (!Array.isArray(arr) || !arr.length) return null;
+  // Προτίμησε flight με arrival στην Αθήνα (LGAV) αν υπάρχουν πολλά ίδιου
+  // αριθμού την ίδια μέρα (σπάνιο, αλλά υπάρχει σε codeshare).
+  const flight = arr.find((f) => f.arrival && f.arrival.airport &&
+    f.arrival.airport.icao === "LGAV") || arr[0];
+  const arr_ = flight.arrival || {};
+  const schedLocal = arr_.scheduledTime && arr_.scheduledTime.local;
+  const estLocal = (arr_.predictedTime && arr_.predictedTime.local) ||
+    (arr_.actualTime && arr_.actualTime.local) || null;
+  if (!schedLocal) return null;
+  const schedMs = Date.parse(schedLocal);
+  const estMs = estLocal ? Date.parse(estLocal) : schedMs;
+  const delayMinutes = Math.max(0, Math.round((estMs - schedMs) / 60000));
+  return { delayMinutes, scheduledArrivalLocal: schedLocal, estimatedArrivalLocal: estLocal || schedLocal };
+}
+
+// ── Scheduled: κάθε 5 λεπτά, ελέγχει δουλειές 45' πριν το ραντεβού ─────
+exports.checkFlightDelays = onSchedule(
+  { schedule: "every 5 minutes", timeZone: "Europe/Athens",
+    memory: "256MiB", timeoutSeconds: 120 },
+  // ΣΗΜΕΙΩΣΗ: το AERODATABOX_API_KEY διαβάζεται μέσω Secret Manager SDK
+  // (readSecret) σε runtime — δεν χρειάζεται secrets binding εδώ.
+  async () => {
+    const db = getFirestore();
+    const now = new Date();
+    const windowStart = new Date(now.getTime() + 40 * 60 * 1000);
+    const windowEnd = new Date(now.getTime() + 50 * 60 * 1000);
+    const { Timestamp } = require("firebase-admin/firestore");
+
+    let snap;
+    try {
+      snap = await db.collection("saved_jobs")
+        .where("status", "==", "taken")
+        .where("scheduledAt", ">=", Timestamp.fromDate(windowStart))
+        .where("scheduledAt", "<=", Timestamp.fromDate(windowEnd))
+        .where("flightChecked", "==", false)
+        .get();
+    } catch (e) {
+      console.error("checkFlightDelays query error:", e.message || e);
+      return;
+    }
+
+    for (const doc of snap.docs) {
+      const job = doc.data();
+      const flightRaw = job.flightOrShip;
+      if (!isLikelyFlightNumber(flightRaw)) {
+        await doc.ref.update({ flightChecked: true }); // δεν είναι πτήση, μη ξαναελέγχεις
+        continue;
+      }
+      const access = await resolveFlightApiAccess(db, job.tenantId || "default", job.takenBy || "");
+      if (!access) {
+        await doc.ref.update({ flightChecked: true }); // χωρίς πρόσβαση, μη ξαναδοκιμάζεις
+        continue;
+      }
+      try {
+        const flightNum = normalizeFlightNumber(flightRaw);
+        const dateLocal = athensNaiveDate(now).toISOString().slice(0, 10);
+        const status = await fetchFlightStatus(access.apiKey, flightNum, dateLocal);
+        await incrementAeroDataBoxUsage(db);
+
+        const updates = { flightChecked: true, flightCheckedAt: FieldValue.serverTimestamp() };
+        if (access.feeAmount > 0) updates.flightFeeApplicable = access.feeAmount;
+
+        if (status && status.delayMinutes > 0) {
+          const originalScheduledAt = job.scheduledAt;
+          const newScheduledAt = Timestamp.fromMillis(
+            originalScheduledAt.toMillis() + status.delayMinutes * 60000
+          );
+          updates.originalScheduledAt = originalScheduledAt;
+          updates.scheduledAt = newScheduledAt;
+          updates.flightDelayMinutes = status.delayMinutes;
+          // ⚠️ ΣΗΜΕΙΩΣΗ ΓΙΑ ΕΛΕΓΧΟ ΠΡΙΝ DEPLOY: εδώ πρέπει να μπει η
+          // ξαναϋπολόγιση τιμής (νυχτερινή ζώνη/δυναμικός τύπος) με βάση
+          // τη ΝΕΑ ώρα, χρησιμοποιώντας το ίδιο computeEstimate() που ήδη
+          // υπάρχει — Κωνσταντίνος να το επιβεβαιώσει πριν ενεργοποιηθεί.
+          updates.priceRecalcPending = true;
+
+          await doc.ref.update(updates);
+
+          // FCM data-only ειδοποίηση σε δημιουργό ΚΑΙ οδηγό → popup παντού
+          // στο app (Flutter διαβάζει flightDelayMinutes/originalScheduledAt).
+          const notifyUids = [job.createdBy, job.takenBy].filter(Boolean);
+          for (const targetUid of notifyUids) {
+            const tokens = await getTokensForUid(targetUid);
+            await sendDataOnly(tokens, {
+              type: "flight_delay_update",
+              savedJobId: doc.id,
+              bookingNumber: String(job.bookingNumber || ""),
+              flightNumber: flightNum,
+              delayMinutes: String(status.delayMinutes),
+              oldTimeIso: originalScheduledAt.toDate().toISOString(),
+              newTimeIso: newScheduledAt.toDate().toISOString(),
+              title: "Η ώρα άλλαξε λόγω πτήσης",
+              body: `${flightNum} καθυστέρησε ${status.delayMinutes}' — νέα ώρα ραντεβού`,
+            }, { ttlMs: 3600 * 1000 });
+          }
+        } else {
+          await doc.ref.update(updates);
+        }
+      } catch (e) {
+        console.error("checkFlightDelays flight lookup error:", doc.id, e.message || e);
+        await doc.ref.update({ flightChecked: true }); // μην κολλήσει σε loop σφάλματος
+      }
+    }
+  }
+);
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  ΠΤΗΣΕΙΣ — Διαχείριση κλειδιού AeroDataBox από την εφαρμογή (Καθολικές
+//  Ρυθμίσεις / Ρυθμίσεις Tenant), ίδιο μοτίβο με updateTenantVivaCredentials.
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Tenant-owner (ή super-admin) βάζει/αλλάζει το ΔΙΚΟ ΤΟΥ κλειδί AeroDataBox.
+exports.updateTenantAeroDataBoxKey = onCall(
+  { region: "us-central1" },
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Χρειάζεται σύνδεση.");
+    const d = request.data || {};
+    const tenantId = s(d.tenantId);
+    if (!tenantId || tenantId === "default") {
+      throw new HttpsError("invalid-argument", "Μη έγκυρο tenantId.");
+    }
+
+    const isSuperAdmin = request.auth.token.email === "techtacy@gmail.com";
+    if (!isSuperAdmin) {
+      const db0 = getFirestore();
+      const presDoc = await db0.collection("presence").doc(request.auth.uid).get();
+      const pres = presDoc.data() || {};
+      if (!(pres.tenantOwner === true && pres.tenantId === tenantId)) {
+        throw new HttpsError("permission-denied",
+          "Μόνο ο super-admin ή ο tenant-owner αυτού του tenant μπορεί να το αλλάξει.");
+      }
+    }
+
+    const db = getFirestore();
+    const tenantDoc = await db.collection("tenants").doc(tenantId).get();
+    if (!tenantDoc.exists) throw new HttpsError("not-found", "Άγνωστο tenant.");
+
+    const apiKey = s(d.apiKey);
+    if (!apiKey) {
+      // Κενή τιμή = αφαίρεση δικού του κλειδιού (θα ξαναγυρίσει στο global,
+      // αν έχει πρόσβαση μέσω διακόπτη).
+      await db.collection("tenants").doc(tenantId).update({ hasAeroDataBoxKey: false });
+      return { ok: true, cleared: true };
+    }
+    try {
+      await upsertSecret(tenantSecretId(tenantId, "aerodatabox-key"), apiKey);
+    } catch (e) {
+      throw new HttpsError("internal", "Αποτυχία αποθήκευσης: " + e.message);
+    }
+    await db.collection("tenants").doc(tenantId).update({ hasAeroDataBoxKey: true });
+    return { ok: true };
+  }
+);
+
+// Μόνο master — βάζει/αλλάζει το ΚΕΝΤΡΙΚΟ (global) κλειδί AeroDataBox,
+// χωρίς να χρειάζεται SSH/PowerShell. Ίδια λογική με τα tenant κλειδιά,
+// αλλά γράφει στο ΣΤΑΘΕΡΟ secret name "AERODATABOX_API_KEY" (όχι ανά tenant).
+exports.updateGlobalAeroDataBoxKey = onCall(
+  { region: "us-central1" },
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Χρειάζεται σύνδεση.");
+    if (request.auth.token.email !== "techtacy@gmail.com") {
+      throw new HttpsError("permission-denied", "Μόνο για τον master.");
+    }
+    const apiKey = s((request.data || {}).apiKey);
+    if (!apiKey) throw new HttpsError("invalid-argument", "Λείπει το κλειδί.");
+    try {
+      await upsertSecret("AERODATABOX_API_KEY", apiKey);
+    } catch (e) {
+      throw new HttpsError("internal", "Αποτυχία αποθήκευσης: " + e.message);
+    }
+    return { ok: true };
+  }
+);
+
+// Ελέγχει (χωρίς να αποκαλύπτει την τιμή) αν υπάρχει ήδη global κλειδί —
+// για να δείχνει η κάρτελα «Ενεργό ✓» χωρίς να ξαναγράφεις το κλειδί.
+exports.hasGlobalAeroDataBoxKey = onCall(
+  { region: "us-central1" },
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Χρειάζεται σύνδεση.");
+    if (request.auth.token.email !== "techtacy@gmail.com") {
+      throw new HttpsError("permission-denied", "Μόνο για τον master.");
+    }
+    const key = await readSecret("AERODATABOX_API_KEY");
+    return { ok: true, hasKey: !!key };
+  }
+);
+
+// Μόνο master — ενεργοποιεί/απενεργοποιεί για ΣΥΓΚΕΚΡΙΜΕΝΟ χρήστη την
+// πρόσβαση στο global κλειδί, με προαιρετική δική του χρέωση ανά δουλειά
+// (αλλιώς πέφτει στο app_settings/config.flightApiFeePerBooking global).
+exports.setUserFlightApiAccess = onCall(
+  { region: "us-central1" },
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Χρειάζεται σύνδεση.");
+    if (request.auth.token.email !== "techtacy@gmail.com") {
+      throw new HttpsError("permission-denied", "Μόνο για τον master.");
+    }
+    const d = request.data || {};
+    const uid = s(d.uid);
+    if (!uid) throw new HttpsError("invalid-argument", "Λείπει το uid.");
+    const enabled = d.enabled === true;
+    const updates = { flightApiEnabled: enabled };
+    if (d.feePerBooking !== undefined && d.feePerBooking !== null) {
+      const fee = Number(d.feePerBooking);
+      updates.flightApiFeePerBooking = isNaN(fee) ? 0 : Math.max(0, fee);
+    }
+    await getFirestore().collection("presence").doc(uid).update(updates);
+    return { ok: true };
+  }
+);
+
+// Μόνο master — global default ποσό (όταν δεν υπάρχει override ανά χρήστη).
+exports.setGlobalFlightApiFeeDefault = onCall(
+  { region: "us-central1" },
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Χρειάζεται σύνδεση.");
+    if (request.auth.token.email !== "techtacy@gmail.com") {
+      throw new HttpsError("permission-denied", "Μόνο για τον master.");
+    }
+    const fee = Number((request.data || {}).feePerBooking);
+    await getFirestore().collection("app_settings").doc("config").set(
+      { flightApiFeePerBooking: isNaN(fee) ? 0 : Math.max(0, fee) },
+      { merge: true }
+    );
+    return { ok: true };
   }
 );

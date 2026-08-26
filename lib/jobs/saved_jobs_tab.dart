@@ -38,6 +38,7 @@ import 'job_shared_widgets.dart';
 import 'saved_job_service.dart';
 import 'new_saved_badge_store.dart';
 import '../pricing/pricing_zones_page.dart' show PricingZone;
+import 'flight_delay_badge.dart';
 
 class SavedJobsTab extends StatefulWidget {
   final String adminUid;
@@ -1596,6 +1597,7 @@ class _SavedJobCard extends StatelessWidget {
                     ),
                   ]),
                 ),
+                FlightDelaySubline(job: job),
               ],
               const SizedBox(height: 8),
 
@@ -1973,6 +1975,7 @@ class _ShuttleContainerCard extends StatelessWidget {
                   ),
                 ]),
               ),
+              FlightDelaySubline(job: saved.job),
             ],
             const SizedBox(height: 10),
             Text(sharedLabel,

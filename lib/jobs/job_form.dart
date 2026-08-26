@@ -1130,6 +1130,9 @@ class _JobFormPageState extends State<JobFormPage> {
       clientPhone:      _clientPhoneCtrl.text.trim().isNotEmpty ? _clientPhoneCtrl.text.trim() : null,
       clientEmail:      _clientEmailCtrl.text.trim().isNotEmpty ? _clientEmailCtrl.text.trim() : null,
       flightOrShip:     _flightShipCtrl.text.trim().isNotEmpty ? _flightShipCtrl.text.trim() : null,
+      // Αν είναι πράγματι πτήση → false (εκκρεμεί έλεγχος από το server 45'
+      // πριν το ραντεβού). Αν όχι πτήση ή δεν επεξεργαστήκαμε το πεδίο → true.
+      flightChecked:    !isLikelyFlightNumber(_flightShipCtrl.text.trim()),
       isReturn:         widget.editJob?.isReturn ?? widget.editSavedJob?.isReturn ?? false,
       availableOnly:    _availableOnly,
       exclusiveTarget:  _exclusiveTarget,

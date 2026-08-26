@@ -97,6 +97,9 @@ class _GlobalSettingsPageState extends State<GlobalSettingsPage> {
             const SizedBox(height: 8),
             const _PlatformPricingBlock(),
 
+            const SizedBox(height: 12),
+            const _AeroDataBoxKeyCard(),
+
             const SizedBox(height: 20),
           ],
         ),
@@ -736,6 +739,91 @@ class AdminCard extends StatelessWidget {
         .set({field: value}, SetOptions(merge: true));
   }
 
+  Future<void> _editPerBookingPrice(BuildContext context, {
+    required String field,
+    required String label,
+    required double current,
+    required bool currentEnabled,
+  }) async {
+    final ctrl = TextEditingController(text: current.toStringAsFixed(2));
+    final c = AppColors.of(context);
+    final result = await showDialog<double>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: c.scaffold,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Text(label, style: TextStyle(fontSize: 16, color: c.textMain)),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          decoration: const InputDecoration(suffixText: '€ / δουλειά'),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('Άκυρο')),
+          FilledButton(
+            onPressed: () {
+              final v = double.tryParse(ctrl.text.trim().replaceAll(',', '.'));
+              Navigator.of(ctx).pop(v);
+            },
+            child: const Text('Αποθήκευση'),
+          ),
+        ],
+      ),
+    );
+    if (result == null) return;
+    // Χρησιμοποιούμε το callable (όχι απευθείας write) ώστε το ποσό να
+    // περνάει από τον ίδιο έλεγχο/validation με τον διακόπτη flightApiEnabled.
+    try {
+      await FirebaseFunctions.instance
+          .httpsCallable('setUserFlightApiAccess')
+          .call({'uid': docId, 'enabled': currentEnabled, 'feePerBooking': result});
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Σφάλμα: $e')));
+      }
+    }
+  }
+
+  Future<void> _showFlightApiInfoDialog(BuildContext context) async {
+    final c = AppColors.of(context);
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: c.scaffold,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Row(children: [
+          Icon(Icons.flight_land_rounded, color: c.amberDeep, size: 20),
+          const SizedBox(width: 8),
+          const Text('Πληροφορίες πτήσεων', style: TextStyle(fontSize: 16)),
+        ]),
+        content: SingleChildScrollView(
+          child: Text(
+            'Όταν είναι ενεργό, η εφαρμογή ελέγχει αυτόματα 45 λεπτά πριν το '
+            'ραντεβού αν η πτήση του πελάτη έχει καθυστέρηση, και ενημερώνει '
+            'μόνη της την ώρα ραντεβού της δουλειάς (δείχνοντας και την '
+            'αρχική ώρα).\n\n'
+            'Η ενημέρωση γίνεται με το ΚΕΝΤΡΙΚΟ κλειδί (του master) — εκτός '
+            'αν ο tenant του χρήστη έχει δικό του κλειδί AeroDataBox, οπότε '
+            'έχει πάντα πρόσβαση χωρίς αυτό το switch/χρέωση.\n\n'
+            'Το ποσό δίπλα (π.χ. 0,10€) είναι η ΕΠΙΠΛΕΟΝ χρέωση ανά δουλειά '
+            'με πτήση, πάνω από την κανονική προμήθεια εφαρμογής — μηδέν '
+            'σημαίνει καμία επιπλέον χρέωση.',
+            style: TextStyle(fontSize: 13.5, color: c.textMain, height: 1.5),
+          ),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('Έκλεισα, το κατάλαβα')),
+        ],
+      ),
+    );
+  }
+
   Future<void> _approve(BuildContext context, bool value) async {
     await FirebaseFirestore.instance
         .collection('presence')
@@ -768,11 +856,13 @@ class AdminCard extends StatelessWidget {
     final isPending       = !isMaster && !isApproved;
     final icsEnabled      = data['icsExportEnabled'] == true;
     final tenantOwner     = data['tenantOwner']      == true;
+    final flightApiEnabled = data['flightApiEnabled'] == true;
 
     final webPrice      = (data['webPrice']      as num?)?.toDouble() ?? 0.0;
     final calendarPrice = (data['calendarPrice'] as num?)?.toDouble() ?? 0.0;
     final icsPrice      = (data['icsPrice']      as num?)?.toDouble() ?? 0.0;
     final formPrice      = (data['onlineFormPrice'] as num?)?.toDouble() ?? 0.0;
+    final flightApiFee   = (data['flightApiFeePerBooking'] as num?)?.toDouble() ?? 0.0;
 
     final initials = name.isEmpty
         ? (email.isNotEmpty ? email.substring(0, 1).toUpperCase() : '??')
@@ -979,6 +1069,32 @@ class AdminCard extends StatelessWidget {
               onToggle: (v) => _toggleField('icsExportEnabled', v),
               onEditPrice: () => _editPrice(context,
                   field: 'icsPrice', label: 'Δουλειές στο ημερολόγιό μου', current: icsPrice)),
+          // ── Πληροφορίες πτήσεων (AeroDataBox) — δείχνει καθυστερήσεις ──
+          // Ενεργό μόνο με το ΚΕΝΤΡΙΚΟ κλειδί (αν ο tenant του χρήστη ΔΕΝ
+          // έχει δικό του κλειδί — αλλιώς έχει πάντα πρόσβαση, χωρίς αυτό
+          // το switch/χρέωση, γιατί το δικό του κλειδί/κόστος).
+          Row(children: [
+            Expanded(
+              child: _priceRow(context, c,
+                  icon: Icons.flight_land_rounded,
+                  label: 'Πληροφορίες πτήσεων',
+                  enabled: flightApiEnabled,
+                  price: flightApiFee,
+                  priceSuffix: '€ / δουλειά',
+                  decimals: 2,
+                  onToggle: (v) => _toggleField('flightApiEnabled', v),
+                  onEditPrice: () => _editPerBookingPrice(context,
+                      field: 'flightApiFeePerBooking',
+                      label: 'Χρέωση πληροφοριών πτήσεων',
+                      current: flightApiFee,
+                      currentEnabled: flightApiEnabled)),
+            ),
+            IconButton(
+              icon: Icon(Icons.help_outline_rounded, size: 19, color: c.textFaint),
+              tooltip: 'Τι είναι αυτό;',
+              onPressed: () => _showFlightApiInfoDialog(context),
+            ),
+          ]),
 
           const SizedBox(height: 6),
           _onlineFormBlock(context, c,
@@ -995,6 +1111,8 @@ class AdminCard extends StatelessWidget {
     required double   price,
     required ValueChanged<bool> onToggle,
     required VoidCallback onEditPrice,
+    String priceSuffix = '€/μήνα',
+    int decimals = 0,
   }) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
@@ -1004,7 +1122,7 @@ class AdminCard extends StatelessWidget {
         Expanded(
           child: Text(label, style: TextStyle(fontSize: 12, color: c.textMain)),
         ),
-        Text('${price.toStringAsFixed(0)}€/μήνα',
+        Text('${price.toStringAsFixed(decimals)}$priceSuffix',
             style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w600, color: c.blueDeep)),
         InkWell(
           onTap: onEditPrice,
@@ -1356,6 +1474,7 @@ class _PlatformPricingBlockState extends State<_PlatformPricingBlock> {
   double _extraShuttle       = 0.10;
   double _subscription       = 5.00;
   double _calendarSubscription       = 0.00;
+  double _flightApiFeeDefault        = 0.00;
 
   @override
   void initState() {
@@ -1378,6 +1497,8 @@ class _PlatformPricingBlockState extends State<_PlatformPricingBlock> {
         _subscription = (d?['subscription'] as num?)?.toDouble() ?? 5.00;
         _calendarSubscription =
             (d?['calendarSubscription'] as num?)?.toDouble() ?? 0.00;
+        _flightApiFeeDefault =
+            (d?['flightApiFeePerBooking'] as num?)?.toDouble() ?? 0.00;
         _loading = false;
       });
     } catch (_) {
@@ -1510,6 +1631,31 @@ class _PlatformPricingBlockState extends State<_PlatformPricingBlock> {
             current: _calendarSubscription,
             suffix: '€ / μήνα',
             applyLocal: (v) => _calendarSubscription = v,
+          ),
+        ),
+        Divider(height: 1, color: c.blueSoft),
+        _row(
+          c,
+          icon:  Icons.flight_land_rounded,
+          label: 'Πληροφορίες πτήσεων — προεπιλογή',
+          value: '${_flightApiFeeDefault.toStringAsFixed(2)} €',
+          onTap: () => _editValue(
+            field: 'flightApiFeePerBooking',
+            label: 'Χρέωση πληροφοριών πτήσεων (0 = δωρεάν)',
+            current: _flightApiFeeDefault,
+            suffix: '€ / δουλειά',
+            applyLocal: (v) => _flightApiFeeDefault = v,
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              'Ισχύει μόνο για χρήστες χωρίς δικό τους ποσό (βλ. καρτέλα '
+              'χρήστη). Ανά χρήστη μπορείς να ορίσεις διαφορετικό ποσό.',
+              style: TextStyle(fontSize: 10, color: c.blueFaint),
+            ),
           ),
         ),
       ]),
@@ -1937,6 +2083,11 @@ class _EditTenantDialogState extends State<_EditTenantDialog> {
                     },
                   ),
 
+                  const SizedBox(height: 18),
+                  const Divider(),
+                  const SizedBox(height: 10),
+                  _TenantAeroDataBoxKeyField(tenantId: _originalTenantId),
+
                   if (_error != null) ...[
                     const SizedBox(height: 10),
                     Text(_error!, style: const TextStyle(color: Colors.red, fontSize: 13)),
@@ -1975,3 +2126,341 @@ class _EditTenantDialogState extends State<_EditTenantDialog> {
 
 // ─── Μία γραμμή οδηγιών «πού το βάζεις» — «Ετικέτα: κείμενο» ─────────────────
 
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  ΚΛΕΙΔΙ AERODATABOX (πληροφορίες πτήσεων) — Κεντρικό (global) κλειδί +
+//  μετρητής χρήσης. Ίδιο μοτίβο με τα Viva credentials, αλλά αυτό είναι το
+//  ΕΝΑ κεντρικό κλειδί του master (όχι ανά tenant — αυτό είναι στη σελίδα
+//  επεξεργασίας κάθε tenant, βλ. _EditTenantDialog).
+// ═══════════════════════════════════════════════════════════════════════════
+class _AeroDataBoxKeyCard extends StatefulWidget {
+  const _AeroDataBoxKeyCard();
+
+  @override
+  State<_AeroDataBoxKeyCard> createState() => _AeroDataBoxKeyCardState();
+}
+
+class _AeroDataBoxKeyCardState extends State<_AeroDataBoxKeyCard> {
+  bool _loading = true;
+  bool _hasKey = false;
+  bool _saving = false;
+  int _today = 0;
+  int _thisMonth = 0;
+  bool _showKeyField = false;
+  final _keyCtrl = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void dispose() {
+    _keyCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    try {
+      final results = await Future.wait([
+        FirebaseFunctions.instance
+            .httpsCallable('hasGlobalAeroDataBoxKey').call(),
+        FirebaseFunctions.instance
+            .httpsCallable('getAeroDataBoxUsage').call(),
+      ]);
+      if (!mounted) return;
+      final hasKeyData = results[0].data as Map;
+      final usageData  = results[1].data as Map;
+      setState(() {
+        _hasKey    = hasKeyData['hasKey'] == true;
+        _today     = (usageData['today'] as num?)?.toInt() ?? 0;
+        _thisMonth = (usageData['thisMonth'] as num?)?.toInt() ?? 0;
+        _loading   = false;
+      });
+    } catch (_) {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _saveKey() async {
+    final key = _keyCtrl.text.trim();
+    if (key.isEmpty) return;
+    setState(() => _saving = true);
+    try {
+      await FirebaseFunctions.instance
+          .httpsCallable('updateGlobalAeroDataBoxKey')
+          .call({'apiKey': key});
+      _keyCtrl.clear();
+      if (!mounted) return;
+      setState(() { _showKeyField = false; _hasKey = true; _saving = false; });
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Το κλειδί αποθηκεύτηκε'),
+        backgroundColor: Color(0xFF1E8E3E),
+      ));
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _saving = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Σφάλμα: $e')));
+    }
+  }
+
+  Future<void> _showHowToDialog() async {
+    final c = AppColors.of(context);
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: c.scaffold,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text('Πώς φτιάχνεις δικό σου κλειδί', style: TextStyle(fontSize: 16)),
+        content: SingleChildScrollView(
+          child: Text(
+            '1. Μπες στο rapidapi.com και κάνε δωρεάν εγγραφή.\n\n'
+            '2. Πάνω αριστερά, στο πλαίσιο αναζήτησης, γράψε '
+            '"AeroDataBox" και άνοιξε το πρώτο αποτέλεσμα.\n\n'
+            '3. Δεξιά διάλεξε το πλάνο "Basic" (Free) και πάτα "Subscribe" '
+            '— δεν χρειάζεται κάρτα.\n\n'
+            '4. Στη σελίδα του API θα δεις ένα πεδίο "X-RapidAPI-Key" με '
+            'έναν μακρύ κωδικό — αυτό είναι το κλειδί σου.\n\n'
+            '5. Αντέγραψέ το και επικόλλησέ το εδώ, πατώντας "Αλλαγή '
+            'κλειδιού" παρακάτω.\n\n'
+            'Με το δικό σου κλειδί, όλες οι δουλειές που βγάζεις έχεις πάντα '
+            'πρόσβαση σε πληροφορίες πτήσεων, χωρίς κανένα διακόπτη ή '
+            'χρέωση σε άλλους χρήστες.',
+            style: TextStyle(fontSize: 13.5, color: c.textMain, height: 1.5),
+          ),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('Έκλεισα')),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    if (_loading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color:        c.bluePale,
+        border:       Border.all(color: c.blueSoft, width: 0.8),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Icon(Icons.vpn_key_rounded, size: 16, color: c.blueDeep),
+          const SizedBox(width: 8),
+          Text('Κεντρικό κλειδί πληροφοριών πτήσεων',
+              style: TextStyle(
+                  fontSize: 12.5, fontWeight: FontWeight.w700, color: c.blueDeep)),
+          const Spacer(),
+          IconButton(
+            icon: Icon(Icons.help_outline_rounded, size: 18, color: c.blueFaint),
+            tooltip: 'Πώς φτιάχνεις δικό σου',
+            onPressed: _showHowToDialog,
+            visualDensity: VisualDensity.compact,
+          ),
+        ]),
+        const SizedBox(height: 6),
+        Row(children: [
+          Icon(
+            _hasKey ? Icons.check_circle_rounded : Icons.error_outline_rounded,
+            size: 14,
+            color: _hasKey ? const Color(0xFF3B6D11) : const Color(0xFFA66A00),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            _hasKey ? 'Κλειδί ενεργό' : 'Δεν έχει οριστεί κλειδί ακόμα',
+            style: TextStyle(
+                fontSize: 11.5,
+                fontWeight: FontWeight.w600,
+                color: _hasKey ? const Color(0xFF3B6D11) : const Color(0xFFA66A00)),
+          ),
+        ]),
+        const SizedBox(height: 4),
+        Text(
+          'Χρησιμοποιείται όταν κάποιος tenant ΔΕΝ έχει δικό του κλειδί '
+          '(βλ. επεξεργασία tenant) — τότε πρέπει και ο διακόπτης στην '
+          'καρτέλα του χρήστη να είναι ενεργός.',
+          style: TextStyle(fontSize: 10.5, color: c.blueFaint),
+        ),
+        const SizedBox(height: 10),
+        Row(children: [
+          _usageChip(c, 'Σήμερα', _today),
+          const SizedBox(width: 8),
+          _usageChip(c, 'Αυτόν τον μήνα', _thisMonth),
+        ]),
+        const SizedBox(height: 10),
+        if (!_showKeyField)
+          OutlinedButton.icon(
+            onPressed: () => setState(() => _showKeyField = true),
+            icon: const Icon(Icons.edit_rounded, size: 15),
+            label: Text(_hasKey ? 'Αλλαγή κλειδιού' : 'Ορισμός κλειδιού'),
+          )
+        else
+          Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            TextField(
+              controller: _keyCtrl,
+              decoration: const InputDecoration(
+                hintText: 'Επικόλλησε το X-RapidAPI-Key εδώ',
+                isDense: true,
+              ),
+              obscureText: true,
+            ),
+            const SizedBox(height: 8),
+            Row(children: [
+              FilledButton(
+                onPressed: _saving ? null : _saveKey,
+                child: _saving
+                    ? const SizedBox(
+                        width: 16, height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Text('Αποθήκευση'),
+              ),
+              const SizedBox(width: 8),
+              TextButton(
+                onPressed: _saving
+                    ? null
+                    : () => setState(() { _showKeyField = false; _keyCtrl.clear(); }),
+                child: const Text('Άκυρο'),
+              ),
+            ]),
+          ]),
+      ]),
+    );
+  }
+
+  Widget _usageChip(AppColors c, String label, int count) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: c.card,
+        borderRadius: BorderRadius.circular(9),
+        border: Border.all(color: c.blueSoft, width: 0.8),
+      ),
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
+        Text('$count',
+            style: TextStyle(
+                fontSize: 14, fontWeight: FontWeight.w800, color: c.blueDeep)),
+        const SizedBox(width: 5),
+        Text(label, style: TextStyle(fontSize: 10.5, color: c.blueFaint)),
+      ]),
+    );
+  }
+}
+
+// ─── Πεδίο «Δικό του κλειδί AeroDataBox» μέσα στην επεξεργασία tenant ──────
+// Αυτόνομο (δικό του state/save), ώστε να ΜΗΝ μπλέκεται με τη ροή
+// _submit() του γονικού dialog (όνομα/email/EformID).
+class _TenantAeroDataBoxKeyField extends StatefulWidget {
+  final String tenantId;
+  const _TenantAeroDataBoxKeyField({required this.tenantId});
+
+  @override
+  State<_TenantAeroDataBoxKeyField> createState() =>
+      _TenantAeroDataBoxKeyFieldState();
+}
+
+class _TenantAeroDataBoxKeyFieldState extends State<_TenantAeroDataBoxKeyField> {
+  final _ctrl = TextEditingController();
+  bool _saving = false;
+  bool? _hasKey;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    try {
+      final doc = await FirebaseFirestore.instance
+          .collection('tenants').doc(widget.tenantId).get();
+      if (!mounted) return;
+      setState(() => _hasKey = doc.data()?['hasAeroDataBoxKey'] == true);
+    } catch (_) {
+      if (mounted) setState(() => _hasKey = false);
+    }
+  }
+
+  Future<void> _save() async {
+    final key = _ctrl.text.trim();
+    setState(() => _saving = true);
+    try {
+      await FirebaseFunctions.instance
+          .httpsCallable('updateTenantAeroDataBoxKey')
+          .call({'tenantId': widget.tenantId, 'apiKey': key});
+      _ctrl.clear();
+      if (!mounted) return;
+      setState(() { _saving = false; _hasKey = key.isNotEmpty; });
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(key.isEmpty
+            ? 'Το δικό του κλειδί αφαιρέθηκε — θα χρησιμοποιεί το κεντρικό'
+            : 'Το κλειδί του tenant αποθηκεύτηκε'),
+        backgroundColor: const Color(0xFF1E8E3E),
+      ));
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _saving = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Σφάλμα: $e')));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Row(children: [
+        const Icon(Icons.flight_land_rounded, size: 15, color: Colors.black54),
+        const SizedBox(width: 6),
+        const Text('Δικό του κλειδί πληροφοριών πτήσεων',
+            style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600)),
+        const Spacer(),
+        if (_hasKey == true)
+          const Text('Ενεργό ✓',
+              style: TextStyle(fontSize: 11, color: Color(0xFF1E8E3E),
+                  fontWeight: FontWeight.w600)),
+      ]),
+      const SizedBox(height: 4),
+      const Text(
+        'Προαιρετικό. Αν το βάλεις, ΟΛΕΣ οι δουλειές αυτού του tenant '
+        'χρησιμοποιούν το δικό του κλειδί για πληροφορίες πτήσεων — χωρίς '
+        'διακόπτη/χρέωση ανά χρήστη (δικός του λογαριασμός AeroDataBox). '
+        'Άδειο = χρησιμοποιεί το κεντρικό, αν έχει πρόσβαση.',
+        style: TextStyle(fontSize: 10.5, color: Colors.black54),
+      ),
+      const SizedBox(height: 8),
+      TextField(
+        controller: _ctrl,
+        obscureText: true,
+        decoration: const InputDecoration(
+          hintText: 'X-RapidAPI-Key του tenant (κενό = αφαίρεση)',
+          isDense: true,
+          border: OutlineInputBorder(),
+        ),
+      ),
+      const SizedBox(height: 8),
+      FilledButton(
+        onPressed: _saving ? null : _save,
+        child: _saving
+            ? const SizedBox(
+                width: 16, height: 16,
+                child: CircularProgressIndicator(strokeWidth: 2))
+            : const Text('Αποθήκευση κλειδιού tenant'),
+      ),
+    ]);
+  }
+}

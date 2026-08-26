@@ -29,6 +29,7 @@ import '../jobs/job_details_sheet.dart';
 import '../jobs/job_model.dart';
 import '../jobs/job_service.dart';
 import '../jobs/saved_job_service.dart';
+import '../jobs/flight_delay_badge.dart';
 import '../widgets/vehicle_type_icon.dart';
 import 'google_calendar_page.dart';
 import 'ics_calendar_export.dart';
@@ -910,6 +911,7 @@ class _JobsCalendarPageState extends State<JobsCalendarPage> {
                         ),
                       ),
                     ]),
+                    FlightDelaySubline(job: job),
                     const SizedBox(height: 12),
                     // ── Εικονίδια: όχημα · άτομα · βαλίτσες · παιδικό ──────
                     Row(children: [
