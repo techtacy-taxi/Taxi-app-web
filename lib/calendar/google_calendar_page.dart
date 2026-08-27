@@ -146,6 +146,15 @@ class _GoogleCalendarPageState extends State<GoogleCalendarPage> {
         adminName: widget.adminName,
         isMaster:  widget.isMaster,
         calendarEventId: e.id,
+        // Εναλλακτικό «σήμα» μετατροπής: αν η φόρμα χρειαστεί να κλείσει
+        // ενώ έχει ανοίξει popup διεκδίκησης από πάνω της (αποστολή στον
+        // εαυτό μου), η τιμή επιστροφής χάνεται. Το onCreated καλείται
+        // ΠΑΝΤΑ μετά την επιτυχή δημιουργία, οπότε το event μαρκάρεται
+        // σωστά και στις δύο περιπτώσεις.
+        onCreated: () async {
+          await ConvertedEventsStore.instance.markConverted(e.id);
+          if (mounted) setState(() => _convertedCache[e.id] = true);
+        },
         prefill: JobPrefill(
           from: (parsed.from != null && parsed.from!.trim().isNotEmpty)
               ? PlacePick(description: parsed.from!.trim())
