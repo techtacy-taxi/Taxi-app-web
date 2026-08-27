@@ -787,39 +787,48 @@ class JobDetailsSheet extends StatelessWidget {
                         color: c.textMain)),
               if (job.flightOrShip != null && job.flightOrShip!.isNotEmpty)
                 Builder(builder: (_) {
-                  // Αν είναι αριθμός πτήσης → tappable link στο FlightRadar24
-                  // (σημερινή πτήση). Αν είναι πλοίο/όνομα → απλό κείμενο.
+                  // Αν είναι αριθμός πτήσης → κουμπάκι-pill προς FlightRadar24
+                  // (σημερινή πτήση), ώστε να φαίνεται ξεκάθαρα πατήσιμο.
+                  // Αν είναι πλοίο/όνομα → απλό κείμενο, όχι κουμπί.
                   final frUrl = flightRadarUrl(job.flightOrShip);
-                  final row = Row(children: [
-                    Icon(frUrl != null
-                            ? Icons.flight_land_rounded
-                            : Icons.directions_boat_rounded,
-                        size: 14,
-                        color: frUrl != null ? c.blueDeep : c.textFaint),
-                    const SizedBox(width: 4),
-                    Flexible(
-                      child: Text(job.flightOrShip!,
-                          style: TextStyle(
-                              fontSize: 12,
-                              color: frUrl != null ? c.blueDeep : c.textFaint,
-                              decoration: frUrl != null
-                                  ? TextDecoration.underline
-                                  : null)),
-                    ),
-                    if (frUrl != null) ...[
-                      const SizedBox(width: 3),
-                      Icon(Icons.open_in_new_rounded, size: 11, color: c.blueDeep),
-                    ],
-                  ]);
-                  if (frUrl == null) return row;
+                  if (frUrl == null) {
+                    return Row(children: [
+                      Icon(Icons.directions_boat_rounded, size: 14, color: c.textFaint),
+                      const SizedBox(width: 4),
+                      Flexible(
+                        child: Text(job.flightOrShip!,
+                            style: TextStyle(fontSize: 12, color: c.textFaint)),
+                      ),
+                    ]);
+                  }
                   return InkWell(
+                    borderRadius: BorderRadius.circular(20),
                     onTap: () async {
-                      final uri = Uri.parse(frUrl);
                       try {
-                        await launchUrl(uri, mode: LaunchMode.externalApplication);
+                        await launchUrl(Uri.parse(frUrl),
+                            mode: LaunchMode.externalApplication);
                       } catch (_) {}
                     },
-                    child: row,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                      decoration: BoxDecoration(
+                        color: c.blueSoft,
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Row(mainAxisSize: MainAxisSize.min, children: [
+                        Icon(Icons.flight_land_rounded, size: 14, color: c.blueDeep),
+                        const SizedBox(width: 5),
+                        Flexible(
+                          child: Text(job.flightOrShip!,
+                              style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                  color: c.blueDeep)),
+                        ),
+                        const SizedBox(width: 4),
+                        Icon(Icons.open_in_new_rounded, size: 12, color: c.blueDeep),
+                      ]),
+                    ),
                   );
                 })
               else if (phone.isNotEmpty)
