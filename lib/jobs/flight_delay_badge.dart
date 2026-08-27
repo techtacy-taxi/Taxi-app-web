@@ -15,7 +15,7 @@ import 'job_model.dart';
 /// γεμάτο + καθυστέρηση > 0).
 bool jobHasFlightDelay(Job job) =>
     job.originalScheduledAt != null &&
-    (job.flightDelayMinutes ?? 0) > 0;
+    (job.flightDelayMinutes ?? 0) != 0;   // != 0 → και νωρίτερη άφιξη
 
 /// Μικρό badge "Άλλαξε" — για συμπαγείς λίστες (ανοιχτές δουλειές,
 /// αποθηκευμένες, ημερολόγιο). Μια γραμμή, δεν καταλαμβάνει πολύ χώρο.
@@ -61,9 +61,14 @@ class FlightDelaySubline extends StatelessWidget {
     final oldTime = fmt.format(job.originalScheduledAt!);
     final flight = (job.flightOrShip ?? '').trim();
     final delay = job.flightDelayMinutes ?? 0;
+    final early = delay < 0;
+    final abs = delay.abs();
+    final what = early ? 'νωρίτερα' : 'καθυστέρησε';
     final text = flight.isNotEmpty
-        ? 'Αρχικά $oldTime · πτήση $flight καθυστέρησε $delay\''
-        : 'Αρχικά $oldTime · καθυστέρηση $delay\' λόγω πτήσης';
+        ? (early
+            ? 'Αρχικά $oldTime · πτήση $flight φτάνει $abs\' νωρίτερα'
+            : 'Αρχικά $oldTime · πτήση $flight καθυστέρησε $abs\'')
+        : 'Αρχικά $oldTime · $abs\' $what λόγω πτήσης';
     return Padding(
       padding: const EdgeInsets.only(top: 2),
       child: Text(
@@ -127,7 +132,7 @@ class FlightDelayTimeBlock extends StatelessWidget {
               color: c.amberSoft,
               borderRadius: BorderRadius.circular(6),
             ),
-            child: Text('+$delay\'',
+            child: Text(delay < 0 ? "$delay'" : "+$delay'",
                 style: TextStyle(
                     fontSize: 12, color: c.amberDeep, fontWeight: FontWeight.w600)),
           ),

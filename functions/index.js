@@ -7803,7 +7803,9 @@ async function fetchFlightStatus(apiKey, flightNumber, dateLocal) {
   if (!schedLocal) return null;
   const schedMs = Date.parse(schedLocal);
   const estMs = estLocal ? Date.parse(estLocal) : schedMs;
-  const delayMinutes = Math.max(0, Math.round((estMs - schedMs) / 60000));
+  // ΘΕΤΙΚΟ = καθυστέρηση, ΑΡΝΗΤΙΚΟ = φτάνει ΝΩΡΙΤΕΡΑ. Δεν το μηδενίζουμε:
+  // η νωρίτερη άφιξη είναι εξίσου σημαντική για τον οδηγό.
+  const delayMinutes = Math.round((estMs - schedMs) / 60000);
   return { delayMinutes, scheduledArrivalLocal: schedLocal, estimatedArrivalLocal: estLocal || schedLocal };
 }
 
@@ -7868,7 +7870,8 @@ exports.checkFlightDelays = onSchedule(
         const updates = { flightChecked: true, flightCheckedAt: FieldValue.serverTimestamp() };
         if (access.feeAmount > 0) updates.flightFeeApplicable = access.feeAmount;
 
-        if (status && status.delayMinutes > 0) {
+        // != 0 → και καθυστέρηση ΚΑΙ νωρίτερη άφιξη αλλάζουν το ραντεβού.
+        if (status && status.delayMinutes !== 0) {
           const originalScheduledAt = job.scheduledAt;
           const newScheduledAt = Timestamp.fromMillis(
             originalScheduledAt.toMillis() + status.delayMinutes * 60000
@@ -7898,7 +7901,9 @@ exports.checkFlightDelays = onSchedule(
               oldTimeIso: originalScheduledAt.toDate().toISOString(),
               newTimeIso: newScheduledAt.toDate().toISOString(),
               title: "Η ώρα άλλαξε λόγω πτήσης",
-              body: `${flightNum} καθυστέρησε ${status.delayMinutes}' — νέα ώρα ραντεβού`,
+              body: status.delayMinutes > 0
+                ? `${flightNum} καθυστέρησε ${status.delayMinutes}' — νέα ώρα ραντεβού`
+                : `${flightNum} φτάνει ${Math.abs(status.delayMinutes)}' νωρίτερα — νέα ώρα ραντεβού`,
             }, { ttlMs: 3600 * 1000 });
           }
         } else {
