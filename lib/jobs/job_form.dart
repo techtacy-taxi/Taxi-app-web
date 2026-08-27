@@ -1225,6 +1225,16 @@ class _JobFormPageState extends State<JobFormPage> {
     final job = _buildJob();
     if (job == null) return;
 
+    // ΚΡΙΣΙΜΟ: κρατάμε ΤΩΡΑ αναφορά στη δική μας οθόνη (route), πριν από
+    // οποιοδήποτε await. Αν στέλνεις δουλειά «σε μένα» (ή «σε όλους» με
+    // εσένα μέσα), το popup ειδοποίησης της νέας δουλειάς ανοίγει σχεδόν
+    // ταυτόχρονα ΠΑΝΩ από αυτή τη φόρμα, στην ΙΔΙΑ πλοήγηση (navigator).
+    // Ένα απλό Navigator.pop() στο τέλος θα έκλεινε τότε ΛΑΘΟΣ οθόνη (το
+    // popup, όχι τη φόρμα) — η φόρμα θα έμενε κολλημένη σε φόρτωση.
+    // Το removeRoute() κλείνει ΠΑΝΤΑ τη ΔΙΚΗ ΜΑΣ οθόνη, ό,τι κι αν είναι
+    // από πάνω της.
+    final myRoute = ModalRoute.of(context);
+
     setState(() => _isSaving = true);
 
     try {
@@ -1239,7 +1249,7 @@ class _JobFormPageState extends State<JobFormPage> {
         if (widget.onCreated != null) {
           try { await widget.onCreated!(); } catch (_) {}
         }
-        if (mounted) Navigator.of(context).pop(true);
+        if (mounted) _closeThisRoute(myRoute, true);
         return;
       }
 
@@ -1310,8 +1320,7 @@ class _JobFormPageState extends State<JobFormPage> {
       if (mounted) {
         // ΣΗΜΑΝΤΙΚΟ: επιστρέφουμε true ώστε ο καλών (π.χ. σελίδα Google
         // Calendar) να μαρκάρει το event ως «μετατράπηκε σε δουλειά».
-        // Το removeRoute ΔΕΝ επέστρεφε τιμή → το σήμα χανόταν.
-        Navigator.of(context).pop(true);
+        _closeThisRoute(myRoute, true);
       }
     } catch (e) {
       if (mounted) {
@@ -1319,6 +1328,23 @@ class _JobFormPageState extends State<JobFormPage> {
         setState(() => _isSaving = false);
       }
     }
+  }
+
+  // Κλείνει ΑΚΡΙΒΩΣ τη δική μας οθόνη (myRoute), όχι απλά «ό,τι είναι από
+  // πάνω». Όταν στέλνεις δουλειά «σε μένα» (ή «σε όλους» με σένα μέσα),
+  // το popup ειδοποίησης της νέας δουλειάς μπορεί να ανοίξει ΠΑΝΩ από τη
+  // φόρμα λίγα χιλιοστά του δευτερολέπτου πριν προλάβουμε να κλείσουμε —
+  // ένα απλό Navigator.pop() θα έκλεινε τότε ΛΑΘΟΣ οθόνη (το popup) και η
+  // φόρμα θα έμενε κολλημένη σε φόρτωση. Πρώτα κλείνουμε ό,τι τυχόν άνοιξε
+  // πάνω από τη δική μας οθόνη, μετά κλείνουμε κανονικά τη δική μας —
+  // έτσι διατηρείται σωστά η τιμή επιστροφής (true) προς όποιον μας άνοιξε
+  // (π.χ. σελίδα Ημερολογίου Google περιμένει αυτό το true).
+  void _closeThisRoute(Route<dynamic>? myRoute, dynamic result) {
+    final nav = Navigator.of(context);
+    if (myRoute != null) {
+      nav.popUntil((route) => route.isFirst || route == myRoute);
+    }
+    if (nav.canPop()) nav.pop(result);
   }
 
   void _showError(String msg) {
