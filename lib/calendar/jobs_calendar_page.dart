@@ -30,6 +30,7 @@ import '../jobs/job_model.dart';
 import '../jobs/job_service.dart';
 import '../jobs/saved_job_service.dart';
 import '../jobs/flight_delay_badge.dart';
+import '../jobs/job_shared_widgets.dart';
 import '../widgets/vehicle_type_icon.dart';
 import 'google_calendar_page.dart';
 import 'ics_calendar_export.dart';
@@ -929,6 +930,13 @@ class _JobsCalendarPageState extends State<JobsCalendarPage> {
                         _iconNum(c, Icons.child_care_rounded,
                             job.childSeatCount,
                             color: const Color(0xFFD4537E)),
+                      ],
+                      // Booking ID — διακριτικά στο τέλος της σειράς, μόνο
+                      // για δουλειές από φόρμα / link πληρωμής.
+                      if (job.bookingNumber != null) ...[
+                        const Spacer(),
+                        BookingIdChip(
+                            bookingNumber: job.bookingNumber, compact: true),
                       ],
                     ]),
                     // ── Κάτω γραμμή: τηλέφωνο+WhatsApp · υπενθυμίσεις+edit ──

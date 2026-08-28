@@ -121,6 +121,8 @@ class AdminJobCard extends StatelessWidget {
                         fontSize: 12.5, fontWeight: FontWeight.w600,
                         color: statusColor)),
               ),
+              // Booking ID (μόνο αν προήλθε από φόρμα/link πληρωμής)
+              BookingIdChip(bookingNumber: job.bookingNumber, compact: true),
             ]),
           ),
           // Κατάσταση διεκδίκησης — μόνο για ανοιχτές δουλειές

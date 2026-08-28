@@ -575,6 +575,14 @@ class JobDetailsSheet extends StatelessWidget {
     final chipBg = isNow ? const Color(0xFF412402) : const Color(0xFF0C447C);
 
     return Column(children: [
+      // Booking ID — μόνο σε δουλειές από φόρμα / link πληρωμής
+      if (job.bookingNumber != null) ...[
+        Align(
+          alignment: Alignment.centerLeft,
+          child: BookingIdChip(bookingNumber: job.bookingNumber),
+        ),
+        const SizedBox(height: 8),
+      ],
       Container(
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 11),

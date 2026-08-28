@@ -798,3 +798,42 @@ class JobListSkeleton extends StatelessWidget {
     );
   }
 }
+
+// ─── BookingIdChip ────────────────────────────────────────────────────────────
+//
+// Μικρό chip που δείχνει το Booking ID (αριθμό κράτησης) μιας δουλειάς.
+// Εμφανίζεται ΜΟΝΟ όταν υπάρχει — δηλαδή σε δουλειές που ήρθαν από την
+// online φόρμα ή που πληρώθηκαν μέσω link πληρωμής. Στις χειροκίνητες
+// δουλειές (χωρίς bookingNumber) δεν πιάνει καθόλου χώρο.
+//
+// Χρησιμοποιείται σε: ανοιχτές δουλειές, ιστορικό, αναλυτική καρτέλα.
+class BookingIdChip extends StatelessWidget {
+  final int? bookingNumber;
+  /// Πιο μικρό μέγεθος για συμπαγείς λίστες (κάρτες).
+  final bool compact;
+  const BookingIdChip({super.key, required this.bookingNumber, this.compact = false});
+
+  @override
+  Widget build(BuildContext context) {
+    if (bookingNumber == null) return const SizedBox.shrink();
+    return Container(
+      padding: EdgeInsets.symmetric(
+          horizontal: compact ? 7 : 9, vertical: compact ? 2 : 4),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF3D6),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: const Color(0xFFE3C489), width: 0.8),
+      ),
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
+        Icon(Icons.confirmation_number_rounded,
+            size: compact ? 11 : 13, color: const Color(0xFF8A5B00)),
+        SizedBox(width: compact ? 3 : 4),
+        Text('#$bookingNumber',
+            style: TextStyle(
+                fontSize: compact ? 11 : 12.5,
+                fontWeight: FontWeight.w800,
+                color: const Color(0xFF8A5B00))),
+      ]),
+    );
+  }
+}

@@ -120,6 +120,15 @@ class HistoryJobCard extends StatelessWidget {
               ]),
             ),
 
+          // ── Booking ID (μόνο αν προήλθε από φόρμα/link πληρωμής) ─────
+          if (job.bookingNumber != null) ...[
+            Align(
+              alignment: Alignment.centerLeft,
+              child: BookingIdChip(bookingNumber: job.bookingNumber, compact: true),
+            ),
+            const SizedBox(height: 6),
+          ],
+
           // ── Route + date + cancel button ─────────────────────────────
           Row(children: [
             Expanded(child: Column(
