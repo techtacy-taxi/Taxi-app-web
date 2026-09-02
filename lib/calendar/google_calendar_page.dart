@@ -650,73 +650,20 @@ class _GoogleCalendarPageState extends State<GoogleCalendarPage> {
                   defaultTextStyle:   TextStyle(fontSize: 14, color: c.textMain),
                   weekendTextStyle:   const TextStyle(fontSize: 14, color: Color(0xFF993C1D)),
                 ),
+                // Το ΚΕΛΙ χτίζεται ολόκληρο εδώ (αριθμός + κουκκίδες), ώστε
+                // ο αριθμός να είναι ΠΑΝΩ-ΠΑΝΩ και όλος ο υπόλοιπος χώρος
+                // του κελιού να ανήκει στις κουκκίδες. Δεν χρησιμοποιείται
+                // markerBuilder — οι κουκκίδες μπαίνουν μέσα στο κελί.
                 calendarBuilders: CalendarBuilders<CalendarEvent>(
-                  selectedBuilder: (ctx, day, _) =>
-                      _dayCellBox(c, day, selected: true),
-                  todayBuilder: (ctx, day, _) =>
-                      _dayCellBox(c, day, selected: false),
-                  // ΑΥΣΤΗΡΑ έως ΤΕΣΣΕΡΙΣ σειρές κουκκίδων (4 ανά σειρά, 9px).
-                  // Πλάτος 46 / (9 + 2 κενό) = 4 ανά σειρά· ύψος 4 σειρών =
-                  // 9*4 + 2*3 = 42px. Το SizedBox έχει ΣΤΑΘΕΡΟ ύψος 42 ώστε
-                  // οι κουκκίδες να μην «ανεβαίνουν» ποτέ πάνω από τον
-                  // αριθμό της ημέρας, όσα events κι αν υπάρχουν.
-                  //  • ≤16 events  → μόνο κουκκίδες (4+4+4+4)
-                  //  • >16 events  → 15 κουκκίδες + «+Ν» στην 4η σειρά
-                  markerBuilder: (context, day, events) {
-                    if (events.isEmpty) return null;
-                    const maxDots = 16;
-                    final overflow = events.length > maxDots;
-                    final shown =
-                        events.take(overflow ? maxDots - 1 : maxDots).toList();
-                    final extra = events.length - shown.length;
-                    return Positioned(
-                      bottom: 2,
-                      child: SizedBox(
-                        width: 46,
-                        height: 42,
-                        child: Wrap(
-                          alignment: WrapAlignment.center,
-                          runAlignment: WrapAlignment.end,
-                          crossAxisAlignment: WrapCrossAlignment.center,
-                          clipBehavior: Clip.hardEdge,
-                          spacing: 2, runSpacing: 2,
-                          children: [
-                            ...shown.map((e) {
-                              final converted = _convertedCache[e.id] ?? false;
-                              final col = _eventColor(e, c);
-                              // Το ΧΡΩΜΑ δηλώνει πλέον το ημερολόγιο Google.
-                              // Το «έγινε δουλειά» το δείχνει το ΣΧΗΜΑ:
-                              // γεμάτη κουκκίδα = εκκρεμεί, δαχτυλίδι
-                              // (κούφια) = έχει ήδη μετατραπεί.
-                              return Container(
-                                width: 9, height: 9,
-                                decoration: BoxDecoration(
-                                  color: converted ? Colors.transparent : col,
-                                  border: converted
-                                      ? Border.all(color: col, width: 2)
-                                      : null,
-                                  shape: BoxShape.circle,
-                                ),
-                              );
-                            }),
-                            if (extra > 0)
-                              SizedBox(
-                                width: 13, height: 9,
-                                child: FittedBox(
-                                  fit: BoxFit.scaleDown,
-                                  child: Text('+$extra',
-                                      style: TextStyle(
-                                          fontSize: 9,
-                                          height: 1.0,
-                                          fontWeight: FontWeight.w700,
-                                          color: c.textFaint)),
-                                ),
-                              ),
-                          ],
-                        ),
-                      ),
-                    );
-                  },
+                  defaultBuilder: (ctx, day, _) =>
+                      _cell(c, day, byDay[DateTime(day.year, day.month, day.day)]),
+                  outsideBuilder: (ctx, day, _) => const SizedBox.shrink(),
+                  selectedBuilder: (ctx, day, _) => _cell(
+                      c, day, byDay[DateTime(day.year, day.month, day.day)],
+                      filled: true, selected: true),
+                  todayBuilder: (ctx, day, _) => _cell(
+                      c, day, byDay[DateTime(day.year, day.month, day.day)],
+                      filled: true),
                 ),
               ),
             ),
@@ -890,32 +837,99 @@ class _GoogleCalendarPageState extends State<GoogleCalendarPage> {
       _googleEventColors[e.colorId ?? ''] ?? c.amber;
 
 
-  // ── Κελί ημέρας: ΟΛΟ το κουτί επιλέγεται, όχι μόνο ο αριθμός ─────────────
-  // Πριν το selected/today ήταν κύκλος γύρω από τον αριθμό και οι κουκκίδες
-  // έμεναν απ' έξω. Τώρα το φόντο γεμίζει το κελί (radius 12), οπότε μπαίνουν
-  // ΜΕΣΑ και η ημερομηνία και οι τελίτσες. Όλα τα χρώματα είναι theme-aware
-  // (amberSoft / amber / amberDeep) → δουλεύει σε ανοιχτό και σκούρο.
-  static Widget _dayCellBox(AppColors c, DateTime day,
-      {required bool selected}) {
+  // ── Κελί ημέρας ──────────────────────────────────────────────────────────
+  // Ο αριθμός κολλάει ΠΑΝΩ (δεν αφήνει κενό κάτω από τα Mon/Tue…) και όλος
+  // ο υπόλοιπος χώρος του κελιού δίνεται στις κουκκίδες, οι οποίες
+  // κατανέμονται αναλογικά στο διαθέσιμο ύψος. Το πλαίσιο (amberSoft +
+  // περίγραμμα amber) περικλείει ΟΛΟ το κελί: από τον αριθμό μέχρι κάτω.
+  // Η χωρητικότητα υπολογίζεται δυναμικά με LayoutBuilder, οπότε ποτέ δεν
+  // ξεχειλίζουν και ποτέ δεν καλύπτουν την ημερομηνία.
+  Widget _cell(AppColors c, DateTime day, List<CalendarEvent>? evs,
+      {bool filled = false, bool selected = false}) {
+    final events  = evs ?? const <CalendarEvent>[];
+    final weekend = day.weekday >= DateTime.saturday;
     return Container(
       margin: const EdgeInsets.all(2),
       decoration: BoxDecoration(
-        color: c.amberSoft,
+        color: filled ? c.amberSoft : null,
         borderRadius: BorderRadius.circular(12),
         border: selected ? Border.all(color: c.amber, width: 1.6) : null,
       ),
-      // ⚠️ Ο αριθμός ΚΕΝΤΡΑΡΙΣΜΕΝΟΣ, ακριβώς όπως στα κανονικά κελιά. Με
-      // topCenter «πηδούσε» ψηλότερα μόνο στο επιλεγμένο/σημερινό κελί και
-      // η γραμμή έδειχνε στραβή (φαίνεται έντονα στο web, όπου τα κελιά
-      // είναι ψηλά). Οι κουκκίδες μπαίνουν από πάνω με Positioned bottom.
-      alignment: Alignment.center,
-      child: Text(
-        '${day.day}',
-        style: TextStyle(
-          fontSize: 14,
-          fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
-          color: c.amberDeep,
-        ),
+      child: Column(
+        children: [
+          const SizedBox(height: 5),
+          Text(
+            '${day.day}',
+            style: TextStyle(
+              fontSize: 14,
+              height: 1.0,
+              fontWeight: filled ? FontWeight.w700 : FontWeight.w600,
+              color: filled
+                  ? c.amberDeep
+                  : (weekend ? const Color(0xFF993C1D) : c.textMain),
+            ),
+          ),
+          if (events.isNotEmpty)
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(3, 4, 3, 4),
+                child: LayoutBuilder(
+                  builder: (ctx, cons) {
+                    const d = 9.0, gap = 2.0;
+                    final perRow = ((cons.maxWidth + gap) / (d + gap))
+                        .floor().clamp(2, 6);
+                    final rows = ((cons.maxHeight + gap) / (d + gap))
+                        .floor().clamp(1, 8);
+                    final cap = perRow * rows;
+                    final over  = events.length > cap;
+                    final shown = events.take(over ? cap - 1 : cap).toList();
+                    final extra = events.length - shown.length;
+                    return Center(
+                      child: Wrap(
+                        alignment: WrapAlignment.center,
+                        runAlignment: WrapAlignment.center,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        clipBehavior: Clip.hardEdge,
+                        spacing: gap, runSpacing: gap,
+                        children: [
+                          ...shown.map((e) {
+                            final converted = _convertedCache[e.id] ?? false;
+                            final col = _eventColor(e, c);
+                            // ΧΡΩΜΑ = ημερολόγιο Google.
+                            // ΣΧΗΜΑ: γεμάτη = εκκρεμεί, δαχτυλίδι = έχει
+                            // ήδη μετατραπεί σε δουλειά.
+                            return Container(
+                              width: d, height: d,
+                              decoration: BoxDecoration(
+                                color: converted ? Colors.transparent : col,
+                                border: converted
+                                    ? Border.all(color: col, width: 2)
+                                    : null,
+                                shape: BoxShape.circle,
+                              ),
+                            );
+                          }),
+                          if (extra > 0)
+                            SizedBox(
+                              width: 13, height: d,
+                              child: FittedBox(
+                                fit: BoxFit.scaleDown,
+                                child: Text('+$extra',
+                                    style: TextStyle(
+                                        fontSize: 9,
+                                        height: 1.0,
+                                        fontWeight: FontWeight.w700,
+                                        color: c.textFaint)),
+                              ),
+                            ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ),
+        ],
       ),
     );
   }

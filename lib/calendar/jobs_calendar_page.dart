@@ -74,32 +74,94 @@ class JobsCalendarPage extends StatefulWidget {
 
 class _JobsCalendarPageState extends State<JobsCalendarPage> {
 
-  // ── Κελί ημέρας: ΟΛΟ το κουτί επιλέγεται, όχι μόνο ο αριθμός ─────────────
-  // Πριν το selected/today ήταν κύκλος γύρω από τον αριθμό και οι κουκκίδες
-  // έμεναν απ' έξω. Τώρα το φόντο γεμίζει το κελί (radius 12), οπότε μπαίνουν
-  // ΜΕΣΑ και η ημερομηνία και οι τελίτσες. Όλα τα χρώματα είναι theme-aware
-  // (amberSoft / amber / amberDeep) → δουλεύει σε ανοιχτό και σκούρο.
-  static Widget _dayCellBox(AppColors c, DateTime day,
-      {required bool selected}) {
+  // ── Κελί ημέρας ──────────────────────────────────────────────────────────
+  // Ο αριθμός κολλάει ΠΑΝΩ (κανένα κενό κάτω από τα Mon/Tue…) και όλος ο
+  // υπόλοιπος χώρος δίνεται στις κουκκίδες, κατανεμημένες αναλογικά στο
+  // ύψος. Το πλαίσιο περικλείει ΟΛΟ το κελί: από την ημερομηνία μέχρι κάτω.
+  // Η χωρητικότητα υπολογίζεται δυναμικά (LayoutBuilder) → ποτέ overflow,
+  // ποτέ κουκκίδες πάνω στην ημερομηνία.
+  Widget _cell(AppColors c, DateTime day, List<_CalEntry>? evs,
+      {bool filled = false, bool selected = false}) {
+    final entries = evs ?? const <_CalEntry>[];
+    final weekend = day.weekday >= DateTime.saturday;
     return Container(
       margin: const EdgeInsets.all(2),
       decoration: BoxDecoration(
-        color: c.amberSoft,
+        color: filled ? c.amberSoft : null,
         borderRadius: BorderRadius.circular(12),
         border: selected ? Border.all(color: c.amber, width: 1.6) : null,
       ),
-      // ⚠️ Ο αριθμός ΚΕΝΤΡΑΡΙΣΜΕΝΟΣ, ακριβώς όπως στα κανονικά κελιά. Με
-      // topCenter «πηδούσε» ψηλότερα μόνο στο επιλεγμένο/σημερινό κελί και
-      // η γραμμή έδειχνε στραβή (φαίνεται έντονα στο web, όπου τα κελιά
-      // είναι ψηλά). Οι κουκκίδες μπαίνουν από πάνω με Positioned bottom.
-      alignment: Alignment.center,
-      child: Text(
-        '${day.day}',
-        style: TextStyle(
-          fontSize: 14,
-          fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
-          color: c.amberDeep,
-        ),
+      child: Column(
+        children: [
+          const SizedBox(height: 5),
+          Text(
+            '${day.day}',
+            style: TextStyle(
+              fontSize: 14,
+              height: 1.0,
+              fontWeight: filled ? FontWeight.w700 : FontWeight.w600,
+              color: filled
+                  ? c.amberDeep
+                  : (weekend ? const Color(0xFF993C1D) : c.textMain),
+            ),
+          ),
+          if (entries.isNotEmpty)
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(3, 4, 3, 4),
+                child: LayoutBuilder(
+                  builder: (ctx, cons) {
+                    const d = 9.0, gap = 2.0;
+                    final perRow = ((cons.maxWidth + gap) / (d + gap))
+                        .floor().clamp(2, 6);
+                    final rows = ((cons.maxHeight + gap) / (d + gap))
+                        .floor().clamp(1, 8);
+                    final cap = perRow * rows;
+                    final over  = entries.length > cap;
+                    final shown = entries.take(over ? cap - 1 : cap).toList();
+                    final extra = entries.length - shown.length;
+                    return Center(
+                      child: Wrap(
+                        alignment: WrapAlignment.center,
+                        runAlignment: WrapAlignment.center,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        clipBehavior: Clip.hardEdge,
+                        spacing: gap, runSpacing: gap,
+                        children: [
+                          ...shown.map((e) {
+                            final border = _vehicleBorderColor(e.vehicleType);
+                            return Container(
+                              width: d, height: d,
+                              decoration: BoxDecoration(
+                                color: _statusColor(c, e.kind),
+                                shape: BoxShape.circle,
+                                border: border != null
+                                    ? Border.all(color: border, width: 1)
+                                    : null,
+                              ),
+                            );
+                          }),
+                          if (extra > 0)
+                            SizedBox(
+                              width: 13, height: d,
+                              child: FittedBox(
+                                fit: BoxFit.scaleDown,
+                                child: Text('+$extra',
+                                    style: TextStyle(
+                                        fontSize: 9,
+                                        height: 1.0,
+                                        fontWeight: FontWeight.w700,
+                                        color: c.textFaint)),
+                              ),
+                            ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ),
+        ],
       ),
     );
   }
@@ -732,67 +794,19 @@ class _JobsCalendarPageState extends State<JobsCalendarPage> {
           defaultTextStyle:   TextStyle(fontSize: 14, color: c.textMain),
           weekendTextStyle:   const TextStyle(fontSize: 14, color: Color(0xFF993C1D)),
         ),
+        // Το ΚΕΛΙ χτίζεται ολόκληρο εδώ (αριθμός + κουκκίδες): ο αριθμός
+        // πάνω-πάνω, όλος ο υπόλοιπος χώρος στις κουκκίδες. Χωρίς
+        // markerBuilder — ίδια λογική με το Google Calendar.
         calendarBuilders: CalendarBuilders<_CalEntry>(
-          selectedBuilder: (ctx, day, _) =>
-              _dayCellBox(c, day, selected: true),
-          todayBuilder: (ctx, day, _) =>
-              _dayCellBox(c, day, selected: false),
-          // ΑΥΣΤΗΡΑ έως ΤΕΣΣΕΡΙΣ σειρές κουκκίδων 9px (4 ανά σειρά).
-          // Χωρητικότητα: πλάτος 46 / (9 + 2 κενό) = 4 ανά σειρά· ύψος 4
-          // σειρών = 9*4 + 2*3 = 42px. Σταθερό ύψος SizedBox ώστε να μην
-          // ακουμπούν ποτέ τον αριθμό της ημέρας.
-          //  • ≤16 events → μόνο κουκκίδες (4+4+4+4)
-          //  • >16 events → 15 κουκκίδες + «+Ν» στην 4η σειρά
-          markerBuilder: (context, day, dayEntries) {
-            if (dayEntries.isEmpty) return null;
-            const maxDots = 16;
-            final overflow = dayEntries.length > maxDots;
-            final shown =
-                dayEntries.take(overflow ? maxDots - 1 : maxDots).toList();
-            final extra = dayEntries.length - shown.length;
-            return Positioned(
-              bottom: 2,
-              child: SizedBox(
-                width: 46,
-                height: 42,
-                child: Wrap(
-                  alignment: WrapAlignment.center,
-                  runAlignment: WrapAlignment.end,
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  clipBehavior: Clip.hardEdge,
-                  spacing: 2, runSpacing: 2,
-                  children: [
-                    ...shown.map((e) {
-                      final border = _vehicleBorderColor(e.vehicleType);
-                      return Container(
-                        width: 9, height: 9,
-                        decoration: BoxDecoration(
-                          color: _statusColor(c, e.kind),
-                          shape: BoxShape.circle,
-                          border: border != null
-                              ? Border.all(color: border, width: 1)
-                              : null,
-                        ),
-                      );
-                    }),
-                    if (extra > 0)
-                      SizedBox(
-                        width: 13, height: 9,
-                        child: FittedBox(
-                          fit: BoxFit.scaleDown,
-                          child: Text('+$extra',
-                              style: TextStyle(
-                                  fontSize: 9,
-                                  height: 1.0,
-                                  fontWeight: FontWeight.w700,
-                                  color: c.textFaint)),
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-            );
-          },
+          defaultBuilder: (ctx, day, _) =>
+              _cell(c, day, byDay[DateTime(day.year, day.month, day.day)]),
+          outsideBuilder: (ctx, day, _) => const SizedBox.shrink(),
+          selectedBuilder: (ctx, day, _) => _cell(
+              c, day, byDay[DateTime(day.year, day.month, day.day)],
+              filled: true, selected: true),
+          todayBuilder: (ctx, day, _) => _cell(
+              c, day, byDay[DateTime(day.year, day.month, day.day)],
+              filled: true),
         ),
       ),
     );
