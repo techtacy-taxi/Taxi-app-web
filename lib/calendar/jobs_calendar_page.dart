@@ -793,6 +793,10 @@ class _JobsCalendarPageState extends State<JobsCalendarPage> {
           outsideDaysVisible: false,
           defaultTextStyle:   TextStyle(fontSize: 14, color: c.textMain),
           weekendTextStyle:   const TextStyle(fontSize: 14, color: Color(0xFF993C1D)),
+          // ΚΡΙΣΙΜΟ: χωρίς αυτό, το table_calendar συνεχίζει να δεσμεύει
+          // χώρο και να σχεδιάζει τη ΔΙΚΗ ΤΟΥ προεπιλεγμένη (μαύρη)
+          // κουκκίδα, ΑΚΟΜΑ κι όταν δίνουμε δικό μας markerBuilder.
+          markersMaxCount:    0,
         ),
         // Το ΚΕΛΙ χτίζεται ολόκληρο εδώ (αριθμός + κουκκίδες): ο αριθμός
         // πάνω-πάνω, όλος ο υπόλοιπος χώρος στις κουκκίδες. Χωρίς
