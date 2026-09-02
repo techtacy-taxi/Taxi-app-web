@@ -5405,6 +5405,33 @@ async function upsertSecret(secretId, value) {
   // π.χ. tenant διορθώνει Merchant ID/API Key και δοκιμάζει αμέσως, αλλά ο
   // server ακόμα βλέπει το λάθος παλιό κλειδί (401 Unauthorized).
   _secretValueCache.delete(secretId);
+
+  // ── Καθαρισμός παλιών εκδόσεων ──────────────────────────────────────
+  // Το Secret Manager χρεώνει $0.06/μήνα ΑΝΑ ΕΝΕΡΓΗ έκδοση — όχι μόνο την
+  // τελευταία. Κάθε φορά που αλλάζουμε ένα κλειδί (π.χ. tenant διορθώνει
+  // λάθος paste), η ΠΑΛΙΑ έκδοση έμενε ενεργή και συνέχιζε να χρεώνεται
+  // επ' αόριστον, αν δεν την κατέστρεφε κανείς χειροκίνητα. Εδώ κρατάμε
+  // ΜΟΝΟ την τελευταία (μόλις προστέθηκε) — καταστρέφουμε όλες τις άλλες
+  // ενεργές εκδόσεις αυτού του secret. Αν κάτι αποτύχει (π.χ. permissions),
+  // απλά το αγνοούμε — δεν πρέπει ΠΟΤΕ να μπλοκάρει την κύρια λειτουργία
+  // (αποθήκευση κλειδιού), μόνο να «καθαρίζει» best-effort.
+  try {
+    const [versions] = await _secretManagerClient.listSecretVersions({ parent: secretName });
+    // Η νέα έκδοση που μόλις προσθέσαμε είναι πάντα η μεγαλύτερη σε αριθμό.
+    const versionNums = versions
+      .map((v) => parseInt(v.name.split("/").pop(), 10))
+      .filter((n) => !isNaN(n));
+    const latest = versionNums.length ? Math.max(...versionNums) : null;
+    for (const v of versions) {
+      if (v.state !== "ENABLED") continue; // ήδη destroyed/disabled
+      const num = parseInt(v.name.split("/").pop(), 10);
+      if (num === latest) continue; // κράτα ΜΟΝΟ την τελευταία
+      await _secretManagerClient.destroySecretVersion({ name: v.name });
+    }
+  } catch (e) {
+    console.warn("upsertSecret: cleanup παλιών εκδόσεων απέτυχε (μη κρίσιμο):",
+      secretId, e.message || e);
+  }
 }
 
 // Cache 10 λεπτών ανά secret ώστε να μην χτυπάμε το Secret Manager σε κάθε
