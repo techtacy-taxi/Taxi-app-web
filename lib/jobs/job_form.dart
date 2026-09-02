@@ -1067,7 +1067,13 @@ class _JobFormPageState extends State<JobFormPage> {
 
   /// Επικυρώνει & χτίζει το Job από τη φόρμα. Επιστρέφει null αν invalid
   /// (και δείχνει error). Δεν κάνει writes.
-  Job? _buildJob() {
+  // stripBookingNumber: true όταν το αποτέλεσμα ΔΕΝ είναι η ίδια, συνεχόμενη
+  // οντότητα με την αρχική πληρωμένη κράτηση — δηλαδή «Αποθήκευση» πάνω σε
+  // ήδη-αναληφθείσα δουλειά (φτιάχνει ΝΕΟ doc στις Αποθηκευμένες, το
+  // αρχικό μένει ανέγγιχτο) και «Αντιγραφή» (νέα, ανεξάρτητη δουλειά). Το
+  // Booking ID πρέπει να δείχνει ΠΑΝΤΑ μία, συγκεκριμένη πραγματική
+  // πληρωμή — ποτέ να μην το μοιράζονται δύο ξεχωριστά έγγραφα.
+  Job? _buildJob({bool stripBookingNumber = false}) {
     final fromText = (_fromPick?.description ?? '').trim();
     final toText   = (_toPick?.description   ?? '').trim();
     if (fromText.isEmpty || toText.isEmpty) {
@@ -1169,35 +1175,103 @@ class _JobFormPageState extends State<JobFormPage> {
       // έχουν depositPaid: true ΧΩΡΙΣ αποθηκευμένο vivaOrderCode (π.χ. πριν
       // προστεθεί εκείνο το πεδίο). Το depositPaid ΜΟΝΟ του είναι το
       // αξιόπιστο σήμα — δεν χρειάζεται vivaOrderCode σαν προϋπόθεση.
-      depositPaid:      widget.editJob?.depositPaid == true
-          ? widget.editJob!.depositPaid
-          : widget.editSavedJob?.depositPaid == true
-              ? widget.editSavedJob!.depositPaid
-              : _fullyPaidManual,
-      depositAmount:    widget.editJob?.depositPaid == true
-          ? widget.editJob!.depositAmount
-          : widget.editSavedJob?.depositPaid == true
-              ? widget.editSavedJob!.depositAmount
-              : (_fullyPaidManual ? price : 0),
-      fullyPaid:        widget.editJob?.depositPaid == true
-          ? widget.editJob!.fullyPaid
-          : widget.editSavedJob?.depositPaid == true
-              ? widget.editSavedJob!.fullyPaid
-              : _fullyPaidManual,
-      vivaOrderCode:    widget.editJob?.vivaOrderCode ?? widget.editSavedJob?.vivaOrderCode,
+      //
+      // ΤΡΙΤΗ ΔΙΟΡΘΩΣΗ: όταν stripBookingNumber (Αποθήκευση πάνω σε ήδη-
+      // αναληφθείσα δουλειά, ή Αντιγραφή) — καθαρίζουμε ΚΑΙ τα στοιχεία
+      // πληρωμής μαζί με το Booking ID. Αλλιώς θα έμενε μια δουλειά
+      // «πληρωμένη» χωρίς Booking ID — εξίσου μπερδεμένο, και θα έδειχνε
+      // ψευδώς προπληρωμένη μια δουλειά που στην πραγματικότητα είναι
+      // ξεχωριστή, ανεξάρτητη οντότητα.
+      depositPaid:      stripBookingNumber
+          ? false
+          : widget.editJob?.depositPaid == true
+              ? widget.editJob!.depositPaid
+              : widget.editSavedJob?.depositPaid == true
+                  ? widget.editSavedJob!.depositPaid
+                  : _fullyPaidManual,
+      depositAmount:    stripBookingNumber
+          ? 0
+          : widget.editJob?.depositPaid == true
+              ? widget.editJob!.depositAmount
+              : widget.editSavedJob?.depositPaid == true
+                  ? widget.editSavedJob!.depositAmount
+                  : (_fullyPaidManual ? price : 0),
+      fullyPaid:        stripBookingNumber
+          ? false
+          : widget.editJob?.depositPaid == true
+              ? widget.editJob!.fullyPaid
+              : widget.editSavedJob?.depositPaid == true
+                  ? widget.editSavedJob!.fullyPaid
+                  : _fullyPaidManual,
+      vivaOrderCode:    stripBookingNumber
+          ? null
+          : widget.editJob?.vivaOrderCode ?? widget.editSavedJob?.vivaOrderCode,
       // Read-only, ΠΟΤΕ δεν αλλάζει χειροκίνητα — απλά διατηρείται.
-      bookingNumber:    widget.editJob?.bookingNumber ?? widget.editSavedJob?.bookingNumber,
+      bookingNumber:    stripBookingNumber
+          ? null
+          : widget.editJob?.bookingNumber ?? widget.editSavedJob?.bookingNumber,
     );
   }
 
-  /// ΑΠΟΘΗΚΕΥΣΗ ως προσχέδιο (saved_jobs) — δεν στέλνεται σε κανέναν.
+  /// ΑΠΟΘΗΚΕΥΣΗ — δύο εντελώς διαφορετικές συμπεριφορές ανάλογα με το από
+  /// πού ξεκινήσαμε:
+  ///
+  ///  1) Ξεκινήσαμε από ΗΔΗ-ΑΝΑΛΗΦΘΕΙΣΑ ΠΡΑΓΜΑΤΙΚΗ δουλειά (widget.editJob,
+  ///     όχι widget.isSavedDraft) → «Αποθήκευση» σημαίνει ΜΟΝΟ ενημέρωση
+  ///     στοιχείων (ώρα/τιμή/σχόλια κλπ) ΣΤΟ ΙΔΙΟ doc. ΔΕΝ αλλάζει
+  ///     ανάθεση/κατάσταση/οδηγό, ΔΕΝ στέλνει ειδοποίηση, ΔΕΝ φτιάχνει
+  ///     δεύτερο doc. Η δουλειά είναι μία — όχι δύο.
+  ///  2) Οτιδήποτε άλλο (νέο σχέδιο, ή επεξεργασία ήδη-υπάρχοντος
+  ///     σχεδίου στις Αποθηκευμένες) → η ΠΑΛΙΑ, κανονική λογική
+  ///     (SavedJobService), όπως πριν.
   Future<void> _saveDraft() async {
     if (_isSaving) return;
+
+    final isEditingRealTakenJob =
+        widget.editJob != null && !widget.isSavedDraft;
 
     final job = _buildJob();
     if (job == null) return;
 
     setState(() => _isSaving = true);
+
+    // ── Περίπτωση 1: ενημέρωση ΣΤΟ ΙΔΙΟ doc, καμία αλλαγή ανάθεσης ──────
+    if (isEditingRealTakenJob) {
+      try {
+        final map = job.toMap();
+        // Διατηρούμε ΡΗΤΑ ανάθεση/κατάσταση/χρόνο ανάληψης — το
+        // «Αποθήκευση» ΔΕΝ αγγίζει ποιος έχει τη δουλειά.
+        map['status']      = widget.editJob!.status.name;
+        map['takenBy']     = widget.editJob!.takenBy;
+        map['takenByName'] = widget.editJob!.takenByName;
+        if (widget.editJob!.takenAt != null) {
+          map['takenAt'] = Timestamp.fromDate(widget.editJob!.takenAt!);
+        }
+        map.remove('createdAt'); // μην πειράξεις πότε πρωτοδημιουργήθηκε
+        await JobService.updateJob(widget.editJob!.id, map);
+        if (widget.onSavedDraft != null) {
+          try { await widget.onSavedDraft!(); } catch (_) {}
+        }
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('💾 Αποθηκεύτηκαν οι αλλαγές'),
+              backgroundColor: Color(0xFF1565C0),
+              duration: Duration(seconds: 2),
+            ),
+          );
+          Navigator.of(context).pop(true);
+        }
+      } catch (e) {
+        if (mounted) {
+          _showError('Σφάλμα αποθήκευσης: $e');
+          setState(() => _isSaving = false);
+        }
+      }
+      return;
+    }
+
+    // ── Περίπτωση 2: η παλιά, κανονική λογική (Αποθηκευμένες) ──────────
     try {
       // Ομαδική (Shuttle/Λεωφορείο με 2+ κρατήσεις) → container στις Αποθηκευμένες
       if (await _saveGroupIfNeeded(job)) return;
