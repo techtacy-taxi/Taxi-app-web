@@ -658,53 +658,22 @@ class _GoogleCalendarPageState extends State<GoogleCalendarPage> {
                   markersMaxCount:    0,
                 ),
                 calendarBuilders: CalendarBuilders<CalendarEvent>(
-                  selectedBuilder: (ctx, day, _) =>
-                      _dayCellBox(c, day, selected: true),
-                  todayBuilder: (ctx, day, _) =>
-                      _dayCellBox(c, day, selected: false),
-                  // Έως 8 κουκκίδες σε ΔΥΟ σειρές (4+4), μεγαλύτερες (8px)·
-                  // «+Ν» αν υπάρχουν κι άλλες.
-                  markerBuilder: (context, day, events) {
-                    if (events.isEmpty) return null;
-                    final shown = events.take(8).toList();
-                    final extra = events.length - shown.length;
-                    return Positioned(
-                      bottom: 3,
-                      child: SizedBox(
-                        width: 46,
-                        child: Wrap(
-                          alignment: WrapAlignment.center,
-                          spacing: 2.5, runSpacing: 2.5,
-                          children: [
-                            ...shown.map((e) {
-                              final converted = _convertedCache[e.id] ?? false;
-                              final col = _eventColor(e, c);
-                              // Το ΧΡΩΜΑ δηλώνει πλέον το ημερολόγιο Google.
-                              // Το «έγινε δουλειά» το δείχνει το ΣΧΗΜΑ:
-                              // γεμάτη κουκκίδα = εκκρεμεί, δαχτυλίδι
-                              // (κούφια) = έχει ήδη μετατραπεί.
-                              return Container(
-                                width: 8, height: 8,
-                                decoration: BoxDecoration(
-                                  color: converted ? Colors.transparent : col,
-                                  border: converted
-                                      ? Border.all(color: col, width: 2)
-                                      : null,
-                                  shape: BoxShape.circle,
-                                ),
-                              );
-                            }),
-                            if (extra > 0)
-                              Text('+$extra',
-                                  style: TextStyle(
-                                      fontSize: 9,
-                                      fontWeight: FontWeight.w700,
-                                      color: c.textFaint)),
-                          ],
-                        ),
-                      ),
-                    );
-                  },
+                  // ΕΝΟΠΟΙΗΜΕΝΟ κελί για default/selected/today — ίδια δομή
+                  // με το άλλο Ημερολόγιο (_cell σε jobs_calendar_page.dart):
+                  // αριθμός ΠΑΝΤΑ πάνω, κουκκίδες ΠΑΝΤΑ από κάτω, ΙΔΙΟ ύψος
+                  // κουτιού ό,τι κι αν έχει η μέρα. Έτσι λύνεται και το
+                  // «λεπτή γραμμή αντί για γεμάτο κουτί» στις μέρες χωρίς
+                  // events, και η θέση του αριθμού ταιριάζει με το άλλο
+                  // ημερολόγιο.
+                  defaultBuilder: (ctx, day, _) => _googleCell(
+                      c, day, byDay[DateTime(day.year, day.month, day.day)]),
+                  selectedBuilder: (ctx, day, _) => _googleCell(
+                      c, day, byDay[DateTime(day.year, day.month, day.day)],
+                      filled: true, selected: true),
+                  todayBuilder: (ctx, day, _) => _googleCell(
+                      c, day, byDay[DateTime(day.year, day.month, day.day)],
+                      filled: true),
+                  markerBuilder: (ctx, day, events) => null,
                 ),
               ),
             ),
@@ -878,32 +847,99 @@ class _GoogleCalendarPageState extends State<GoogleCalendarPage> {
       _googleEventColors[e.colorId ?? ''] ?? c.amber;
 
 
-  // ── Κελί ημέρας: ΟΛΟ το κουτί επιλέγεται, όχι μόνο ο αριθμός ─────────────
-  // Πριν το selected/today ήταν κύκλος γύρω από τον αριθμό και οι κουκκίδες
-  // έμεναν απ' έξω. Τώρα το φόντο γεμίζει το κελί (radius 12), οπότε μπαίνουν
-  // ΜΕΣΑ και η ημερομηνία και οι τελίτσες. Όλα τα χρώματα είναι theme-aware
-  // (amberSoft / amber / amberDeep) → δουλεύει σε ανοιχτό και σκούρο.
-  static Widget _dayCellBox(AppColors c, DateTime day,
-      {required bool selected}) {
+  // ── Κελί ημέρας: ΙΔΙΑ δομή με το άλλο Ημερολόγιο (jobs_calendar_page) ────
+  // Αριθμός ΠΑΝΤΑ πάνω-πάνω, κουκκίδες από κάτω σε Wrap, το κουτί κρατάει
+  // ΠΑΝΤΑ το ίδιο ύψος (Expanded) ό,τι κι αν έχει η μέρα — αλλιώς οι μέρες
+  // χωρίς events μαζεύονται στο ελάχιστο ύψος και το περίγραμμα επιλογής
+  // φαίνεται σαν λεπτή γραμμή αντί για γεμάτο κουτί.
+  Widget _googleCell(AppColors c, DateTime day, List<CalendarEvent>? evs,
+      {bool filled = false, bool selected = false}) {
+    final entries = evs ?? const <CalendarEvent>[];
+    final weekend = day.weekday >= DateTime.saturday;
     return Container(
       margin: const EdgeInsets.all(2),
       decoration: BoxDecoration(
-        color: c.amberSoft,
+        color: filled ? c.amberSoft : null,
         borderRadius: BorderRadius.circular(12),
         border: selected ? Border.all(color: c.amber, width: 1.6) : null,
       ),
-      // ⚠️ Ο αριθμός ΚΕΝΤΡΑΡΙΣΜΕΝΟΣ, ακριβώς όπως στα κανονικά κελιά. Με
-      // topCenter «πηδούσε» ψηλότερα μόνο στο επιλεγμένο/σημερινό κελί και
-      // η γραμμή έδειχνε στραβή (φαίνεται έντονα στο web, όπου τα κελιά
-      // είναι ψηλά). Οι κουκκίδες μπαίνουν από πάνω με Positioned bottom.
-      alignment: Alignment.center,
-      child: Text(
-        '${day.day}',
-        style: TextStyle(
-          fontSize: 14,
-          fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
-          color: c.amberDeep,
-        ),
+      child: Column(
+        children: [
+          const SizedBox(height: 5),
+          Text(
+            '${day.day}',
+            style: TextStyle(
+              fontSize: 14,
+              height: 1.0,
+              fontWeight: filled ? FontWeight.w700 : FontWeight.w600,
+              color: filled
+                  ? c.amberDeep
+                  : (weekend ? const Color(0xFF993C1D) : c.textMain),
+            ),
+          ),
+          Expanded(
+            child: entries.isEmpty
+                ? const SizedBox.shrink()
+                : Padding(
+                    padding: const EdgeInsets.fromLTRB(3, 4, 3, 4),
+                    child: LayoutBuilder(
+                      builder: (ctx, cons) {
+                        const d = 9.0, gap = 2.0;
+                        final perRow = ((cons.maxWidth + gap) / (d + gap))
+                            .floor().clamp(2, 6);
+                        final rows = ((cons.maxHeight + gap) / (d + gap))
+                            .floor().clamp(1, 8);
+                        final cap = perRow * rows;
+                        final over  = entries.length > cap;
+                        final shown = entries.take(over ? cap - 1 : cap).toList();
+                        final extra = entries.length - shown.length;
+                        return Center(
+                          child: Wrap(
+                            alignment: WrapAlignment.center,
+                            runAlignment: WrapAlignment.center,
+                            crossAxisAlignment: WrapCrossAlignment.center,
+                            clipBehavior: Clip.hardEdge,
+                            spacing: gap, runSpacing: gap,
+                            children: [
+                              ...shown.map((e) {
+                                // Το ΧΡΩΜΑ δηλώνει το ημερολόγιο Google.
+                                // Το «έγινε δουλειά» το δείχνει το ΣΧΗΜΑ:
+                                // γεμάτη κουκκίδα = εκκρεμεί, δαχτυλίδι
+                                // (κούφια) = έχει ήδη μετατραπεί.
+                                final converted = _convertedCache[e.id] ?? false;
+                                final col = _eventColor(e, c);
+                                return Container(
+                                  width: d, height: d,
+                                  decoration: BoxDecoration(
+                                    color: converted ? Colors.transparent : col,
+                                    shape: BoxShape.circle,
+                                    border: converted
+                                        ? Border.all(color: col, width: 1.5)
+                                        : null,
+                                  ),
+                                );
+                              }),
+                              if (extra > 0)
+                                SizedBox(
+                                  width: 13, height: d,
+                                  child: FittedBox(
+                                    fit: BoxFit.scaleDown,
+                                    child: Text('+$extra',
+                                        style: TextStyle(
+                                            fontSize: 9,
+                                            height: 1.0,
+                                            fontWeight: FontWeight.w700,
+                                            color: c.textFaint)),
+                                  ),
+                                ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+          ),
+        ],
       ),
     );
   }

@@ -1163,17 +1163,23 @@ class _JobFormPageState extends State<JobFormPage> {
       // με ήδη πληρωμένη προκαταβολή (widget.editSavedJob) έχανε το
       // depositPaid/depositAmount/fullyPaid μόλις τη έστελνες σε οδηγό,
       // γι' αυτό δεν φαινόταν η πράσινη ένδειξη «προπληρωμένο».
-      depositPaid:      widget.editJob?.vivaOrderCode != null
+      //
+      // ΔΕΥΤΕΡΗ ΔΙΟΡΘΩΣΗ: η πρώτη εκδοχή απαιτούσε ΕΠΙΠΛΕΟΝ vivaOrderCode
+      // != null για τη διαδρομή editJob — αλλά παλιές δουλειές μπορεί να
+      // έχουν depositPaid: true ΧΩΡΙΣ αποθηκευμένο vivaOrderCode (π.χ. πριν
+      // προστεθεί εκείνο το πεδίο). Το depositPaid ΜΟΝΟ του είναι το
+      // αξιόπιστο σήμα — δεν χρειάζεται vivaOrderCode σαν προϋπόθεση.
+      depositPaid:      widget.editJob?.depositPaid == true
           ? widget.editJob!.depositPaid
           : widget.editSavedJob?.depositPaid == true
               ? widget.editSavedJob!.depositPaid
               : _fullyPaidManual,
-      depositAmount:    widget.editJob?.vivaOrderCode != null
+      depositAmount:    widget.editJob?.depositPaid == true
           ? widget.editJob!.depositAmount
           : widget.editSavedJob?.depositPaid == true
               ? widget.editSavedJob!.depositAmount
               : (_fullyPaidManual ? price : 0),
-      fullyPaid:        widget.editJob?.vivaOrderCode != null
+      fullyPaid:        widget.editJob?.depositPaid == true
           ? widget.editJob!.fullyPaid
           : widget.editSavedJob?.depositPaid == true
               ? widget.editSavedJob!.fullyPaid

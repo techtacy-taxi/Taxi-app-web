@@ -105,9 +105,15 @@ class _JobsCalendarPageState extends State<JobsCalendarPage> {
                   : (weekend ? const Color(0xFF993C1D) : c.textMain),
             ),
           ),
-          if (entries.isNotEmpty)
-            Expanded(
-              child: Padding(
+          // ΠΑΝΤΑ Expanded — ακόμα κι όταν δεν υπάρχουν δουλειές εκείνη τη
+          // μέρα. Χωρίς αυτό, το Column μαζεύεται στο ελάχιστο ύψος του
+          // (μόνο ο αριθμός) και το περίγραμμα επιλογής φαίνεται σαν λεπτή
+          // γραμμή αντί για γεμάτο κουτί — ασυνεπές ανάλογα με το αν έχει
+          // δουλειές ή όχι η μέρα.
+          Expanded(
+            child: entries.isEmpty
+                ? const SizedBox.shrink()
+                : Padding(
                 padding: const EdgeInsets.fromLTRB(3, 4, 3, 4),
                 child: LayoutBuilder(
                   builder: (ctx, cons) {
@@ -160,7 +166,7 @@ class _JobsCalendarPageState extends State<JobsCalendarPage> {
                   },
                 ),
               ),
-            ),
+          ),
         ],
       ),
     );
