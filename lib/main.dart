@@ -300,6 +300,24 @@ Future<void> main() async {
   runApp(const MyTaxiApp());
 }
 
+// ── Ενεργοποίηση συρσίματος (drag) με ΠΟΝΤΙΚΙ στο web/desktop ──────────────
+//
+// Το Flutter, εξ ορισμού, θεωρεί έγκυρες συσκευές για σύρσιμο μόνο την
+// αφή (touch) και το στυλό — ΟΧΙ το ποντίκι. Αποτέλεσμα: σε browser/
+// desktop, το «τράβηγμα» με το ποντίκι πάνω σε συρτάρια (π.χ. η λίστα
+// ραντεβού στο Ημερολόγιο), λίστες, PageView κλπ. δεν δουλεύει — μόνο σε
+// κινητό/tablet με το δάχτυλο. Αυτό το custom ScrollBehavior προσθέτει
+// το ποντίκι στις έγκυρες συσκευές, ΠΑΝΤΟΥ στην εφαρμογή, με μία αλλαγή.
+class AppScrollBehavior extends MaterialScrollBehavior {
+  @override
+  Set<PointerDeviceKind> get dragDevices => {
+        PointerDeviceKind.touch,
+        PointerDeviceKind.mouse,
+        PointerDeviceKind.stylus,
+        PointerDeviceKind.trackpad,
+      };
+}
+
 class MyTaxiApp extends StatelessWidget {
   const MyTaxiApp({super.key});
 
@@ -312,6 +330,7 @@ class MyTaxiApp extends StatelessWidget {
       builder: (_, themeMode, _) => MaterialApp(
         title: 'Athens Taxi Booking',
         navigatorKey: NotificationsService.navigatorKey,
+        scrollBehavior: AppScrollBehavior(),
         theme:     appThemeLight(),
         darkTheme: appThemeDark(),
         themeMode: themeMode,

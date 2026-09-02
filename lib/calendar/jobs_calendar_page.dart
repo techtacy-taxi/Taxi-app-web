@@ -807,6 +807,12 @@ class _JobsCalendarPageState extends State<JobsCalendarPage> {
           todayBuilder: (ctx, day, _) => _cell(
               c, day, byDay[DateTime(day.year, day.month, day.day)],
               filled: true),
+          // ΚΡΙΣΙΜΟ: χωρίς αυτό, το table_calendar σχεδιάζει ΤΙΣ ΔΙΚΕΣ ΤΟΥ
+          // προεπιλεγμένες μαύρες κουκκίδες από κάτω (επειδή το eventLoader
+          // παραπάνω επιστρέφει events) — ΕΠΙΠΛΕΟΝ από τις δικές μας έγχρωμες
+          // κουκκίδες που ήδη ζωγραφίζονται ΜΕΣΑ στο _cell(). Το ρητό null
+          // λέει στο πακέτο «μη σχεδιάσεις τίποτα δικό σου εδώ».
+          markerBuilder: (ctx, day, events) => null,
         ),
       ),
     );

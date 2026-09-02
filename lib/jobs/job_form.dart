@@ -1152,19 +1152,33 @@ class _JobFormPageState extends State<JobFormPage> {
       timeoutMins:      _timeoutMins,
       // ── Προπληρωμένο ─────────────────────────────────────────────────
       // Αν η δουλειά που επεξεργαζόμαστε έχει ήδη ΠΡΑΓΜΑΤΙΚΗ πληρωμή Viva
-      // (ήρθε από την online φόρμα), ΔΙΑΤΗΡΟΥΜΕ αυτά τα στοιχεία όπως είναι
-      // — το χειροκίνητο toggle δεν μπορεί να τα σβήσει/αλλάξει κατά λάθος.
-      // Αλλιώς, εφαρμόζουμε το χειροκίνητο toggle του admin/master.
+      // (ήρθε από την online φόρμα ΕΙΤΕ ήδη ανατεθειμένη [editJob] ΕΙΤΕ
+      // ακόμα αποθηκευμένη [editSavedJob] — π.χ. link πληρωμής που μόλις
+      // πληρώθηκε και τώρα τη στέλνουμε σε οδηγό), ΔΙΑΤΗΡΟΥΜΕ αυτά τα
+      // στοιχεία όπως είναι — το χειροκίνητο toggle δεν μπορεί να τα
+      // σβήσει/αλλάξει κατά λάθος. Αλλιώς, εφαρμόζουμε το χειροκίνητο
+      // toggle του admin/master.
+      //
+      // ΠΡΙΝ: η συνθήκη έλεγχε ΜΟΝΟ το editJob — μια αποθηκευμένη δουλειά
+      // με ήδη πληρωμένη προκαταβολή (widget.editSavedJob) έχανε το
+      // depositPaid/depositAmount/fullyPaid μόλις τη έστελνες σε οδηγό,
+      // γι' αυτό δεν φαινόταν η πράσινη ένδειξη «προπληρωμένο».
       depositPaid:      widget.editJob?.vivaOrderCode != null
           ? widget.editJob!.depositPaid
-          : _fullyPaidManual,
+          : widget.editSavedJob?.depositPaid == true
+              ? widget.editSavedJob!.depositPaid
+              : _fullyPaidManual,
       depositAmount:    widget.editJob?.vivaOrderCode != null
           ? widget.editJob!.depositAmount
-          : (_fullyPaidManual ? price : 0),
+          : widget.editSavedJob?.depositPaid == true
+              ? widget.editSavedJob!.depositAmount
+              : (_fullyPaidManual ? price : 0),
       fullyPaid:        widget.editJob?.vivaOrderCode != null
           ? widget.editJob!.fullyPaid
-          : _fullyPaidManual,
-      vivaOrderCode:    widget.editJob?.vivaOrderCode,
+          : widget.editSavedJob?.depositPaid == true
+              ? widget.editSavedJob!.fullyPaid
+              : _fullyPaidManual,
+      vivaOrderCode:    widget.editJob?.vivaOrderCode ?? widget.editSavedJob?.vivaOrderCode,
       // Read-only, ΠΟΤΕ δεν αλλάζει χειροκίνητα — απλά διατηρείται.
       bookingNumber:    widget.editJob?.bookingNumber ?? widget.editSavedJob?.bookingNumber,
     );
