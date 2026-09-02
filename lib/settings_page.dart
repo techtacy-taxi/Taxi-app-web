@@ -18,6 +18,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import 'app_theme.dart';
+import 'debug/reminder_debug_page.dart';
 import 'masters/global_settings_page.dart';
 import 'models.dart';
 import 'pricing/pricing_zones_page.dart';
@@ -263,6 +264,17 @@ class _SettingsPageState extends State<SettingsPage> {
                   label: 'Ρυθμίσεις Online Φόρμας',
                   onTap: () => Navigator.of(context).push(MaterialPageRoute(
                         builder: (_) => const VivaSettingsPage(),
+                      ))),
+              _divider(c),
+              // Οθόνη διαγνωστικών για τις υπενθυμίσεις ραντεβού (30′/10′).
+              // Δείχνει αν λείπει η άδεια "Alarms & reminders" (Android
+              // 12+), τι alarms είναι προγραμματισμένα, και προγραμματίζει
+              // δοκιμαστική υπενθύμιση 1 λεπτό μπροστά — χωρίς adb/dev mode.
+              _tile(context, c,
+                  icon: Icons.notification_important_rounded,
+                  label: 'Διαγνωστικά Υπενθυμίσεων',
+                  onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                        builder: (_) => const ReminderDebugPage(),
                       ))),
             ]),
           ],
