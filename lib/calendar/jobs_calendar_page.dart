@@ -737,21 +737,29 @@ class _JobsCalendarPageState extends State<JobsCalendarPage> {
               _dayCellBox(c, day, selected: true),
           todayBuilder: (ctx, day, _) =>
               _dayCellBox(c, day, selected: false),
-          // Έως 12 κουκκίδες σε ΤΡΕΙΣ σειρές (4+4+4) — «+Ν» αν υπάρχουν κι
-          // άλλες. Οι κουκκίδες ΜΕΓΑΛΩΣΑΝ (8→9px) όπως ζητήθηκε, δεν
-          // μικρύνθηκαν. Χωρητικότητα: πλάτος 46 / (9 + 2 κενό) ≈ 4 ανά
-          // σειρά· ύψος 3 σειρές = 9*3 + 2*2 = 31px, χωράει άνετα στο
-          // rowHeight 64 χωρίς να ακουμπά τον αριθμό της ημέρας.
+          // ΑΥΣΤΗΡΑ έως ΤΕΣΣΕΡΙΣ σειρές κουκκίδων 9px (4 ανά σειρά).
+          // Χωρητικότητα: πλάτος 46 / (9 + 2 κενό) = 4 ανά σειρά· ύψος 4
+          // σειρών = 9*4 + 2*3 = 42px. Σταθερό ύψος SizedBox ώστε να μην
+          // ακουμπούν ποτέ τον αριθμό της ημέρας.
+          //  • ≤16 events → μόνο κουκκίδες (4+4+4+4)
+          //  • >16 events → 15 κουκκίδες + «+Ν» στην 4η σειρά
           markerBuilder: (context, day, dayEntries) {
             if (dayEntries.isEmpty) return null;
-            final shown = dayEntries.take(12).toList();
+            const maxDots = 16;
+            final overflow = dayEntries.length > maxDots;
+            final shown =
+                dayEntries.take(overflow ? maxDots - 1 : maxDots).toList();
             final extra = dayEntries.length - shown.length;
             return Positioned(
               bottom: 2,
               child: SizedBox(
                 width: 46,
+                height: 42,
                 child: Wrap(
                   alignment: WrapAlignment.center,
+                  runAlignment: WrapAlignment.end,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  clipBehavior: Clip.hardEdge,
                   spacing: 2, runSpacing: 2,
                   children: [
                     ...shown.map((e) {
@@ -768,11 +776,18 @@ class _JobsCalendarPageState extends State<JobsCalendarPage> {
                       );
                     }),
                     if (extra > 0)
-                      Text('+$extra',
-                          style: TextStyle(
-                              fontSize: 9,
-                              fontWeight: FontWeight.w700,
-                              color: c.textFaint)),
+                      SizedBox(
+                        width: 13, height: 9,
+                        child: FittedBox(
+                          fit: BoxFit.scaleDown,
+                          child: Text('+$extra',
+                              style: TextStyle(
+                                  fontSize: 9,
+                                  height: 1.0,
+                                  fontWeight: FontWeight.w700,
+                                  color: c.textFaint)),
+                        ),
+                      ),
                   ],
                 ),
               ),

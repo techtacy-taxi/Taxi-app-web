@@ -655,19 +655,31 @@ class _GoogleCalendarPageState extends State<GoogleCalendarPage> {
                       _dayCellBox(c, day, selected: true),
                   todayBuilder: (ctx, day, _) =>
                       _dayCellBox(c, day, selected: false),
-                  // Έως 8 κουκκίδες σε ΔΥΟ σειρές (4+4), μεγαλύτερες (8px)·
-                  // «+Ν» αν υπάρχουν κι άλλες.
+                  // ΑΥΣΤΗΡΑ έως ΤΕΣΣΕΡΙΣ σειρές κουκκίδων (4 ανά σειρά, 9px).
+                  // Πλάτος 46 / (9 + 2 κενό) = 4 ανά σειρά· ύψος 4 σειρών =
+                  // 9*4 + 2*3 = 42px. Το SizedBox έχει ΣΤΑΘΕΡΟ ύψος 42 ώστε
+                  // οι κουκκίδες να μην «ανεβαίνουν» ποτέ πάνω από τον
+                  // αριθμό της ημέρας, όσα events κι αν υπάρχουν.
+                  //  • ≤16 events  → μόνο κουκκίδες (4+4+4+4)
+                  //  • >16 events  → 15 κουκκίδες + «+Ν» στην 4η σειρά
                   markerBuilder: (context, day, events) {
                     if (events.isEmpty) return null;
-                    final shown = events.take(8).toList();
+                    const maxDots = 16;
+                    final overflow = events.length > maxDots;
+                    final shown =
+                        events.take(overflow ? maxDots - 1 : maxDots).toList();
                     final extra = events.length - shown.length;
                     return Positioned(
-                      bottom: 3,
+                      bottom: 2,
                       child: SizedBox(
                         width: 46,
+                        height: 42,
                         child: Wrap(
                           alignment: WrapAlignment.center,
-                          spacing: 2.5, runSpacing: 2.5,
+                          runAlignment: WrapAlignment.end,
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          clipBehavior: Clip.hardEdge,
+                          spacing: 2, runSpacing: 2,
                           children: [
                             ...shown.map((e) {
                               final converted = _convertedCache[e.id] ?? false;
@@ -677,7 +689,7 @@ class _GoogleCalendarPageState extends State<GoogleCalendarPage> {
                               // γεμάτη κουκκίδα = εκκρεμεί, δαχτυλίδι
                               // (κούφια) = έχει ήδη μετατραπεί.
                               return Container(
-                                width: 8, height: 8,
+                                width: 9, height: 9,
                                 decoration: BoxDecoration(
                                   color: converted ? Colors.transparent : col,
                                   border: converted
@@ -688,11 +700,18 @@ class _GoogleCalendarPageState extends State<GoogleCalendarPage> {
                               );
                             }),
                             if (extra > 0)
-                              Text('+$extra',
-                                  style: TextStyle(
-                                      fontSize: 9,
-                                      fontWeight: FontWeight.w700,
-                                      color: c.textFaint)),
+                              SizedBox(
+                                width: 13, height: 9,
+                                child: FittedBox(
+                                  fit: BoxFit.scaleDown,
+                                  child: Text('+$extra',
+                                      style: TextStyle(
+                                          fontSize: 9,
+                                          height: 1.0,
+                                          fontWeight: FontWeight.w700,
+                                          color: c.textFaint)),
+                                ),
+                              ),
                           ],
                         ),
                       ),
