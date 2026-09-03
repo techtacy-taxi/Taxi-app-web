@@ -796,8 +796,11 @@ class _GoogleCalendarPageState extends State<GoogleCalendarPage> {
     '11': Color(0xFFD50000), // Tomato
   };
 
+  // Fallback ΜΠΛΕ (όχι amber) όταν το event δεν έχει δικό του ρητό colorId
+  // — ΙΔΙΟ μπλε (Peacock) με αυτό που ήδη εξηγείται στο info popup ως
+  // «Ταξί». Έτσι δεν μπερδεύεται με πραγματικά ΚΙΤΡΙΝΑ events (Banana, #5).
   Color _eventColor(CalendarEvent e, AppColors c) =>
-      _googleEventColors[e.colorId ?? ''] ?? c.amber;
+      _googleEventColors[e.colorId ?? ''] ?? const Color(0xFF039BE5); // Peacock
 
 
   // ── Κελί ημέρας: ΙΔΙΑ δομή με το άλλο Ημερολόγιο (jobs_calendar_page) ────
