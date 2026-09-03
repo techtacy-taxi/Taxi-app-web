@@ -74,6 +74,12 @@ class JobsCalendarPage extends StatefulWidget {
 
 class _JobsCalendarPageState extends State<JobsCalendarPage> {
 
+  // Χειροκίνητος έλεγχος του συρταριού — ώστε το «τράβηγμα» από τη λαβή
+  // να δουλεύει σίγουρα ΚΑΙ στο web (χωρίς να βασιζόμαστε στο πώς το
+  // Flutter Web ερμηνεύει mouse-drag πάνω σε Scrollable), ΚΑΙ να μπορεί
+  // κάποιος απλά να πατήσει (tap) τη λαβή για να ανοίξει/κλείσει πλήρως.
+  final _sheetController = DraggableScrollableController();
+
   // ── Κελί ημέρας ──────────────────────────────────────────────────────────
   // Ο αριθμός κολλάει ΠΑΝΩ (κανένα κενό κάτω από τα Mon/Tue…) και όλος ο
   // υπόλοιπος χώρος δίνεται στις κουκκίδες, κατανεμημένες αναλογικά στο
@@ -211,6 +217,12 @@ class _JobsCalendarPageState extends State<JobsCalendarPage> {
     super.initState();
     _loadOnlyMinePref();
     _loadMyTenantId();
+  }
+
+  @override
+  void dispose() {
+    _sheetController.dispose();
+    super.dispose();
   }
 
   Future<void> _loadMyTenantId() async {
@@ -657,6 +669,7 @@ class _JobsCalendarPageState extends State<JobsCalendarPage> {
 
               // Συρτάρι δουλειών — τραβιέται μέχρι σχεδόν την κορυφή.
               DraggableScrollableSheet(
+                controller:       _sheetController,
                 minChildSize:     _sheetMin,
                 initialChildSize: _sheetMin,
                 maxChildSize:     _sheetMax,
@@ -683,14 +696,50 @@ class _JobsCalendarPageState extends State<JobsCalendarPage> {
                       padding: EdgeInsets.fromLTRB(
                           14, 8, 14, 16 + (safeBottom > 0 ? safeBottom : 10)),
                       children: [
-                        // Χερούλι
+                        // Χερούλι — GestureDetector ΔΙΚΟ ΜΑΣ αντί να
+                        // βασιζόμαστε στο πώς το Flutter Web ερμηνεύει
+                        // mouse-drag πάνω σε Scrollable (ασταθές). Σύρσιμο
+                        // πάνω/κάτω μετακινεί το συρτάρι απευθείας μέσω
+                        // του controller· ένα απλό tap ανοίγει/κλείνει
+                        // πλήρως (εναλλαγή ανάμεσα σε min/max).
                         Center(
-                          child: Container(
-                            width: 42, height: 5,
-                            margin: const EdgeInsets.only(bottom: 10),
-                            decoration: BoxDecoration(
-                              color: c.textFaint.withValues(alpha: 0.45),
-                              borderRadius: BorderRadius.circular(3),
+                          child: GestureDetector(
+                            behavior: HitTestBehavior.opaque,
+                            onTap: () {
+                              final cur = _sheetController.size;
+                              final mid = (_sheetMin + _sheetMax) / 2;
+                              _sheetController.animateTo(
+                                cur < mid ? _sheetMax : _sheetMin,
+                                duration: const Duration(milliseconds: 220),
+                                curve: Curves.easeOut,
+                              );
+                            },
+                            onVerticalDragUpdate: (details) {
+                              final h = MediaQuery.of(context).size.height;
+                              if (h <= 0) return;
+                              final next = (_sheetController.size -
+                                      details.delta.dy / h)
+                                  .clamp(_sheetMin, _sheetMax);
+                              _sheetController.jumpTo(next);
+                            },
+                            onVerticalDragEnd: (details) {
+                              final cur = _sheetController.size;
+                              final mid = (_sheetMin + _sheetMax) / 2;
+                              _sheetController.animateTo(
+                                cur < mid ? _sheetMin : _sheetMax,
+                                duration: const Duration(milliseconds: 200),
+                                curve: Curves.easeOut,
+                              );
+                            },
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 10),
+                              child: Container(
+                                width: 42, height: 5,
+                                decoration: BoxDecoration(
+                                  color: c.textFaint.withValues(alpha: 0.45),
+                                  borderRadius: BorderRadius.circular(3),
+                                ),
+                              ),
                             ),
                           ),
                         ),
@@ -803,6 +852,14 @@ class _JobsCalendarPageState extends State<JobsCalendarPage> {
           // χώρο και να σχεδιάζει τη ΔΙΚΗ ΤΟΥ προεπιλεγμένη (μαύρη)
           // κουκκίδα, ΑΚΟΜΑ κι όταν δίνουμε δικό μας markerBuilder.
           markersMaxCount:    0,
+          // ΙΔΙΟ πρόβλημα και για την επιλεγμένη μέρα: το table_calendar
+          // σχεδιάζει ΤΟ ΔΙΚΟ ΤΟΥ λεπτό προεπιλεγμένο περίγραμμα γύρω ΜΟΝΟ
+          // από τον αριθμό, ΑΚΟΜΑ κι όταν δίνουμε δικό μας selectedBuilder
+          // με πλήρες κουτί — φαινόταν σαν «λεπτή γραμμή» αντί για γεμάτο
+          // κουτί στις μέρες χωρίς δουλειές. Κενό decoration = το πακέτο
+          // δεν σχεδιάζει τίποτα δικό του, μένει μόνο το δικό μας κουτί.
+          selectedDecoration: const BoxDecoration(),
+          todayDecoration:    const BoxDecoration(),
         ),
         // Το ΚΕΛΙ χτίζεται ολόκληρο εδώ (αριθμός + κουκκίδες): ο αριθμός
         // πάνω-πάνω, όλος ο υπόλοιπος χώρος στις κουκκίδες. Χωρίς

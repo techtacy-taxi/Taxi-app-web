@@ -66,10 +66,22 @@ class _GoogleCalendarPageState extends State<GoogleCalendarPage> {
   // κρύβεται η τελευταία κάρτα από κάτω.
   static const double _actionBarH = 74;
 
+  // Χειροκίνητος έλεγχος του συρταριού — ίδιο σκεπτικό με το άλλο
+  // ημερολόγιο: το mouse-drag πάνω σε Scrollable στο Flutter Web είναι
+  // ασταθές, οπότε η λαβή οδηγεί απευθείας τον controller. Tap = πλήρες
+  // άνοιγμα/κλείσιμο.
+  final _sheetController = DraggableScrollableController();
+
   @override
   void initState() {
     super.initState();
     _load();
+  }
+
+  @override
+  void dispose() {
+    _sheetController.dispose();
+    super.dispose();
   }
 
   Future<void> _load() async {
@@ -624,6 +636,14 @@ class _GoogleCalendarPageState extends State<GoogleCalendarPage> {
                   // markersMaxCount: 0 λέει στο πακέτο «μη σχεδιάσεις ΕΣΥ
                   // τίποτα», το δικό μας markerBuilder παραμένει ενεργό.
                   markersMaxCount:    0,
+                  // ΙΔΙΟ πρόβλημα και για την επιλεγμένη μέρα: το πακέτο
+                  // σχεδιάζει το ΔΙΚΟ ΤΟΥ λεπτό προεπιλεγμένο περίγραμμα
+                  // γύρω ΜΟΝΟ από τον αριθμό, ανεξάρτητα από το δικό μας
+                  // πλήρες selectedBuilder κουτί — φαινόταν σαν «λεπτή
+                  // γραμμή» στις μέρες χωρίς events. Κενό decoration = το
+                  // πακέτο δεν σχεδιάζει τίποτα δικό του πια.
+                  selectedDecoration: const BoxDecoration(),
+                  todayDecoration:    const BoxDecoration(),
                 ),
                 calendarBuilders: CalendarBuilders<CalendarEvent>(
                   // ΕΝΟΠΟΙΗΜΕΝΟ κελί για default/selected/today — ίδια δομή
@@ -650,6 +670,7 @@ class _GoogleCalendarPageState extends State<GoogleCalendarPage> {
 
         // Συρτάρι events — τραβιέται μέχρι σχεδόν την κορυφή.
         DraggableScrollableSheet(
+          controller:       _sheetController,
           minChildSize:     _sheetMin,
           initialChildSize: _sheetMin,
           maxChildSize:     _sheetMax,
@@ -683,14 +704,48 @@ class _GoogleCalendarPageState extends State<GoogleCalendarPage> {
                         // να μην κρύβεται η τελευταία κάρτα από κάτω.
                         (_selectMode ? _actionBarH : 0)),
                 children: [
-                  // Χερούλι
+                  // Χερούλι — GestureDetector ΔΙΚΟ ΜΑΣ, ίδιο σκεπτικό με
+                  // το άλλο ημερολόγιο (jobs_calendar_page.dart): σύρσιμο
+                  // πάνω/κάτω μετακινεί απευθείας τον controller, tap
+                  // εναλλάσσει ανάμεσα σε ανοιχτό/κλειστό πλήρως.
                   Center(
-                    child: Container(
-                      width: 42, height: 5,
-                      margin: const EdgeInsets.only(bottom: 10),
-                      decoration: BoxDecoration(
-                        color: c.textFaint.withValues(alpha: 0.45),
-                        borderRadius: BorderRadius.circular(3),
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTap: () {
+                        final cur = _sheetController.size;
+                        final mid = (_sheetMin + _sheetMax) / 2;
+                        _sheetController.animateTo(
+                          cur < mid ? _sheetMax : _sheetMin,
+                          duration: const Duration(milliseconds: 220),
+                          curve: Curves.easeOut,
+                        );
+                      },
+                      onVerticalDragUpdate: (details) {
+                        final h = MediaQuery.of(context).size.height;
+                        if (h <= 0) return;
+                        final next = (_sheetController.size -
+                                details.delta.dy / h)
+                            .clamp(_sheetMin, _sheetMax);
+                        _sheetController.jumpTo(next);
+                      },
+                      onVerticalDragEnd: (details) {
+                        final cur = _sheetController.size;
+                        final mid = (_sheetMin + _sheetMax) / 2;
+                        _sheetController.animateTo(
+                          cur < mid ? _sheetMin : _sheetMax,
+                          duration: const Duration(milliseconds: 200),
+                          curve: Curves.easeOut,
+                        );
+                      },
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 10),
+                        child: Container(
+                          width: 42, height: 5,
+                          decoration: BoxDecoration(
+                            color: c.textFaint.withValues(alpha: 0.45),
+                            borderRadius: BorderRadius.circular(3),
+                          ),
+                        ),
                       ),
                     ),
                   ),
