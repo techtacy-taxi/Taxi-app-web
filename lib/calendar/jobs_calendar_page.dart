@@ -91,6 +91,14 @@ class _JobsCalendarPageState extends State<JobsCalendarPage> {
     final entries = evs ?? const <_CalEntry>[];
     final weekend = day.weekday >= DateTime.saturday;
     return Container(
+      // ΡΗΤΟ πλάτος — χωρίς αυτό, όταν δεν υπάρχει filled/entries που να
+      // «τεντώνει» το Container μέσω των παιδιών του, ο ambient context
+      // του table_calendar μπορεί να του δώσει χαλαρό (loose) constraint,
+      // και το Container μαζεύεται στο ελάχιστο πλάτος του περιεχομένου
+      // (μόνο τον αριθμό) — φαινόταν σαν λεπτή κάθετη γραμμή στο επιλεγμένο
+      // περίγραμμα. Το double.infinity το αναγκάζει ΠΑΝΤΑ στο πλήρες
+      // διαθέσιμο πλάτος της στήλης.
+      width: double.infinity,
       margin: const EdgeInsets.all(2),
       decoration: BoxDecoration(
         color: filled ? c.amberSoft : null,

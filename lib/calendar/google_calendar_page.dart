@@ -868,6 +868,10 @@ class _GoogleCalendarPageState extends State<GoogleCalendarPage> {
     final entries = evs ?? const <CalendarEvent>[];
     final weekend = day.weekday >= DateTime.saturday;
     return Container(
+      // ΡΗΤΟ πλάτος — ίδιος λόγος με το άλλο ημερολόγιο (jobs_calendar_page):
+      // χωρίς αυτό, το Container μπορεί να μαζευτεί στο ελάχιστο πλάτος
+      // του περιεχομένου όταν ο ambient context δίνει χαλαρό constraint.
+      width: double.infinity,
       margin: const EdgeInsets.all(2),
       decoration: BoxDecoration(
         color: filled ? c.amberSoft : null,
