@@ -437,38 +437,6 @@ class _GoogleCalendarPageState extends State<GoogleCalendarPage> {
                         style: TextStyle(fontSize: 13.5, color: c.textMain)),
                   ),
                 ]),
-                const SizedBox(height: 14),
-                Text('Όλα τα χρώματα Google Calendar',
-                    style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                        color: c.textFaint)),
-                const SizedBox(height: 4),
-                Text(
-                    'Το Google Calendar αναγνωρίζει ΜΟΝΟ αυτά τα 11 επίσημα '
-                    'χρώματα. Αν το Samsung Calendar δείχνει μια απόχρωση '
-                    'πιο κοντά σε κοβάλτιο, στο παρασκήνιο είναι ΠΑΛΙ ένα '
-                    'από τα παρακάτω — το Samsung απλώς το ζωγραφίζει λίγο '
-                    'διαφορετικά.',
-                    style: TextStyle(fontSize: 12, color: c.textFaint)),
-                const SizedBox(height: 10),
-                for (final entry in _googleEventColors.entries)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 4),
-                    child: Row(children: [
-                      Container(
-                        width: 16, height: 16,
-                        decoration: BoxDecoration(
-                          color: entry.value,
-                          shape: BoxShape.circle,
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Text(_googleColorNames[entry.key] ?? '',
-                          style:
-                              TextStyle(fontSize: 13, color: c.textMain)),
-                    ]),
-                  ),
               ],
             ),
           ),
@@ -826,21 +794,6 @@ class _GoogleCalendarPageState extends State<GoogleCalendarPage> {
     '9':  Color(0xFF3F51B5), // Blueberry
     '10': Color(0xFF0B8043), // Basil
     '11': Color(0xFFD50000), // Tomato
-  };
-
-  /// Ίδια σειρά με το _googleEventColors — ονόματα όπως τα δίνει η Google.
-  static const Map<String, String> _googleColorNames = {
-    '1':  'Lavender',
-    '2':  'Sage',
-    '3':  'Grape',
-    '4':  'Flamingo',
-    '5':  'Banana',
-    '6':  'Tangerine',
-    '7':  'Peacock',
-    '8':  'Graphite',
-    '9':  'Blueberry',
-    '10': 'Basil',
-    '11': 'Tomato',
   };
 
   Color _eventColor(CalendarEvent e, AppColors c) =>

@@ -7871,15 +7871,28 @@ exports.checkFlightDelays = onSchedule(
       return;
     }
 
+    // ΔΙΑΓΝΩΣΤΙΚΟ LOG: χωρίς αυτό, ένα κανονικό "200 OK" δεν λέει τίποτα —
+    // δεν ξεχωρίζει "δεν βρήκε καμία δουλειά" από "βρήκε δουλειά αλλά δεν
+    // είχε καθυστέρηση". Τώρα φαίνεται ρητά και τα δύο σε κάθε εκτέλεση.
+    console.log(
+      `checkFlightDelays: παράθυρο ${windowStart.toISOString()} → ` +
+      `${windowEnd.toISOString()} — βρέθηκαν ${snap.docs.length} υποψήφιες δουλειές` +
+      (snap.docs.length
+        ? ": " + snap.docs.map((d) => `${d.id}(flight=${d.data().flightOrShip})`).join(", ")
+        : "")
+    );
+
     for (const doc of snap.docs) {
       const job = doc.data();
       const flightRaw = job.flightOrShip;
       if (!isLikelyFlightNumber(flightRaw)) {
+        console.log(`checkFlightDelays: ${doc.id} — "${flightRaw}" δεν αναγνωρίζεται ως αριθμός πτήσης, παραλείπεται.`);
         await doc.ref.update({ flightChecked: true }); // δεν είναι πτήση, μη ξαναελέγχεις
         continue;
       }
       const access = await resolveFlightApiAccess(db, job.tenantId || "default", job.takenBy || "");
       if (!access) {
+        console.log(`checkFlightDelays: ${doc.id} — καμία πρόσβαση σε κλειδί AeroDataBox (tenant=${job.tenantId || "default"}, driver=${job.takenBy || "-"}), παραλείπεται.`);
         await doc.ref.update({ flightChecked: true }); // χωρίς πρόσβαση, μη ξαναδοκιμάζεις
         continue;
       }
@@ -7891,8 +7904,10 @@ exports.checkFlightDelays = onSchedule(
         const jobDate = job.scheduledAt && job.scheduledAt.toDate
           ? job.scheduledAt.toDate() : now;
         const dateLocal = athensNaiveDate(jobDate).toISOString().slice(0, 10);
+        console.log(`checkFlightDelays: ${doc.id} — καλώ AeroDataBox για ${flightNum} στις ${dateLocal} (πηγή κλειδιού: ${access.source})`);
         const status = await fetchFlightStatus(access.apiKey, flightNum, dateLocal);
         await incrementAeroDataBoxUsage(db);
+        console.log(`checkFlightDelays: ${doc.id} — απάντηση AeroDataBox: ${status ? JSON.stringify(status) : "ΔΕΝ ΒΡΕΘΗΚΕ (null)"}`);
 
         const updates = { flightChecked: true, flightCheckedAt: FieldValue.serverTimestamp() };
         if (access.feeAmount > 0) updates.flightFeeApplicable = access.feeAmount;
@@ -7913,6 +7928,7 @@ exports.checkFlightDelays = onSchedule(
           updates.priceRecalcPending = true;
 
           await doc.ref.update(updates);
+          console.log(`checkFlightDelays: ${doc.id} — ΕΝΗΜΕΡΩΘΗΚΕ, καθυστέρηση ${status.delayMinutes}' — στέλνω ειδοποιήσεις.`);
 
           // FCM data-only ειδοποίηση σε δημιουργό ΚΑΙ οδηγό → popup παντού
           // στο app (Flutter διαβάζει flightDelayMinutes/originalScheduledAt).
@@ -7935,6 +7951,7 @@ exports.checkFlightDelays = onSchedule(
           }
         } else {
           await doc.ref.update(updates);
+          console.log(`checkFlightDelays: ${doc.id} — ελέγχθηκε, καμία αλλαγή ώρας (delay=${status ? status.delayMinutes : "-"}).`);
         }
       } catch (e) {
         console.error("checkFlightDelays flight lookup error:", doc.id, e.message || e);
