@@ -638,6 +638,12 @@ class _JobListenerState extends State<JobListener> with WidgetsBindingObserver {
         child: Dialog(
         backgroundColor: Colors.transparent,
         insetPadding: const EdgeInsets.symmetric(horizontal: 24),
+        // ΚΡΙΣΙΜΟ: το insetPadding παραπάνω έχει vertical: 0 (μόνο
+        // οριζόντιο περιθώριο) — χωρίς SafeArea εδώ, σε ψηλό
+        // περιεχόμενο (όπως αυτό, με πολλά στοιχεία) το κάτω κουμπί
+        // «ΟΚ, ενημερώθηκα» μπορεί να καταλήξει ΠΙΣΩ από το Android
+        // navigation bar, αόρατο/απατηλό να πατηθεί.
+        child: SafeArea(
         child: ClipRRect(
           borderRadius: BorderRadius.circular(20),
           child: Container(
@@ -822,6 +828,7 @@ class _JobListenerState extends State<JobListener> with WidgetsBindingObserver {
             ],
           ),
           ),
+        ),
         ),
       ),
       ),
