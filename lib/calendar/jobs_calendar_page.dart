@@ -156,7 +156,7 @@ class _JobsCalendarPageState extends State<JobsCalendarPage> {
                                 color: _statusColor(c, e.kind),
                                 shape: BoxShape.circle,
                                 border: border != null
-                                    ? Border.all(color: border, width: 1)
+                                    ? Border.all(color: border, width: 2)
                                     : null,
                               ),
                             );
@@ -532,6 +532,38 @@ class _JobsCalendarPageState extends State<JobsCalendarPage> {
                     ),
                   ]),
                 ),
+              const Divider(height: 22),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Text('Στεφάνι γύρω από την κουκκίδα',
+                    style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: c.textFaint)),
+              ),
+              const SizedBox(height: 8),
+              for (final v in const [
+                ('Ταξί', Color(0xFF039BE5)), // Peacock — ίδιο με Google Calendar
+                ('Βαν',  Color(0xFF0B8043)), // Basil — ίδιο με Google Calendar
+              ])
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 6),
+                  child: Row(children: [
+                    Container(
+                      width: 16, height: 16,
+                      decoration: BoxDecoration(
+                        color: c.textFaint.withValues(alpha: 0.25),
+                        shape: BoxShape.circle,
+                        border: Border.all(color: v.$2, width: 2),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(v.$1,
+                          style: TextStyle(fontSize: 13.5, color: c.textMain)),
+                    ),
+                  ]),
+                ),
             ],
           ),
         ),
@@ -564,13 +596,14 @@ class _JobsCalendarPageState extends State<JobsCalendarPage> {
     }
   }
 
-  /// Χρώμα περιγράμματος ανά όχημα: πράσινο = Ταξί, μοβ = Βαν.
+  /// Χρώμα περιγράμματος ανά όχημα — ΙΔΙΑ παλέτα με το Google Calendar
+  /// (google_calendar_page.dart): Peacock μπλε = Ταξί, Basil πράσινο = Βαν.
   Color? _vehicleBorderColor(String? vehicleType) {
     switch (vehicleType) {
       case 'taxi':
-        return const Color(0xFF4CAF50);
+        return const Color(0xFF039BE5); // Peacock
       case 'van':
-        return const Color(0xFF9C27B0);
+        return const Color(0xFF0B8043); // Basil
       default:
         return null; // bus/άλλο/άγνωστο — χωρίς ειδικό περίγραμμα
     }
