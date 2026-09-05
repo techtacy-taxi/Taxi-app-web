@@ -23,6 +23,8 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:timezone/data/latest_all.dart' as tzdata;
+import 'package:timezone/timezone.dart' as tz;
 
 import 'firebase_options.dart';
 import 'notifications_service.dart';
@@ -71,6 +73,19 @@ Future<void> fcmBackgroundHandler(RemoteMessage message) async {
       const InitializationSettings(android: androidInit),
     );
   } catch (_) {}
+
+  // ΚΡΙΣΙΜΟ: αρχικοποίηση timezone ΚΑΙ σε αυτό το isolate. Το
+  // initLocalNotifPlugin() (που το κάνει κανονικά) ΔΕΝ τρέχει εδώ — το
+  // background isolate στήνει το plugin χειροκίνητα παραπάνω. Χωρίς αυτό,
+  // το tz.local μέσα στο scheduleOneReminder() (αναπρογραμματισμός
+  // υπενθυμίσεων μετά από αλλαγή ώρας πτήσης) θα έσκαγε ή θα έδινε ΛΑΘΟΣ
+  // ζώνη ώρας → η υπενθύμιση θα προγραμματιζόταν σε λάθος ώρα.
+  try {
+    tzdata.initializeTimeZones();
+    tz.setLocalLocation(tz.getLocation(kAppTimeZone));
+  } catch (e) {
+    debugPrint('bg tz init error: $e');
+  }
   // Σιγουρεύουμε ότι υπάρχουν τα channels (το isolate μπορεί να είναι φρέσκο).
   await _ensureChannelsBg(fln);
 
@@ -102,6 +117,14 @@ Future<void> _displayFromMessage(
       break;
     case 'boarded':
       await _showBoardedBg(fln, data, muted);
+      break;
+    case 'flight_delay_update':
+      // ΚΡΙΣΙΜΟ: πριν έπεφτε στο _showGenericBg (γενικό, ήσυχο κανάλι
+      // «Ενημερώσεις») — ένιωθε σαν να «δεν χτυπάει», ενώ μια αλλαγή ώρας
+      // λόγω πτήσης είναι εξίσου επείγουσα με νέα δουλειά. Τώρα χρησιμοποιεί
+      // το ΙΔΙΟ δυνατό/επαναλαμβανόμενο ηχητικό μοτίβο με τις υπενθυμίσεις
+      // ραντεβού (FLAG_INSISTENT), όχι απλό ήχο ειδοποίησης μία φορά.
+      await _showFlightDelayBg(fln, data, muted);
       break;
     case 'approval':
       await _showApprovalBg(fln, data, muted);
@@ -448,6 +471,100 @@ Future<void> _showPublicBookingBg(
   );
 }
 
+/// Ειδοποίηση «Η ώρα άλλαξε λόγω πτήσης» — ΔΥΝΑΤΗ/επαναλαμβανόμενη, ίδιο
+/// ηχητικό μοτίβο με τις υπενθυμίσεις ραντεβού (kApptChannelId, alarm-style
+/// audio attributes, FLAG_INSISTENT). Δεν πέφτει πια στο γενικό, ήσυχο
+/// κανάλι «Ενημερώσεις» — μια αλλαγή ώρας λόγω πτήσης είναι εξίσου
+/// επείγουσα με νέα δουλειά, ο οδηγός/master πρέπει να την προσέξει αμέσως.
+Future<void> _showFlightDelayBg(
+    FlutterLocalNotificationsPlugin fln, Map<String, dynamic> d,
+    bool muted) async {
+  final title = (d['title'] ?? 'Η ώρα άλλαξε λόγω πτήσης').toString();
+  final body  = (d['body'] ?? '').toString();
+  final jobId = (d['savedJobId'] ?? '').toString();
+
+  final android = AndroidNotificationDetails(
+    kApptChannelId,
+    kApptChannelName,
+    channelDescription:   kApptChannelDesc,
+    importance:           Importance.max,
+    priority:             Priority.max,
+    category:             AndroidNotificationCategory.reminder,
+    visibility:           NotificationVisibility.public,
+    autoCancel:           true,
+    fullScreenIntent:     true,
+    enableVibration:      !muted,
+    vibrationPattern:     muted ? null : kStrongVibration,
+    enableLights:         true,
+    playSound:            !muted,
+    audioAttributesUsage: AudioAttributesUsage.alarm,
+    additionalFlags:      muted ? null : _kInsistent,
+  );
+
+  await fln.show(
+    // Σταθερό ID ανά δουλειά — αν έρθουν 2 ενημερώσεις για την ΙΔΙΑ
+    // δουλειά, η δεύτερη ΑΝΤΙΚΑΘΙΣΤΑ την πρώτη αντί να τη διπλασιάζει.
+    jobId.isNotEmpty ? jobId.hashCode.abs() & 0x7FFFFFFF
+                      : DateTime.now().millisecondsSinceEpoch & 0x7FFFFFFF,
+    title, body,
+    NotificationDetails(android: android),
+    payload: jsonEncode(d),
+  );
+
+  // ── Αναπρογραμματισμός υπενθυμίσεων ραντεβού με τη ΝΕΑ ώρα ─────────────
+  // ΚΡΙΣΙΜΟ: ο κανονικός συγχρονισμός (syncAppointmentReminders) ζει ΜΕΣΑ
+  // στο widget tree της εφαρμογής (JobBadge) — χρειάζεται η εφαρμογή να
+  // είναι έστω ανοιχτή στο παρασκήνιο. Αν είναι ΕΝΤΕΛΩΣ κλειστή, δεν θα
+  // ξαναϋπολογίσει τίποτα μέχρι να ανοίξει ξανά ο χρήστης — οι
+  // υπενθυμίσεις 30′/10′ (ή extra offsets) θα έμεναν «κολλημένες» στην
+  // ΠΑΛΙΑ, λάθος ώρα. Εδώ το κάνουμε ΚΑΙ από το background isolate, ίδιος
+  // μηχανισμός με την ίδια την ειδοποίηση — δουλεύει ακόμη και με νεκρό
+  // process.
+  try {
+    final newIso = d['newTimeIso'] as String?;
+    if (jobId.isEmpty || newIso == null) return;
+    final newScheduledAt = DateTime.parse(newIso).toLocal();
+
+    List<int> offsets = const [30, 10];
+    final rawOffsets = d['reminderOffsets'] as String?;
+    if (rawOffsets != null && rawOffsets.isNotEmpty) {
+      try {
+        final parsed = (jsonDecode(rawOffsets) as List)
+            .map((e) => (e as num).toInt())
+            .toList();
+        if (parsed.isNotEmpty) offsets = parsed;
+      } catch (_) {}
+    }
+
+    final spec = ReminderSpec(
+      jobId:       jobId,
+      from:        (d['from'] ?? '').toString(),
+      to:          (d['to'] ?? '').toString(),
+      scheduledAt: newScheduledAt,
+      offsets:     offsets,
+    );
+
+    final now = DateTime.now();
+    for (final off in offsets) {
+      final id     = NotificationsService.reminderNotifId(jobId, off);
+      final fireAt = newScheduledAt.subtract(Duration(minutes: off));
+      if (fireAt.isBefore(now.add(const Duration(seconds: 5)))) {
+        // Η νέα ώρα του offset είναι ήδη στο παρελθόν (π.χ. η πτήση
+        // καθυστέρησε τόσο που το «30′ πριν» έχει ήδη περάσει) — ακύρωσε
+        // την παλιά, μη προγραμματίσεις νέα με ώρα στο παρελθόν.
+        try { await fln.cancel(id); } catch (_) {}
+        continue;
+      }
+      // ΙΔΙΟ id με πριν → η κλήση ΑΝΤΙΚΑΘΙΣΤΑ την παλιά, ήδη
+      // προγραμματισμένη υπενθύμιση (λάθος, παλιά ώρα) με τη νέα σωστή.
+      await NotificationsService.scheduleOneReminder(
+          id: id, spec: spec, offset: off, fireAt: fireAt);
+    }
+  } catch (e) {
+    debugPrint('flight_delay reminder reschedule error: $e');
+  }
+}
+
 Future<void> _showGenericBg(
     FlutterLocalNotificationsPlugin fln, Map<String, dynamic> d,
     bool muted) async {
@@ -473,6 +590,19 @@ Future<void> _ensureChannelsBg(FlutterLocalNotificationsPlugin fln) async {
   final android = fln.resolvePlatformSpecificImplementation<
       AndroidFlutterLocalNotificationsPlugin>();
   if (android == null) return;
+  // ΚΡΙΣΙΜΟ: audioAttributesUsage: alarm — χωρίς αυτό, το Android
+  // κατατάσσει τον ήχο ως απλή «notification», που ΣΙΓΑΖΕΤΑΙ όταν το
+  // κινητό είναι συνδεδεμένο σε Android Auto, σε κλήση, ή σε λειτουργία
+  // οδήγησης. Με «alarm» παίζει σαν ξυπνητήρι και ακούγεται ΠΑΝΤΑ.
+  //
+  // ΠΡΟΣΟΧΗ — ΤΟ ΠΙΟ ΣΗΜΑΝΤΙΚΟ ΕΔΩ: στο Android, οι ρυθμίσεις ενός
+  // notification channel είναι ΜΟΝΙΜΕΣ μετά την ΠΡΩΤΗ δημιουργία του.
+  // Αν το background isolate προλάβει να φτιάξει το channel ΧΩΡΙΣ alarm
+  // (π.χ. μετά από reboot, πριν ανοίξει ποτέ η εφαρμογή), το λάθος
+  // «κλειδώνει» και ΔΕΝ διορθώνεται ούτε από τον foreground κώδικα ούτε
+  // από νέο build — μόνο με απεγκατάσταση/επανεγκατάσταση. Γι' αυτό οι
+  // δύο ορισμοί (εδώ και στο notifications_service.dart) πρέπει να είναι
+  // ΠΑΝΤΑ ταυτόσημοι.
   Future<void> ch(String id, String name, String desc) async {
     try {
       await android.createNotificationChannel(AndroidNotificationChannel(
@@ -482,6 +612,8 @@ Future<void> _ensureChannelsBg(FlutterLocalNotificationsPlugin fln) async {
         playSound: true,
         enableVibration: true,
         vibrationPattern: kStrongVibration,
+        enableLights: true,
+        audioAttributesUsage: AudioAttributesUsage.alarm,
       ));
     } catch (_) {}
   }
@@ -489,6 +621,12 @@ Future<void> _ensureChannelsBg(FlutterLocalNotificationsPlugin fln) async {
   await ch(kBoardChannelId, kBoardChannelName, kBoardChannelDesc);
   await ch(kApprovalChannelId, kApprovalChannelName, kApprovalChannelDesc);
   await ch(kUpdateChannelId, kUpdateChannelName, kUpdateChannelDesc);
+  // ΕΛΕΙΠΕ: το channel των υπενθυμίσεων ραντεβού (30′/10′) ΔΕΝ
+  // δημιουργούνταν καθόλου εδώ. Αν το background isolate ξυπνούσε σε
+  // φρέσκια κατάσταση (μετά από reboot ή force-stop) πριν ανοίξει ποτέ
+  // η εφαρμογή, η υπενθύμιση/ειδοποίηση πτήσης δεν είχε πού να
+  // εμφανιστεί — ή έπεφτε σε προεπιλεγμένο, ήσυχο channel.
+  await ch(kApptChannelId, kApptChannelName, kApptChannelDesc);
 
   // Σιωπηλά δίδυμα channels (σίγαση: χωρίς ήχο & χωρίς δόνηση).
   Future<void> silent(String id, String name, String desc) async {

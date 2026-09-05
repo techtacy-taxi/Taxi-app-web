@@ -339,6 +339,11 @@ Future<void> _ensureChannels(
         enableVibration:  true,
         vibrationPattern: kStrongVibration,
         showBadge:        true,
+        // ΚΡΙΣΙΜΟ: χωρίς alarm usage, ο ήχος θεωρείται απλή «notification»
+        // και ΣΙΓΑΖΕΤΑΙ όταν το κινητό είναι σε Android Auto, σε κλήση, ή
+        // σε λειτουργία οδήγησης — ακριβώς τις ώρες που ο οδηγός ΠΡΕΠΕΙ
+        // να ακούσει τη νέα δουλειά. Ίδιο με το channel υπενθυμίσεων.
+        audioAttributesUsage: AudioAttributesUsage.alarm,
       ),
     );
     debugPrint('notif: channel $kJobChannelId created');
@@ -357,6 +362,7 @@ Future<void> _ensureChannels(
         enableVibration:  true,
         vibrationPattern: kStrongVibration,
         showBadge:        true,
+        audioAttributesUsage: AudioAttributesUsage.alarm,
       ),
     );
     debugPrint('notif: channel $kUpdateChannelId created');
@@ -396,6 +402,7 @@ Future<void> _ensureChannels(
         enableVibration:  true,
         vibrationPattern: kStrongVibration,
         showBadge:        true,
+        audioAttributesUsage: AudioAttributesUsage.alarm,
       ),
     );
     debugPrint('notif: channel $kApprovalChannelId created');
@@ -414,6 +421,7 @@ Future<void> _ensureChannels(
         enableVibration:  true,
         vibrationPattern: kStrongVibration,
         showBadge:        true,
+        audioAttributesUsage: AudioAttributesUsage.alarm,
       ),
     );
     debugPrint('notif: channel $kBoardChannelId created');
@@ -821,7 +829,7 @@ class NotificationsService {
   /// υγιές και το πρόβλημα ήταν στα δεδομένα (query/scheduledAt).
   static Future<void> scheduleTestReminder() async {
     final fireAt = DateTime.now().add(const Duration(minutes: 1));
-    await _scheduleOneReminder(
+    await scheduleOneReminder(
       id: 999001,
       spec: ReminderSpec(
         jobId: 'TEST',
@@ -1032,7 +1040,12 @@ class NotificationsService {
   // αλληλεπιδράσει — δεν χρειάζεται ζωντανό Dart isolate.
 
   /// Σταθερό, μοναδικό notifId ανά (δουλειά, offset) — για οποιοδήποτε offset.
-  static int _reminderNotifId(String jobId, int offset) {
+  /// ΔΗΜΟΣΙΟ (χωρίς _) ώστε να το χρησιμοποιεί ΚΑΙ το background FCM
+  /// handler (fcm_service.dart) όταν αναπρογραμματίζει υπενθυμίσεις μετά
+  /// από αλλαγή ώρας λόγω πτήσης — πρέπει να είναι ΤΟ ΙΔΙΟ id, αλλιώς θα
+  /// δημιουργούνταν δεύτερη, διπλή υπενθύμιση αντί να αντικαθιστά τη
+  /// φτιαγμένη-για-την-παλιά-ώρα.
+  static int reminderNotifId(String jobId, int offset) {
     final base = jobId.hashCode.abs() & 0x7FFFFFFF;
     // Ανακάτεμα του offset ώστε 10/30/90… να δίνουν σίγουρα διαφορετικά id.
     final mix = (offset * 2654435761) & 0x7FFFFFFF;
@@ -1067,9 +1080,9 @@ class NotificationsService {
           await dbg('skip ${s.jobId} -$off′ (fireAt=$fireAt στο παρελθόν)');
           continue;
         }
-        final id = _reminderNotifId(s.jobId, off);
+        final id = reminderNotifId(s.jobId, off);
         desired.add(id);
-        await _scheduleOneReminder(id: id, spec: s, offset: off, fireAt: fireAt);
+        await scheduleOneReminder(id: id, spec: s, offset: off, fireAt: fireAt);
         await dbg('scheduled ${s.jobId} -$off′ → $fireAt (id=$id)');
       }
     }
@@ -1087,7 +1100,11 @@ class NotificationsService {
         kScheduledReminderIds, desired.map((e) => e.toString()).toList());
   }
 
-  static Future<void> _scheduleOneReminder({
+  /// Προγραμματίζει ΜΙΑ υπενθύμιση ραντεβού. ΔΗΜΟΣΙΟ (χωρίς _) ώστε να
+  /// μπορεί να το καλέσει ΚΑΙ το background FCM handler όταν
+  /// αναπρογραμματίζει μετά από αλλαγή ώρας λόγω πτήσης — ίδιο κανάλι/ήχο,
+  /// χωρίς κλειστό κώδικα (private) που να μπλοκάρει την επαναχρησιμοποίηση.
+  static Future<void> scheduleOneReminder({
     required int         id,
     required ReminderSpec spec,
     required int         offset,

@@ -7824,6 +7824,13 @@ async function fetchFlightStatus(apiKey, flightNumber, dateLocal) {
   const flight = arr.find((f) => f.arrival && f.arrival.airport &&
     f.arrival.airport.icao === "LGAV") || arr[0];
   const arr_ = flight.arrival || {};
+  // ΔΙΑΓΝΩΣΤΙΚΟ: καταγράφουμε την ΩΜΗ απάντηση του AeroDataBox για το
+  // arrival — χωρίς αυτό, αν κάποτε βγει λάθος αριθμός καθυστέρησης
+  // (π.χ. πτήση που έφτασε ΝΩΡΙΤΕΡΑ αλλά εμείς δείξαμε καθυστέρηση),
+  // δεν έχουμε τρόπο να δούμε ΤΙ ακριβώς μας έστειλε το API για να
+  // καταλάβουμε αν φταίει λάθος πεδίο, ζώνη ώρας, ή ίδιο το AeroDataBox.
+  console.log(`fetchFlightStatus: ωμή απάντηση arrival για ${flightNumber}:`,
+    JSON.stringify(arr_));
   const schedLocal = arr_.scheduledTime && arr_.scheduledTime.local;
   const estLocal = (arr_.predictedTime && arr_.predictedTime.local) ||
     (arr_.actualTime && arr_.actualTime.local) || null;
@@ -7833,6 +7840,9 @@ async function fetchFlightStatus(apiKey, flightNumber, dateLocal) {
   // ΘΕΤΙΚΟ = καθυστέρηση, ΑΡΝΗΤΙΚΟ = φτάνει ΝΩΡΙΤΕΡΑ. Δεν το μηδενίζουμε:
   // η νωρίτερη άφιξη είναι εξίσου σημαντική για τον οδηγό.
   const delayMinutes = Math.round((estMs - schedMs) / 60000);
+  console.log(`fetchFlightStatus: ${flightNumber} — schedLocal=${schedLocal} ` +
+    `estLocal=${estLocal} → delayMinutes=${delayMinutes} (πηγή εκτίμησης: ` +
+    `${arr_.predictedTime ? "predictedTime" : arr_.actualTime ? "actualTime" : "καμία, ίδιο με scheduled"})`);
   return { delayMinutes, scheduledArrivalLocal: schedLocal, estimatedArrivalLocal: estLocal || schedLocal };
 }
 
@@ -7932,7 +7942,11 @@ exports.checkFlightDelays = onSchedule(
 
           // FCM data-only ειδοποίηση σε δημιουργό ΚΑΙ οδηγό → popup παντού
           // στο app (Flutter διαβάζει flightDelayMinutes/originalScheduledAt).
-          const notifyUids = [job.createdBy, job.takenBy].filter(Boolean);
+          // ΚΡΙΣΙΜΟ: Set αντί για array — όταν ο master είναι ΚΑΙ δημιουργός
+          // ΚΑΙ οδηγός (self-assign), το createdBy και το takenBy είναι το
+          // ΙΔΙΟ uid· χωρίς αποδιπλασιασμό, η ειδοποίηση στελνόταν ΔΥΟ
+          // φορές στον ίδιο τον εαυτό του.
+          const notifyUids = [...new Set([job.createdBy, job.takenBy].filter(Boolean))];
           for (const targetUid of notifyUids) {
             const tokens = await getTokensForUid(targetUid);
             await sendDataOnly(tokens, {
@@ -7943,6 +7957,13 @@ exports.checkFlightDelays = onSchedule(
               delayMinutes: String(status.delayMinutes),
               oldTimeIso: originalScheduledAt.toDate().toISOString(),
               newTimeIso: newScheduledAt.toDate().toISOString(),
+              // ΚΡΙΣΙΜΟ: χωρίς αυτό, ο client δεν ξέρει ΠΟΙΑ offsets (π.χ.
+              // 30/10, ή extra που έχει προσθέσει ο χρήστης) πρέπει να
+              // αναπρογραμματίσει με τη ΝΕΑ ώρα — θα έμεναν οι υπενθυμίσεις
+              // «κολλημένες» στην παλιά, λάθος ώρα ραντεβού.
+              reminderOffsets: JSON.stringify(job.reminderOffsets || [30, 10]),
+              from: job.from || "",
+              to: job.to || "",
               title: "Η ώρα άλλαξε λόγω πτήσης",
               body: status.delayMinutes > 0
                 ? `${flightNum} καθυστέρησε ${status.delayMinutes}' — νέα ώρα ραντεβού`
