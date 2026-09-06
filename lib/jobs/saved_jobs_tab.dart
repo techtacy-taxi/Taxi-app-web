@@ -142,6 +142,43 @@ class _SavedJobsTabState extends State<SavedJobsTab> {
     }
   }
 
+  // ── Ονόματα δημιουργών (uid → όνομα) ────────────────────────────────────
+  // Κάποιες παλιές δουλειές αποθηκεύτηκαν με ΚΕΝΟ ownerName, οπότε το φίλτρο
+  // «Δημιουργός» έδειχνε τον ακατάληπτο κωδικό (uid). Τα διαβάζουμε μία φορά
+  // από το presence και τα κρατάμε σε μνήμη.
+  final Map<String, String> _ownerNameCache = {};
+  bool _ownerNamesLoading = false;
+
+  Future<void> _loadOwnerNames(Iterable<String> uids) async {
+    final missing = uids
+        .where((u) => u.isNotEmpty && !_ownerNameCache.containsKey(u))
+        .toSet();
+    if (missing.isEmpty || _ownerNamesLoading) return;
+    _ownerNamesLoading = true;
+    try {
+      for (final uid in missing) {
+        try {
+          final doc = await FirebaseFirestore.instance
+              .collection('presence').doc(uid).get();
+          final d = doc.data();
+          final name = [d?['displayName'], d?['lastName']]
+              .whereType<String>()
+              .where((s) => s.trim().isNotEmpty)
+              .join(' ')
+              .trim();
+          _ownerNameCache[uid] = name.isNotEmpty
+              ? name
+              : (d?['email'] as String?)?.trim() ?? '';
+        } catch (_) {
+          _ownerNameCache[uid] = '';
+        }
+      }
+    } finally {
+      _ownerNamesLoading = false;
+      if (mounted) setState(() {});
+    }
+  }
+
   Future<void> _loadMyTenantId() async {
     if (widget.isMaster) {
       // Ο master δεν χρειάζεται φίλτρο — βλέπει τα πάντα, όπως πάντα.
@@ -405,9 +442,26 @@ class _SavedJobsTabState extends State<SavedJobsTab> {
     // Μοναδικοί δημιουργοί + πλήθος ανά δημιουργό
     final owners = <String, String>{};
     final counts = <String, int>{};
+    final needLookup = <String>[];
     for (final s in all) {
-      owners[s.ownerUid] = s.ownerName.isNotEmpty ? s.ownerName : s.ownerUid;
+      var label = s.ownerName.trim();
+      if (label.isEmpty) {
+        // Παλιά δουλειά χωρίς ownerName → ψάξε το όνομα στο presence.
+        label = (_ownerNameCache[s.ownerUid] ?? '').trim();
+        if (label.isEmpty) {
+          if (!_ownerNameCache.containsKey(s.ownerUid)) {
+            needLookup.add(s.ownerUid);
+          }
+          // Μέχρι να έρθει το όνομα, δείξε κάτι κατανοητό αντί για uid.
+          label = 'Χωρίς όνομα';
+        }
+      }
+      owners[s.ownerUid] = label;
       counts[s.ownerUid] = (counts[s.ownerUid] ?? 0) + 1;
+    }
+    if (needLookup.isNotEmpty) {
+      WidgetsBinding.instance
+          .addPostFrameCallback((_) => _loadOwnerNames(needLookup));
     }
 
     return Container(
