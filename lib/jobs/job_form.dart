@@ -1541,6 +1541,13 @@ class _JobFormPageState extends State<JobFormPage> {
         if (_fromPick?.lng != null) 'fromLng': _fromPick!.lng,
         if (_toPick?.lat != null)   'toLat':   _toPick!.lat,
         if (_toPick?.lng != null)   'toLng':   _toPick!.lng,
+        // Διαδρομή που ΕΧΕΙ ΗΔΗ υπολογιστεί στη φόρμα — τη στέλνουμε ώστε η
+        // δουλειά που θα δημιουργηθεί μετά την πληρωμή να δείχνει στον χάρτη
+        // την ΠΡΑΓΜΑΤΙΚΗ πορεία στον δρόμο και όχι ευθεία γραμμή.
+        // (Μηδέν επιπλέον κλήση στη Google.)
+        if (_routeKm != null)        'routeKm':       _routeKm,
+        if (_routePolyline != null && _routePolyline!.isNotEmpty)
+          'routePolyline': _routePolyline,
       });
 
       final data = Map<String, dynamic>.from(res.data as Map);

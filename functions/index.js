@@ -3665,6 +3665,11 @@ exports.submitPublicBooking = onRequest(
         // με τις τιμές/ζώνες του DEFAULT tenant αντί του tenant της φόρμας.
         tenantId,
         clientsOnlyMode: cfg.clientsOnlyBooking === true,
+        // Χρειαζόμαστε ΠΑΝΤΑ polyline/χλμ για τον χάρτη της δουλειάς — και σε
+        // ΖΩΝΙΚΗ διαδρομή (όπου η τιμή είναι πάγια). Χωρίς needMap:true το
+        // computeEstimate παρέλειπε την κλήση Routes σε ζωνικές διαδρομές και
+        // η δουλειά έμενε χωρίς polyline -> ευθεία γραμμή στον χάρτη.
+        needMap: true,
       });
       if (estimate.outsideAttica && !gateReasons.includes("outside_attica")) {
         gateReasons.push("outside_attica");
@@ -3734,6 +3739,10 @@ exports.submitPublicBooking = onRequest(
         vehicleType:    vehicleType,     // 'taxi' | 'van'
         note:           fullNote,
         flightChecked:  !isLikelyFlightNumber(flight),   // true = δεν χρειάζεται έλεγχος API
+        // Διαδρομή για τον ΧΑΡΤΗ — χωρίς αυτά ο χάρτης τραβούσε ευθεία γραμμή
+        // αντί για την πραγματική πορεία στον δρόμο.
+        routeKm:        estimate.distanceKm || null,
+        routePolyline:  estimate.routePolyline || null,
         price:          estimate.price,   // υπολογισμένη τιμή (ζώνη ή δυναμικός τύπος)
         // Προμήθεια app ανά κράτηση, δηλωμένη από τον master.
         // Global προμήθεια app (ίδιο doc με τη σελίδα «Διαχειριστές» στο Flutter) —
@@ -4613,6 +4622,32 @@ exports.createManualBookingPaymentLink = onCall(
       tenantCfg = tDoc.data();
     }
 
+    // ── Διαδρομή (χλμ + encoded polyline) για τον χάρτη της δουλειάς ─────
+    // 1) Αν η φόρμα μας τα έστειλε (τα έχει ήδη υπολογίσει), τα κρατάμε.
+    // 2) Αλλιώς, αν έχουμε συντεταγμένες, τα ζητάμε από το Routes API.
+    let routeKmManual = Number.isFinite(Number(d.routeKm)) && Number(d.routeKm) > 0
+      ? Number(d.routeKm) : null;
+    let routePolylineManual = s(d.routePolyline) || null;
+    if (!routePolylineManual &&
+        fromLatManual != null && fromLngManual != null &&
+        toLatManual != null && toLngManual != null) {
+      try {
+        const depDate = new Date(date + "T" + time + ":00+03:00");
+        const rd = await routesDistanceDuration(
+          { lat: fromLatManual, lng: fromLngManual },
+          { lat: toLatManual, lng: toLngManual },
+          ROUTES_API_KEY.value(),
+          isNaN(depDate.getTime()) ? null : depDate,
+        );
+        if (rd) {
+          routePolylineManual = rd.polyline || null;
+          if (routeKmManual == null && rd.distanceKm > 0) routeKmManual = rd.distanceKm;
+        }
+      } catch (e) {
+        console.error("createManualBookingPaymentLink route error:", e);
+      }
+    }
+
     const db = getFirestore();
     await cleanupStalePendingBookings(db);
     const pendingRef = await db.collection("pending_bookings").add({
@@ -4633,7 +4668,13 @@ exports.createManualBookingPaymentLink = onCall(
       price: jobPrice,
       depositAmount: chargeAmount,
       fullyPaid,
-      routeKm: null, routePolyline: null,
+      // ── Διαδρομή για τον ΧΑΡΤΗ της δουλειάς ────────────────────────────
+      // Πριν ήταν ΠΑΝΤΑ null → η δουλειά που δημιουργούνταν μετά την πληρωμή
+      // δεν είχε routePolyline, οπότε ο χάρτης τραβούσε ΕΥΘΕΙΑ γραμμή από το
+      // «Από» στο «Προς» αντί για την πραγματική πορεία στον δρόμο.
+      // Τώρα: χρησιμοποιούμε το polyline που υπολόγισε ήδη η φόρμα (μηδέν
+      // επιπλέον κόστος Google) και, αν λείπει, το υπολογίζουμε εδώ.
+      routeKm: routeKmManual, routePolyline: routePolylineManual,
       wantsInvoice: false,
       lang,
       createdBy: request.auth.uid,
