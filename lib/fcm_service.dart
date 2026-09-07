@@ -538,8 +538,11 @@ Future<void> _showFlightDelayBg(
 
     final spec = ReminderSpec(
       jobId:       jobId,
-      from:        (d['from'] ?? '').toString(),
-      to:          (d['to'] ?? '').toString(),
+      // fromAddr/toAddr — ΟΧΙ from/to: δεσμευμένες λέξεις FCM (βλ. σχόλιο
+      // στο functions/index.js). Fallback στα παλιά ονόματα για συμβατότητα
+      // με τυχόν μήνυμα που ταξίδευε ήδη όταν έγινε το update.
+      from:        (d['fromAddr'] ?? d['from'] ?? '').toString(),
+      to:          (d['toAddr'] ?? d['to'] ?? '').toString(),
       scheduledAt: newScheduledAt,
       offsets:     offsets,
     );

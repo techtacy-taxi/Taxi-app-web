@@ -3665,11 +3665,6 @@ exports.submitPublicBooking = onRequest(
         // με τις τιμές/ζώνες του DEFAULT tenant αντί του tenant της φόρμας.
         tenantId,
         clientsOnlyMode: cfg.clientsOnlyBooking === true,
-        // Χρειαζόμαστε ΠΑΝΤΑ polyline/χλμ για τον χάρτη της δουλειάς — και σε
-        // ΖΩΝΙΚΗ διαδρομή (όπου η τιμή είναι πάγια). Χωρίς needMap:true το
-        // computeEstimate παρέλειπε την κλήση Routes σε ζωνικές διαδρομές και
-        // η δουλειά έμενε χωρίς polyline -> ευθεία γραμμή στον χάρτη.
-        needMap: true,
       });
       if (estimate.outsideAttica && !gateReasons.includes("outside_attica")) {
         gateReasons.push("outside_attica");
@@ -3739,10 +3734,6 @@ exports.submitPublicBooking = onRequest(
         vehicleType:    vehicleType,     // 'taxi' | 'van'
         note:           fullNote,
         flightChecked:  !isLikelyFlightNumber(flight),   // true = δεν χρειάζεται έλεγχος API
-        // Διαδρομή για τον ΧΑΡΤΗ — χωρίς αυτά ο χάρτης τραβούσε ευθεία γραμμή
-        // αντί για την πραγματική πορεία στον δρόμο.
-        routeKm:        estimate.distanceKm || null,
-        routePolyline:  estimate.routePolyline || null,
         price:          estimate.price,   // υπολογισμένη τιμή (ζώνη ή δυναμικός τύπος)
         // Προμήθεια app ανά κράτηση, δηλωμένη από τον master.
         // Global προμήθεια app (ίδιο doc με τη σελίδα «Διαχειριστές» στο Flutter) —
@@ -4622,32 +4613,6 @@ exports.createManualBookingPaymentLink = onCall(
       tenantCfg = tDoc.data();
     }
 
-    // ── Διαδρομή (χλμ + encoded polyline) για τον χάρτη της δουλειάς ─────
-    // 1) Αν η φόρμα μας τα έστειλε (τα έχει ήδη υπολογίσει), τα κρατάμε.
-    // 2) Αλλιώς, αν έχουμε συντεταγμένες, τα ζητάμε από το Routes API.
-    let routeKmManual = Number.isFinite(Number(d.routeKm)) && Number(d.routeKm) > 0
-      ? Number(d.routeKm) : null;
-    let routePolylineManual = s(d.routePolyline) || null;
-    if (!routePolylineManual &&
-        fromLatManual != null && fromLngManual != null &&
-        toLatManual != null && toLngManual != null) {
-      try {
-        const depDate = new Date(date + "T" + time + ":00+03:00");
-        const rd = await routesDistanceDuration(
-          { lat: fromLatManual, lng: fromLngManual },
-          { lat: toLatManual, lng: toLngManual },
-          ROUTES_API_KEY.value(),
-          isNaN(depDate.getTime()) ? null : depDate,
-        );
-        if (rd) {
-          routePolylineManual = rd.polyline || null;
-          if (routeKmManual == null && rd.distanceKm > 0) routeKmManual = rd.distanceKm;
-        }
-      } catch (e) {
-        console.error("createManualBookingPaymentLink route error:", e);
-      }
-    }
-
     const db = getFirestore();
     await cleanupStalePendingBookings(db);
     const pendingRef = await db.collection("pending_bookings").add({
@@ -4668,13 +4633,7 @@ exports.createManualBookingPaymentLink = onCall(
       price: jobPrice,
       depositAmount: chargeAmount,
       fullyPaid,
-      // ── Διαδρομή για τον ΧΑΡΤΗ της δουλειάς ────────────────────────────
-      // Πριν ήταν ΠΑΝΤΑ null → η δουλειά που δημιουργούνταν μετά την πληρωμή
-      // δεν είχε routePolyline, οπότε ο χάρτης τραβούσε ΕΥΘΕΙΑ γραμμή από το
-      // «Από» στο «Προς» αντί για την πραγματική πορεία στον δρόμο.
-      // Τώρα: χρησιμοποιούμε το polyline που υπολόγισε ήδη η φόρμα (μηδέν
-      // επιπλέον κόστος Google) και, αν λείπει, το υπολογίζουμε εδώ.
-      routeKm: routeKmManual, routePolyline: routePolylineManual,
+      routeKm: null, routePolyline: null,
       wantsInvoice: false,
       lang,
       createdBy: request.auth.uid,
@@ -7896,14 +7855,23 @@ exports.checkFlightDelays = onSchedule(
   async () => {
     const db = getFirestore();
     const now = new Date();
-    // Παράθυρο ελέγχου: από ΤΩΡΑ έως +45 λεπτά.
-    // ΓΙΑΤΙ ΟΧΙ στενό παράθυρο γύρω στα 45': αν κάποιος πάρει τη δουλειά
-    // π.χ. 20 λεπτά πριν το ραντεβού, ένα στενό παράθυρο 40-50' θα την είχε
-    // ήδη προσπεράσει και δεν θα γινόταν ΠΟΤΕ αναζήτηση πτήσης. Με εύρος
-    // 0-45' πιάνεται πάντα στην επόμενη εκτέλεση (κάθε 5'), όσο αργά κι αν
-    // αναληφθεί. Το flightChecked εξασφαλίζει ότι γίνεται ΜΙΑ μόνο κλήση.
+    // Παράθυρο ελέγχου: από ΤΩΡΑ έως +25 λεπτά.
+    //
+    // ΓΙΑΤΙ 25' ΚΑΙ ΟΧΙ 45': το AeroDataBox είναι οικονομικό API με πιο
+    // αραιούς ρυθμούς ανανέωσης από premium υπηρεσίες. Στα 45' πριν την
+    // άφιξη, η πρόβλεψή του συχνά δεν έχει ακόμα λάβει υπόψη τον χρόνο που
+    // κερδίζει το αεροπλάνο στον αέρα — έδινε π.χ. +47' ενώ το FlightRadar
+    // (που βλέπει live ταχύτητα/διαδρομή) έδειχνε +11'. Όσο πιο κοντά στην
+    // άφιξη ρωτάμε, τόσο πιο φρέσκα τα δεδομένα και πιο ακριβής η πρόβλεψη.
+    // 25' δίνει ακόμα άνετο περιθώριο στον οδηγό να αντιδράσει.
+    //
+    // ΓΙΑΤΙ ΟΧΙ στενό παράθυρο ΓΥΡΩ στα 25' (π.χ. 20-30'): αν κάποιος πάρει
+    // τη δουλειά π.χ. 15 λεπτά πριν το ραντεβού, ένα στενό παράθυρο θα την
+    // είχε ήδη προσπεράσει και δεν θα γινόταν ΠΟΤΕ αναζήτηση πτήσης. Με
+    // εύρος 0-25' πιάνεται πάντα στην επόμενη εκτέλεση (κάθε 5'), όσο αργά
+    // κι αν αναληφθεί. Το flightChecked εξασφαλίζει ΜΙΑ μόνο κλήση.
     const windowStart = now;
-    const windowEnd = new Date(now.getTime() + 45 * 60 * 1000);
+    const windowEnd = new Date(now.getTime() + 25 * 60 * 1000);
     const { Timestamp } = require("firebase-admin/firestore");
 
     let snap;
@@ -8003,8 +7971,13 @@ exports.checkFlightDelays = onSchedule(
               // αναπρογραμματίσει με τη ΝΕΑ ώρα — θα έμεναν οι υπενθυμίσεις
               // «κολλημένες» στην παλιά, λάθος ώρα ραντεβού.
               reminderOffsets: JSON.stringify(job.reminderOffsets || [30, 10]),
-              from: job.from || "",
-              to: job.to || "",
+              // ⚠️ ΠΟΤΕ "from"/"to" σαν κλειδιά σε FCM data payload — είναι
+              // ΔΕΣΜΕΥΜΕΝΕΣ λέξεις του πρωτοκόλλου και το FCM απορρίπτει
+              // ΟΛΟΚΛΗΡΟ το μήνυμα με "Invalid data payload key: from".
+              // Χρησιμοποιούμε fromAddr/toAddr (ίδια σύμβαση με το υπόλοιπο
+              // codebase).
+              fromAddr: job.from || "",
+              toAddr: job.to || "",
               title: "Η ώρα άλλαξε λόγω πτήσης",
               body: status.delayMinutes > 0
                 ? `${flightNum} καθυστέρησε ${status.delayMinutes}' — νέα ώρα ραντεβού`
