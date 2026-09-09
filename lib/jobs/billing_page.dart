@@ -1109,6 +1109,7 @@ class _GroupListViewState extends State<_GroupListView> {
                           builder: (_) => _GroupDriversView(
                             groupName: data['name'] as String,
                             groupData: data,
+                            groupId:   e.key,
                             masterUid: widget.masterUid,
                             // Admin μπορεί πλέον να διαχειρίζεται (μόνο τα δικά
                             // του γιαούρτια — φιλτράρεται μέσω isMaster=false).
@@ -1433,7 +1434,14 @@ class _SelfBillingCard extends StatelessWidget {
 
 class _GroupDriversView extends StatelessWidget {
   final String               groupName;
+  /// Αρχικό στιγμιότυπο — χρησιμοποιείται ΜΟΝΟ μέχρι να φτάσει το πρώτο
+  /// ζωντανό snapshot, ώστε η οθόνη να μη «τρεμοπαίζει» κατά το άνοιγμα.
   final Map<String, dynamic> groupData;
+  /// ΚΡΙΣΙΜΟ: χωρίς αυτό, η οθόνη «πάγωνε» στα δεδομένα της στιγμής που
+  /// άνοιξε — μια πληρωμή από μέσα ΔΕΝ ενημέρωνε τα σύνολα μέχρι να βγεις
+  /// και να ξαναμπείς. Με το groupId ξαναβρίσκουμε τα ΦΡΕΣΚΑ δεδομένα από
+  /// το ίδιο live stream που τροφοδοτεί και τη λίστα ομάδων.
+  final String               groupId;
   final String               masterUid;
   final bool                 canManage;
   final bool                 isMaster;
@@ -1441,6 +1449,7 @@ class _GroupDriversView extends StatelessWidget {
   const _GroupDriversView({
     required this.groupName,
     required this.groupData,
+    required this.groupId,
     required this.masterUid,
     required this.canManage,
     this.isMaster = false,
@@ -1448,6 +1457,21 @@ class _GroupDriversView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // ΖΩΝΤΑΝΗ ανανέωση: ξανασυνδεόμαστε στο ΙΔΙΟ stream που τροφοδοτεί τη
+    // λίστα ομάδων, και τραβάμε τα φρέσκα δεδομένα ΑΥΤΗΣ της ομάδας.
+    // Πριν, τα groupData ήταν στατικό στιγμιότυπο περασμένο στον
+    // constructor — μια πληρωμή από μέσα δεν φαινόταν μέχρι να βγεις και
+    // να ξαναμπείς στη σελίδα.
+    return StreamBuilder<Map<String, Map<String, dynamic>>>(
+      stream: JobService.groupBillingTotalsStream(),
+      builder: (context, snap) {
+        final fresh = snap.data?[groupId];
+        return _buildBody(context, fresh ?? groupData);
+      },
+    );
+  }
+
+  Widget _buildBody(BuildContext context, Map<String, dynamic> groupData) {
     final c = AppColors.of(context);
     final owed     = (groupData['charges'] as double) -
         (groupData['payments'] as double);
