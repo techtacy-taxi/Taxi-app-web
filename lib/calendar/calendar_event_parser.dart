@@ -48,6 +48,10 @@ class ParsedBooking {
   final String?   vehicleType;  // 'van' αν 5+ άτομα, αλλιώς null
   final String?   note;
   final bool      usedForm; // true αν διαβάστηκε ως σταθερή φόρμα
+  /// Ημερομηνία/ώρα ραντεβού — π.χ. «3/9/26 19.15» ή «19.15 3/9/26» (η
+  /// σειρά δεν έχει σημασία). ΜΟΝΟ αν βρεθούν ΚΑΙ τα δύο μαζί (ημερομηνία
+  /// ΚΑΙ ώρα) — αλλιώς μένει null και το συμπληρώνει ο χρήστης στη φόρμα.
+  final DateTime? dateTime;
 
   const ParsedBooking({
     this.from,
@@ -64,6 +68,7 @@ class ParsedBooking {
     this.vehicleType,
     this.note,
     this.usedForm = false,
+    this.dateTime,
   });
 
   bool get isEmpty =>
@@ -222,6 +227,26 @@ class CalendarEventParser {
     // να πάνε στο πεδίο μόνο αν ΔΕΝ υπάρχει κινητό, αλλιώς στα σχόλια.
     final mobilePhones   = <String>[];
     final landlinePhones = <String>[];
+
+    // Ημερομηνία/ώρα ραντεβού — π.χ. «3/9/26 19.15» ή «19.15 3/9/26»,
+    // ΟΠΟΙΑΔΗΠΟΤΕ σειρά, ακόμα και σε διαφορετικές γραμμές. Σαρώνουμε ΟΛΟ
+    // το κείμενο (όχι ανά γραμμή) πριν το κύριο loop, γιατί η ώρα μπορεί να
+    // είναι πριν ΚΑΙ μετά την ημερομηνία. Ό,τι βρεθεί αφαιρείται από τις
+    // γραμμές ώστε να μην καταλήξει σαν «θόρυβος» στα σχόλια/όνομα.
+    DateTime? dateTime;
+    final joined = lines.join('\n');
+    final dateMatch = _dateRegex.firstMatch(joined);
+    final timeMatch = _timeRegex.firstMatch(joined);
+    if (dateMatch != null && timeMatch != null) {
+      dateTime = _combineDateTime(dateMatch, timeMatch);
+      lines = lines
+          .map((l) => l
+              .replaceAll(dateMatch.group(0)!, '')
+              .replaceAll(timeMatch.group(0)!, '')
+              .trim())
+          .where((l) => l.isNotEmpty)
+          .toList();
+    }
 
     for (final raw in lines) {
       final line = raw.trim();
@@ -404,6 +429,7 @@ class CalendarEventParser {
       vehicleType: vehicleType,
       note: note,
       usedForm: false,
+      dateTime: dateTime,
     );
   }
 
@@ -480,6 +506,52 @@ class CalendarEventParser {
 
   /// Συμβατότητα.
   static String? _findPhone(String line) => _findPhoneTyped(line).$1;
+
+  // ── Ημερομηνία/ώρα ραντεβού ──────────────────────────────────────────────
+  // Ημερομηνία: ΗΗ/ΜΜ/ΕΕ, ΗΗ/ΜΜ/ΕΕΕΕ, Ή ΜΟΝΟ ΗΗ/ΜΜ (χωρίς έτος — μπαίνει
+  // αυτόματα το ΤΡΕΧΟΝ έτος). Ελληνική σειρά (μέρα/μήνας/[χρόνος]), ΟΧΙ
+  // αμερικάνικη.
+  static final RegExp _dateRegex =
+      RegExp(r'\b(\d{1,2})/(\d{1,2})(?:/(\d{2,4}))?\b');
+
+  // Ώρα: ΗΗ.ΛΛ (τελεία, ΟΧΙ άνω-κάτω τελεία) — π.χ. 19.15, 7.15. Δέχεται
+  // προαιρετικά πμ/μμ/am/pm δίπλα (με ή χωρίς τελείες/κενό ανάμεσα).
+  static final RegExp _timeRegex = RegExp(
+      r'\b(\d{1,2})\.(\d{2})\s*(π\.?μ\.?|μ\.?μ\.?|am|pm)?\b',
+      caseSensitive: false);
+
+  /// Συνδυάζει τα δύο matches σε ένα DateTime. Χειρίζεται 2ψήφιο έτος
+  /// (26 → 2026) και 12ωρη μορφή με πμ/μμ/am/pm.
+  static DateTime? _combineDateTime(RegExpMatch d, RegExpMatch t) {
+    final day   = int.tryParse(d.group(1)!);
+    final month = int.tryParse(d.group(2)!);
+    // Χωρίς έτος στο κείμενο (π.χ. μόνο «3/9») → τρέχον έτος αυτόματα.
+    var   year  = d.group(3) != null
+        ? int.tryParse(d.group(3)!)
+        : DateTime.now().year;
+    if (day == null || month == null || year == null) return null;
+    if (year < 100) year += 2000; // 2ψήφιο έτος → 20ΧΧ
+    if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+
+    var hour = int.tryParse(t.group(1)!);
+    final minute = int.tryParse(t.group(2)!);
+    if (hour == null || minute == null) return null;
+    if (hour > 23 || minute > 59) return null;
+
+    final ampm = t.group(3)?.toLowerCase().replaceAll('.', '') ?? '';
+    if (ampm == 'μμ' || ampm == 'pm') {
+      if (hour < 12) hour += 12;
+    } else if (ampm == 'πμ' || ampm == 'am') {
+      if (hour == 12) hour = 0;
+    }
+    // Χωρίς πμ/μμ: η ώρα μένει όπως δόθηκε (24ωρη μορφή, π.χ. 19.15).
+
+    try {
+      return DateTime(year, month, day, hour, minute);
+    } catch (_) {
+      return null;
+    }
+  }
 
   /// Email: απλός κανόνας — κάτι@κάτι.κάτι (2-4 γράμματα μετά την τελεία,
   /// π.χ. .com/.gr/.net/.info — καλύπτει όλες τις συνηθισμένες καταλήξεις).

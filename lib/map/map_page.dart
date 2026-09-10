@@ -43,6 +43,7 @@ import '../jobs/billing_page.dart';
 import '../jobs/job_service.dart';
 import '../masters/global_settings_page.dart';
 import '../calendar/jobs_calendar_page.dart';
+import '../calendar/calendar_event_parser.dart';
 import '../pricing/pricing_zones_page.dart';
 import '../settings_page.dart';
 import '../viva_settings_page.dart';
@@ -1089,6 +1090,206 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
       _displayName != 'Driver' && _lastName.isNotEmpty &&
       _phone.isNotEmpty && _vehicleModel.isNotEmpty && _plateNumber.isNotEmpty;
 
+  // ─── Γρήγορη προσθήκη δουλειάς (κουμπί +) ───────────────────────────────
+  // Ανοίγει text box όπου γράφεις τη δουλειά ελεύθερα (ίδιος τρόπος με τα
+  // events στο Google Calendar) και δύο κουμπιά:
+  //  • «Αυτόματη μετατροπή» — ΙΔΙΟΣ μηχανισμός με τη μετατροπή event→δουλειά
+  //    (CalendarEventParser), τίποτα καινούργιο στην αναγνώριση.
+  //  • «Φόρμα δουλειάς» — ανοίγει την κενή φόρμα, ο χρήστης συμπληρώνει
+  //    μόνος του.
+  Future<void> _openQuickAddSheet() async {
+    final ctrl = TextEditingController();
+    final c = AppColors.of(context);
+
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true, // ώστε το πληκτρολόγιο να μη σκεπάζει το πεδίο
+      backgroundColor: Colors.transparent,
+      builder: (sheetCtx) => Padding(
+        padding: EdgeInsets.only(
+            bottom: MediaQuery.of(sheetCtx).viewInsets.bottom),
+        child: SafeArea(
+          child: Container(
+            decoration: BoxDecoration(
+              color: c.card,
+              borderRadius: const BorderRadius.vertical(
+                  top: Radius.circular(20)),
+            ),
+            padding: const EdgeInsets.fromLTRB(18, 14, 18, 18),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Center(
+                  child: Container(
+                    width: 42, height: 5,
+                    margin: const EdgeInsets.only(bottom: 12),
+                    decoration: BoxDecoration(
+                      color: c.textFaint.withValues(alpha: 0.45),
+                      borderRadius: BorderRadius.circular(3),
+                    ),
+                  ),
+                ),
+                Text('Γρήγορη δουλειά',
+                    style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700,
+                        color: c.textMain)),
+                const SizedBox(height: 4),
+                Text(
+                  'Γράψε τη δουλειά όπως τη γράφεις στο Google Ημερολόγιο — '
+                  'π.χ. διαδρομή, τηλέφωνο, όνομα, άτομα, βαλίτσες, email, '
+                  'πτήση — και πάτα «Αυτόματη μετατροπή».',
+                  style: TextStyle(fontSize: 12.5, color: c.textFaint),
+                ),
+                const SizedBox(height: 8),
+                Theme(
+                  data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+                  child: ExpansionTile(
+                    tilePadding: EdgeInsets.zero,
+                    childrenPadding: EdgeInsets.zero,
+                    dense: true,
+                    title: Text('Δες ένα παράδειγμα',
+                        style: TextStyle(fontSize: 12.5,
+                            fontWeight: FontWeight.w600, color: c.amberDeep)),
+                    children: [
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(10),
+                        margin: const EdgeInsets.only(bottom: 8),
+                        decoration: BoxDecoration(
+                          color: c.scaffold,
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: c.cardBorder),
+                        ),
+                        child: SelectableText(
+                          'Ακρόπολη - Αεροδρόμιο =60\n'
+                          '+306936123322\n'
+                          'Κωνσταντίνος Πετρόπουλος\n'
+                          '2 pax\n'
+                          '2bags\n'
+                          '1 baby seat\n'
+                          'book@taxiathenstransfers.com\n'
+                          'A3 389\n'
+                          '3/9/26 19.15',
+                          style: TextStyle(fontSize: 12.5,
+                              fontFamily: 'monospace', color: c.textMain,
+                              height: 1.5),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 4),
+                TextField(
+                  controller: ctrl,
+                  autofocus: true,
+                  minLines: 4,
+                  maxLines: 12, // μεγαλώνει μόνο του μέχρι εδώ, μετά κάνει scroll
+                  decoration: InputDecoration(
+                    hintText: 'Ακρόπολη - Αεροδρόμιο =60\n'
+                        '+306936123322\nΌνομα Επωνύμων\n2 pax\n2 bags\n'
+                        'email@example.com\nA3 389',
+                    hintStyle: TextStyle(color: c.textFaint, fontSize: 13),
+                    filled: true,
+                    fillColor: c.scaffold,
+                    border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide(color: c.cardBorder)),
+                    contentPadding: const EdgeInsets.all(12),
+                  ),
+                  style: TextStyle(fontSize: 14, color: c.textMain),
+                ),
+                const SizedBox(height: 14),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: c.amberDeep,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 13),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12)),
+                    ),
+                    icon: const Icon(Icons.auto_fix_high_rounded),
+                    label: const Text('Αυτόματη μετατροπή',
+                        style: TextStyle(fontWeight: FontWeight.bold)),
+                    onPressed: () => Navigator.of(sheetCtx).pop('auto'),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: c.textMain,
+                      side: BorderSide(color: c.cardBorder),
+                      padding: const EdgeInsets.symmetric(vertical: 13),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12)),
+                    ),
+                    icon: const Icon(Icons.edit_note_rounded),
+                    label: const Text('Φόρμα δουλειάς',
+                        style: TextStyle(fontWeight: FontWeight.bold)),
+                    onPressed: () => Navigator.of(sheetCtx).pop('blank'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+
+    if (!mounted || choice == null) return;
+
+    final adminName = '$_displayName $_lastName'.trim();
+
+    if (choice == 'blank') {
+      await Navigator.of(context).push(MaterialPageRoute(
+        builder: (_) => JobFormPage(
+          adminUid:  _uid ?? '',
+          adminName: adminName,
+          isMaster:  _isMaster,
+        ),
+      ));
+      return;
+    }
+
+    // choice == 'auto' — ΙΔΙΟΣ parser με τη μετατροπή event→δουλειά.
+    final text = ctrl.text;
+    if (text.trim().isEmpty) return;
+    final parsed = CalendarEventParser.parse(description: text);
+
+    await Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => JobFormPage(
+        adminUid:  _uid ?? '',
+        adminName: adminName,
+        isMaster:  _isMaster,
+        prefill: JobPrefill(
+          from: (parsed.from != null && parsed.from!.trim().isNotEmpty)
+              ? PlacePick(description: parsed.from!.trim())
+              : null,
+          to: (parsed.to != null && parsed.to!.trim().isNotEmpty)
+              ? PlacePick(description: parsed.to!.trim())
+              : null,
+          clientName:   parsed.name,
+          clientEmail:  parsed.email,
+          clientPhone:  parsed.phone,
+          price:        parsed.price,
+          // Ημερομηνία/ώρα — π.χ. «3/9/26 19.15» ή «19.15 3/9/26» μέσα στο
+          // κείμενο. Αν δεν αναγνωρίστηκε (λείπει ένα από τα δύο), μένει
+          // null και ο χρήστης τη βάζει μόνος του στη φόρμα, όπως πριν.
+          scheduledAt:  parsed.dateTime,
+          persons:      parsed.persons,
+          luggage:      parsed.luggage,
+          note:           parsed.note,
+          flightOrShip:   parsed.flightOrShip,
+          vehicleType:    parsed.vehicleType,
+          childSeatCount: parsed.childSeat,
+        ),
+      ),
+    ));
+  }
+
   // ─── build ────────────────────────────────────────────────────────────────────
 
   @override
@@ -1286,6 +1487,32 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
           child: Builder(builder: (context) {
             final c = AppColors.of(context);
             return Column(mainAxisSize: MainAxisSize.min, children: [
+              // Κουμπί «+» — ΓΡΗΓΟΡΗ προσθήκη δουλειάς με αυτόματη αναγνώριση
+              // κειμένου. Ίδιο ΑΚΡΙΒΩΣ μέγεθος/στυλ με το κουμπί «η θέση μου»
+              // από κάτω (48×48, στρογγυλό, λευκό, amberDeep εικονίδιο).
+              // Μόνο για master/admin — οι απλοί οδηγοί δεν φτιάχνουν δουλειές.
+              if (_isMaster || _isAdmin) ...[
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: Material(
+                    color: c.card,
+                    shape: CircleBorder(
+                        side: BorderSide(color: c.cardBorder, width: 0.8)),
+                    elevation: 2,
+                    shadowColor: Colors.black26,
+                    child: InkWell(
+                      customBorder: const CircleBorder(),
+                      onTap: _openQuickAddSheet,
+                      child: SizedBox(
+                        width: 48, height: 48,
+                        child: Icon(Icons.add_rounded,
+                            size: 26, color: c.amberDeep),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 10),
+              ],
               Align(
                 alignment: Alignment.centerRight,
                 child: Material(
@@ -1299,8 +1526,8 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
                     onTap: () {
                       if (_currentPosition != null && _mapController != null) {
                         _mapController!.animateCamera(CameraUpdate.newLatLngZoom(
-                          LatLng(_currentPosition!.latitude,
-                              _currentPosition!.longitude), 12));
+                            LatLng(_currentPosition!.latitude,
+                                _currentPosition!.longitude), 12));
                       }
                     },
                     child: SizedBox(
