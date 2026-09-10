@@ -275,16 +275,17 @@ class AdminJobCard extends StatelessWidget {
                 },
               ),
             // Ακύρωση για taken — όσοι μπορούν να επεξεργαστούν
+            // Συμπαγές εικονίδιο (X σε κόκκινο κύκλο) — ίδιο μέγεθος με τα
+            // υπόλοιπα της γραμμής (αντιγραφή/επεξεργασία). Με κείμενο δίπλα
+            // («Ακύρωση») + το νέο «Τερματισμός» δεν χωρούσαν πια όλα μαζί.
             if ((job.isTaken || job.isBoarded) && _canEdit)
-              FilledButton.icon(
-                style: FilledButton.styleFrom(
+              IconButton(
+                icon: const Icon(Icons.close_rounded, size: 20, color: Colors.red),
+                tooltip: 'Ακύρωση',
+                style: IconButton.styleFrom(
                   backgroundColor: Colors.red.shade50,
-                  foregroundColor: Colors.red,
-                  padding: const EdgeInsets.symmetric(horizontal: 12),
-                  elevation: 0,
+                  padding: const EdgeInsets.all(8),
                 ),
-                icon:  const Icon(Icons.cancel_rounded, size: 18),
-                label: const Text('Ακύρωση'),
                 onPressed: () => showCancelDialog(context,
                     from: job.from, to: job.to, jobId: job.id,
                     takenByName: job.takenByName),
@@ -296,16 +297,15 @@ class AdminJobCard extends StatelessWidget {
             // διαδρομής;» που έχει ο οδηγός (JobService.completeJob ήδη
             // ενεργοποιεί σωστά όλο το billing μέσω του onJobBilling
             // trigger — απλά γράφει status:done + doneAt).
+            // Ίδιο συμπαγές στυλ (✓ σε πράσινο κύκλο) — βλ. σχόλιο παραπάνω.
             if ((job.isTaken || job.isBoarded) && isMaster)
-              FilledButton.icon(
-                style: FilledButton.styleFrom(
+              IconButton(
+                icon: const Icon(Icons.check_rounded, size: 20, color: Color(0xFF1E8E3E)),
+                tooltip: 'Τερματισμός',
+                style: IconButton.styleFrom(
                   backgroundColor: const Color(0xFFE8F5E9),
-                  foregroundColor: const Color(0xFF1E8E3E),
-                  padding: const EdgeInsets.symmetric(horizontal: 12),
-                  elevation: 0,
+                  padding: const EdgeInsets.all(8),
                 ),
-                icon:  const Icon(Icons.check_circle_rounded, size: 18),
-                label: const Text('Τερματισμός'),
                 onPressed: () => _confirmForceComplete(context),
               ),
           ]),
