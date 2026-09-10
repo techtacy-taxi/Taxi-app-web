@@ -289,6 +289,25 @@ class AdminJobCard extends StatelessWidget {
                     from: job.from, to: job.to, jobId: job.id,
                     takenByName: job.takenByName),
               ),
+            // ── Χειροκίνητος τερματισμός (ΜΟΝΟ master) ────────────────────
+            // Για όσες δουλειές ξεχνιούνται «κολλημένες» σε taken/boarded
+            // επειδή κανείς δεν πάτησε ολοκλήρωση — ο master μπορεί να τη
+            // σημαδέψει ΑΠΕΥΘΕΙΑΣ ως έγινε, χωρίς τη ροή «επιστροφή
+            // διαδρομής;» που έχει ο οδηγός (JobService.completeJob ήδη
+            // ενεργοποιεί σωστά όλο το billing μέσω του onJobBilling
+            // trigger — απλά γράφει status:done + doneAt).
+            if ((job.isTaken || job.isBoarded) && isMaster)
+              FilledButton.icon(
+                style: FilledButton.styleFrom(
+                  backgroundColor: const Color(0xFFE8F5E9),
+                  foregroundColor: const Color(0xFF1E8E3E),
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  elevation: 0,
+                ),
+                icon:  const Icon(Icons.check_circle_rounded, size: 18),
+                label: const Text('Τερματισμός'),
+                onPressed: () => _confirmForceComplete(context),
+              ),
           ]),
           const SizedBox(height: 10),
 
@@ -419,6 +438,34 @@ class AdminJobCard extends StatelessWidget {
       ),
     );
     if (ok == true) await JobService.deleteJob(job.id);
+  }
+
+  // Χειροκίνητος τερματισμός από master — για δουλειές που ξεχνιούνται
+  // «κολλημένες» επειδή κανείς δεν πάτησε ολοκλήρωση. Ίδιο αποτέλεσμα με
+  // τον αυτόματο τερματισμό 12 ωρών (JobService.completeJob), απλά τώρα.
+  Future<void> _confirmForceComplete(BuildContext context) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title:   const Text('Τερματισμός δουλειάς'),
+        content: Text(
+            'Να σημαδευτεί η δουλειά ${job.from} → ${job.to} ως ΟΛΟΚΛΗΡΩΜΕΝΗ; '
+            'Χρησιμοποίησέ το όταν ξέρεις σίγουρα ότι έγινε, αλλά κανείς δεν '
+            'πάτησε ολοκλήρωση.'),
+        actions: [
+          AppButtonTonal(label: 'Άκυρο', onPressed: () => Navigator.pop(ctx, false)),
+          AppButton(label: 'Τερματισμός', color: const Color(0xFF1E8E3E),
+              onPressed: () => Navigator.pop(ctx, true)),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    await JobService.completeJob(job.id);
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('✅ Η δουλειά τερματίστηκε')),
+      );
+    }
   }
 }
 

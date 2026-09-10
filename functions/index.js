@@ -176,7 +176,15 @@ async function getTokensForStage(job, stage) {
   const tokens = [];
   for (const doc of snap.docs) {
     const d = doc.data();
-    if (d.master !== true) {
+    // ΚΡΙΣΙΜΟ: αν αυτός ο οδηγός είναι ο ΡΗΤΟΣ, αποκλειστικός στόχος
+    // (πράσινο κουμπί «Αποστολή» σε συγκεκριμένο άτομο από τις
+    // Αποθηκευμένες), παρακάμπτει τους ελέγχους τύπου οχήματος — ήδη
+    // παρακάμπτει τη διαθεσιμότητα (avail:false στο escalationPlan). Ο
+    // master που στέλνει ξέρει τι κάνει· αν διάλεξε συγκεκριμένο άτομο,
+    // πρέπει να χτυπήσει σε ΑΥΤΟΝ, ό,τι κι αν δηλώνει ως όχημα.
+    const isExclusiveTarget =
+      job.exclusiveTarget === true && baseSet && baseSet.has(doc.id);
+    if (d.master !== true && !isExclusiveTarget) {
       if (job.vehicleType === "shuttle") {
         // Υπηρεσία, όχι συγκεκριμένο αμάξι — προτείνεται σε ΟΠΟΙΟΝΔΗΠΟΤΕ οδηγό
         // μπορεί να εξυπηρετήσει τόσα άτομα (Ταξί/Van/Λεωφορείο).
@@ -7992,6 +8000,57 @@ exports.checkFlightDelays = onSchedule(
         console.error("checkFlightDelays flight lookup error:", doc.id, e.message || e);
         await doc.ref.update({ flightChecked: true }); // μην κολλήσει σε loop σφάλματος
       }
+    }
+  }
+);
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  ΑΥΤΟΜΑΤΟΣ ΤΕΡΜΑΤΙΣΜΟΣ ΞΕΧΑΣΜΕΝΩΝ ΔΟΥΛΕΙΩΝ (12 ώρες μετά το ραντεβού)
+// ═══════════════════════════════════════════════════════════════════════════
+// Δουλειές που έμειναν "κολλημένες" σε taken/boarded επειδή κανείς δεν
+// πάτησε χειροκίνητα ολοκλήρωση (ξεχνιούνται συχνά). 12 ώρες μετά την ώρα
+// του ραντεβού, τις σημαδεύουμε ΑΥΤΟΜΑΤΑ ως done — ΙΔΙΟ αποτέλεσμα με το
+// χειροκίνητο κουμπί «Τερματισμός» του master (status:done + doneAt), οπότε
+// ο ήδη υπάρχων trigger onJobBilling αναλαμβάνει κανονικά όλο το billing.
+exports.autoCompleteStaleJobs = onSchedule(
+  { schedule: "every 30 minutes", timeZone: "Europe/Athens",
+    memory: "256MiB", timeoutSeconds: 120 },
+  async () => {
+    const db = getFirestore();
+    const { Timestamp } = require("firebase-admin/firestore");
+    const cutoff = Timestamp.fromMillis(Date.now() - 12 * 60 * 60 * 1000);
+
+    // Ξεχωριστά queries ανά status (taken/boarded) — απλούστερο composite
+    // index από ένα ενιαίο "in" query σε συνδυασμό με ανισότητα σε άλλο
+    // πεδίο. Αν το Firestore ζητήσει index την πρώτη φορά, δημιουργείται
+    // αυτόματα από τον σύνδεσμο στο log σφάλματος.
+    let total = 0;
+    for (const status of ["taken", "boarded"]) {
+      let snap;
+      try {
+        snap = await db.collection("jobs")
+          .where("status", "==", status)
+          .where("scheduledAt", "<=", cutoff)
+          .get();
+      } catch (e) {
+        console.error(`autoCompleteStaleJobs query error (status=${status}):`, e.message || e);
+        continue;
+      }
+      if (snap.empty) continue;
+      const batch = db.batch();
+      for (const doc of snap.docs) {
+        batch.update(doc.ref, {
+          status: "done",
+          doneAt: FieldValue.serverTimestamp(),
+          autoCompleted: true, // ίχνος ότι έγινε αυτόματα, όχι χειροκίνητα
+        });
+      }
+      await batch.commit();
+      total += snap.docs.length;
+      console.log(`autoCompleteStaleJobs: ${snap.docs.length} δουλειές (status=${status}) τερματίστηκαν αυτόματα.`);
+    }
+    if (total === 0) {
+      console.log("autoCompleteStaleJobs: καμία ξεχασμένη δουλειά.");
     }
   }
 );
