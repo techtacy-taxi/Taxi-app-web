@@ -1187,7 +1187,7 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
                   decoration: InputDecoration(
                     hintText: 'Ακρόπολη - Αεροδρόμιο =60\n'
                         '+306936123322\nΌνομα Επωνύμων\n2 pax\n2 bags\n'
-                        'email@example.com\nA3 389',
+                        'email@example.com\nA3 389\n3/9/26 19.15',
                     hintStyle: TextStyle(color: c.textFaint, fontSize: 13),
                     filled: true,
                     fillColor: c.scaffold,

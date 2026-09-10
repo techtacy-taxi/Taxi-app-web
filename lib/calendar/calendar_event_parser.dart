@@ -514,10 +514,11 @@ class CalendarEventParser {
   static final RegExp _dateRegex =
       RegExp(r'\b(\d{1,2})/(\d{1,2})(?:/(\d{2,4}))?\b');
 
-  // Ώρα: ΗΗ.ΛΛ (τελεία, ΟΧΙ άνω-κάτω τελεία) — π.χ. 19.15, 7.15. Δέχεται
-  // προαιρετικά πμ/μμ/am/pm δίπλα (με ή χωρίς τελείες/κενό ανάμεσα).
+  // Ώρα: ΗΗ.ΛΛ (τελεία) Ή ΗΗ:ΛΛ (άνω-κάτω τελεία) — π.χ. 19.15, 19:15,
+  // 7.15, 7:15. Δέχεται προαιρετικά πμ/μμ/am/pm δίπλα (με ή χωρίς
+  // τελείες/κενό ανάμεσα).
   static final RegExp _timeRegex = RegExp(
-      r'\b(\d{1,2})\.(\d{2})\s*(π\.?μ\.?|μ\.?μ\.?|am|pm)?\b',
+      r'\b(\d{1,2})[.:](\d{2})\s*(π\.?μ\.?|μ\.?μ\.?|am|pm)?\b',
       caseSensitive: false);
 
   /// Συνδυάζει τα δύο matches σε ένα DateTime. Χειρίζεται 2ψήφιο έτος
@@ -571,9 +572,30 @@ class CalendarEventParser {
   /// Πτήση: airline code 2 χαρακτήρων (1ος γράμμα, 2ος γράμμα Ή ψηφίο) +
   /// αριθμός πτήσης 2-4 ψηφία. Σύνολο 5-6 χαρακτήρες αγνοώντας το κενό.
   /// Πιάνει: A3 691, FR1450, A3691, FR 1450, U2 1234, BA 999, EK0203.
+  // Ελληνικά κεφαλαία που μοιάζουν ΟΠΤΙΚΑ με λατινικά (π.χ. ελληνικό Άλφα
+  // «Α» U+0391 έναντι λατινικού «A» U+0041) — το ελληνικό πληκτρολόγιο τα
+  // βάζει συχνά κατά λάθος σε κωδικούς πτήσεων (π.χ. «Α3 389» αντί «A3
+  // 389»). Οπτικά ταυτόσημα, αλλά ο υπολογιστής τα βλέπει διαφορετικά.
+  static const Map<String, String> _greekLookalikes = {
+    'Α': 'A', 'Β': 'B', 'Ε': 'E', 'Ζ': 'Z', 'Η': 'H', 'Ι': 'I', 'Κ': 'K',
+    'Μ': 'M', 'Ν': 'N', 'Ο': 'O', 'Ρ': 'P', 'Τ': 'T', 'Υ': 'Y', 'Χ': 'X',
+  };
+
+  static String _normalizeGreekLookalikes(String s) {
+    final buf = StringBuffer();
+    for (var i = 0; i < s.length; i++) {
+      final ch = s[i];
+      buf.write(_greekLookalikes[ch] ?? ch);
+    }
+    return buf.toString();
+  }
+
   static String? _findFlight(String line) {
+    // Κανονικοποίηση ΜΟΝΟ για την αναγνώριση — δεν πειράζει το αρχικό
+    // κείμενο, μόνο τι θα επιστραφεί ως κωδικός πτήσης.
+    final normalized = _normalizeGreekLookalikes(line);
     final m = RegExp(r'\b([A-Za-z][A-Za-z0-9])\s?(\d{2,4})\b')
-        .firstMatch(line);
+        .firstMatch(normalized);
     if (m == null) return null;
     final code = m.group(1)!;
     final nums = m.group(2)!;
