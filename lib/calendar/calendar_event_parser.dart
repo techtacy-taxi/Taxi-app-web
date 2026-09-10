@@ -481,9 +481,12 @@ class CalendarEventParser {
   /// Συμβατότητα.
   static String? _findPhone(String line) => _findPhoneTyped(line).$1;
 
-  /// Email: απλός κανόνας — κάτι@κάτι.κάτι. Επιστρέφει το πρώτο που θα βρει.
+  /// Email: απλός κανόνας — κάτι@κάτι.κάτι (2-4 γράμματα μετά την τελεία,
+  /// π.χ. .com/.gr/.net/.info — καλύπτει όλες τις συνηθισμένες καταλήξεις).
+  /// Δεν χρειάζεται η λέξη «email» πουθενά — αναγνωρίζεται από το ίδιο το
+  /// σχήμα (βλ. και τον γενικό ανά-γραμμή σαρωτή παρακάτω στο parse()).
   static String? _findEmail(String line) {
-    final m = RegExp(r'[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}')
+    final m = RegExp(r'[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,4}')
         .firstMatch(line);
     return m?.group(0);
   }

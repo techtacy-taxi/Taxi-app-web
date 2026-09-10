@@ -175,6 +175,7 @@ class _GoogleCalendarPageState extends State<GoogleCalendarPage> {
               ? PlacePick(description: parsed.to!.trim())
               : null,
           clientName:   parsed.name,
+          clientEmail:  parsed.email,
           clientPhone:  parsed.phone,
           price:        parsed.price,
           scheduledAt:  e.start,
