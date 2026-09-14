@@ -1024,8 +1024,12 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
             controller: _sourceCodeCtrl,
             decoration: const InputDecoration(
                 labelText: 'Viva Source Code — Ελληνικά (4ψήφιο)',
-                helperText: 'Το Source στο Viva dashboard πρέπει να έχει Success/Failure URL '
-                    'προς τη ΔΙΚΙΑ ΣΟΥ ελληνική σελίδα (π.χ. el/booking2.html)',
+                helperText: 'Στο Viva dashboard, αυτό το Source πρέπει να έχει:\n'
+                    'Success URL → EL/payment-success.html\n'
+                    'Failure URL → EL/payment-failed.html\n'
+                    '(στο ΔΙΚΟ ΣΟΥ domain). ΜΗΝ βάζεις τη φόρμα κράτησης — ο '
+                    'πελάτης θα την ξαναγέμιζε και θα έβγαινε δεύτερη, '
+                    'απλήρωτη κράτηση.',
                 border: OutlineInputBorder()),
           ),
           const SizedBox(height: 10),
@@ -1033,9 +1037,11 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
             controller: _sourceCodeEnCtrl,
             decoration: const InputDecoration(
                 labelText: 'Viva Source Code — Αγγλικά (4ψήφιο, προαιρετικό)',
-                helperText: 'Χρειάζεται ΔΕΥΤΕΡΟ, ξεχωριστό Source στο Viva dashboard, με '
-                    'Success/Failure URL προς την αγγλική σελίδα (index.html) — αλλιώς ο '
-                    'πελάτης της αγγλικής φόρμας γυρνάει σε ελληνική σελίδα μετά την πληρωμή. '
+                helperText: 'Χρειάζεται ΔΕΥΤΕΡΟ, ξεχωριστό Source στο Viva dashboard, με:\n'
+                    'Success URL → payment-success.html\n'
+                    'Failure URL → payment-failed.html\n'
+                    '(αγγλικές, στη ρίζα του domain σου). Αλλιώς ο πελάτης της '
+                    'αγγλικής φόρμας γυρνάει σε ελληνική σελίδα μετά την πληρωμή. '
                     'Αν το αφήσεις κενό, χρησιμοποιείται το ελληνικό Source και για τα δύο.',
                 border: OutlineInputBorder()),
           ),

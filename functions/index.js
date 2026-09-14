@@ -3689,6 +3689,36 @@ exports.submitPublicBooking = onRequest(
       const me = await getFirestore().collection("presence").doc(masterUid).get();
       const masterName = await resolveOwnerDisplayName(tenantId, me.exists ? me.data() : null);
 
+      // ── ΑΣΦΑΛΕΙΑ: αποτροπή διπλής/κατά λάθος υποβολής ────────────────────
+      // Ο ΚΥΡΙΟΣ λόγος: μετά από πληρωμή μέσω link, ο πελάτης προσγειωνόταν
+      // στη φόρμα, την ξαναγέμιζε και υπέβαλλε ΔΕΥΤΕΡΗ (απλήρωτη) κράτηση.
+      // Το διορθώσαμε κυρίως με ξεχωριστή σελίδα επιβεβαίωσης, αλλά αυτό εδώ
+      // πιάνει ΚΑΘΕ διπλοϋποβολή (διπλό κλικ, refresh, «πίσω» κλπ).
+      // Κανόνας: ίδιο τηλέφωνο + ίδια διαδρομή + ίδιο ραντεβού, μέσα σε 10′.
+      try {
+        const dupWindow = new Date(Date.now() - 10 * 60 * 1000);
+        const dupSnap = await getFirestore().collection("saved_jobs")
+          .where("tenantId", "==", tenantId)
+          .where("clientPhone", "==", phone)
+          .where("createdAt", ">=", dupWindow)
+          .get();
+        const isDup = dupSnap.docs.some((d) => {
+          const x = d.data();
+          return x.from === from && x.to === to;
+        });
+        if (isDup) {
+          console.log(`submitPublicBooking: μπλοκαρίστηκε διπλή υποβολή (${phone}, ${from} → ${to})`);
+          // Επιστρέφουμε ok:true ΣΚΟΠΙΜΑ — ο πελάτης βλέπει κανονικό μήνυμα
+          // επιτυχίας (η κράτησή του ΥΠΑΡΧΕΙ ήδη, απλά δεν φτιάχνουμε δεύτερη).
+          // Ένα σφάλμα εδώ θα τον μπέρδευε και θα τον έκανε να ξαναπροσπαθήσει.
+          return res.json({ ok: true, duplicate: true });
+        }
+      } catch (e) {
+        // Αν αποτύχει ο έλεγχος (π.χ. λείπει index), ΔΕΝ μπλοκάρουμε την
+        // κράτηση — καλύτερα μια διπλή κράτηση παρά καμία.
+        console.error("submitPublicBooking dup-check error:", e.message || e);
+      }
+
       // Ραντεβού σε ώρα Ελλάδας → JS Date.
       // Το date/time έρχονται ως τοπική ώρα Ελλάδας. Φτιάχνουμε ISO με offset.
       // (Απλό & ασφαλές: θεωρούμε Europe/Athens. Για ακρίβεια DST, ο master
@@ -4500,8 +4530,16 @@ exports.createStripeCheckoutSession = onRequest(
       const amountCents = chargeAmount * 100;
 
       const b = req.body || {};
-      const successUrl = s(b.successUrl) || "https://taxiathenstransfers.com/el/booking.html";
-      const cancelUrl = s(b.cancelUrl) || successUrl;
+      // Σελίδες αποτελέσματος ανά γλώσσα. ΓΙΑΤΙ ΟΧΙ booking.html: μετά την
+      // πληρωμή ο πελάτης προσγειωνόταν ΞΑΝΑ στη φόρμα κράτησης, την
+      // ξαναγέμιζε και υπέβαλλε ΔΕΥΤΕΡΗ (απλήρωτη) κράτηση χωρίς να το
+      // καταλάβει. Τώρα βλέπει καθαρή σελίδα επιβεβαίωσης, με ρητό κουμπί
+      // «Νέα κράτηση» αν όντως θέλει δεύτερη.
+      const langPath = lang === "el" ? "el/" : "";
+      const successUrl = s(b.successUrl) ||
+        "https://taxiathenstransfers.com/" + langPath + "payment-success.html";
+      const cancelUrl = s(b.cancelUrl) ||
+        "https://taxiathenstransfers.com/" + langPath + "payment-failed.html";
 
       const label = (lang === "el"
         ? (payFull ? "Πλήρης πληρωμή · " : "Προκαταβολή · ") + from + " → " + to
@@ -4664,7 +4702,10 @@ exports.createManualBookingPaymentLink = onCall(
           + clientName + " · " + from + " → " + to + " · " + date + " " + time
           + (vehicleBreakdownNote ? " · " + vehicleBreakdownNote
                                   : " · " + (vehicleLabelsEl[vehicleType] || vehicleType));
-        const successUrl = "https://taxiathenstransfers.com/" + (lang === "el" ? "el/" : "") + "index.html";
+        const successUrl = "https://taxiathenstransfers.com/"
+          + (lang === "el" ? "el/" : "") + "payment-success.html";
+        const failUrl = "https://taxiathenstransfers.com/"
+          + (lang === "el" ? "el/" : "") + "payment-failed.html";
         const session = await stripe.checkout.sessions.create({
           mode: "payment",
           payment_method_types: ["card"],
@@ -4676,7 +4717,7 @@ exports.createManualBookingPaymentLink = onCall(
           client_reference_id: pendingRef.id,
           metadata: { pendingBookingId: pendingRef.id, tenantId },
           success_url: successUrl,
-          cancel_url: successUrl,
+          cancel_url: failUrl,
           expires_at: Math.floor(Date.now() / 1000) + 48 * 3600,
         });
         await pendingRef.update({ stripeSessionId: session.id });

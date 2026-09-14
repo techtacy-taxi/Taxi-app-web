@@ -101,8 +101,17 @@ class JobService {
     void emit() {
       if (controller.isClosed) return;
       final filtered = latestRaw.where((j) {
+        // ΡΗΤΑ στοχευμένη ΜΟΝΟ σε εμένα (πράσινο κουμπί «Αποστολή» σε
+        // συγκεκριμένο άτομο από τις Αποθηκευμένες): παρακάμπτει τον έλεγχο
+        // τύπου οχήματος. Αν ο master με διάλεξε ονομαστικά, πρέπει να τη δω
+        // ΑΚΟΜΑ κι αν το δηλωμένο μου όχημα δεν ταιριάζει — ξέρει τι κάνει.
+        // (Η διαθεσιμότητα παρακάμπτεται ήδη αλλού, μέσω exclusiveTarget.)
+        final targetedOnlyAtMe = j.exclusiveTarget &&
+            j.targetUids.length == 1 &&
+            j.targetUids.first == uid;
         // Τύπος οχήματος
-        if (j.vehicleType != 'any' && j.vehicleType != vehicleType) {
+        if (!targetedOnlyAtMe &&
+            j.vehicleType != 'any' && j.vehicleType != vehicleType) {
           return false;
         }
         // Οριστικά ληγμένη → έξω από τη λίστα
