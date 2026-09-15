@@ -1024,12 +1024,9 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
             controller: _sourceCodeCtrl,
             decoration: const InputDecoration(
                 labelText: 'Viva Source Code — Ελληνικά (4ψήφιο)',
-                helperText: 'Στο Viva dashboard, αυτό το Source πρέπει να έχει:\n'
-                    'Success URL → EL/payment-success.html\n'
-                    'Failure URL → EL/payment-failed.html\n'
-                    '(στο ΔΙΚΟ ΣΟΥ domain). ΜΗΝ βάζεις τη φόρμα κράτησης — ο '
-                    'πελάτης θα την ξαναγέμιζε και θα έβγαινε δεύτερη, '
-                    'απλήρωτη κράτηση.',
+                helperText: 'Στο Viva: Success URL → EL/payment-success.html · '
+                    'Failure URL → EL/payment-failed.html. ΜΗΝ βάζεις τη φόρμα '
+                    'κράτησης (βλ. οδηγίες, βήμα 5).',
                 border: OutlineInputBorder()),
           ),
           const SizedBox(height: 10),
@@ -1037,12 +1034,10 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
             controller: _sourceCodeEnCtrl,
             decoration: const InputDecoration(
                 labelText: 'Viva Source Code — Αγγλικά (4ψήφιο, προαιρετικό)',
-                helperText: 'Χρειάζεται ΔΕΥΤΕΡΟ, ξεχωριστό Source στο Viva dashboard, με:\n'
-                    'Success URL → payment-success.html\n'
-                    'Failure URL → payment-failed.html\n'
-                    '(αγγλικές, στη ρίζα του domain σου). Αλλιώς ο πελάτης της '
-                    'αγγλικής φόρμας γυρνάει σε ελληνική σελίδα μετά την πληρωμή. '
-                    'Αν το αφήσεις κενό, χρησιμοποιείται το ελληνικό Source και για τα δύο.',
+                helperText: 'ΔΕΥΤΕΡΟ, ξεχωριστό Source με Success URL → '
+                    'payment-success.html · Failure URL → payment-failed.html. '
+                    'Αλλιώς ο πελάτης της αγγλικής φόρμας γυρνάει σε ελληνική '
+                    'σελίδα. Κενό = χρησιμοποιείται το ελληνικό και για τα δύο.',
                 border: OutlineInputBorder()),
           ),
           const SizedBox(height: 16),
@@ -2171,8 +2166,8 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
             const SizedBox(height: 4),
             const Text(
               'Μέσα στο κάθε Website/App που έφτιαξες, συμπλήρωσε τα πεδία '
-              '«Success URL» και «Failure URL» με τις παρακάτω διευθύνσεις — '
-              'αντικατέστησε το ΤΟ-DOMAIN-ΣΟΥ με το δικό σου domain.',
+              '«Success URL» και «Failure URL». Το domain το έχεις ήδη δηλώσει '
+              'στο Website/App — εδώ μπαίνει μόνο η κατάληξη:',
               style: TextStyle(fontSize: 12),
             ),
             const SizedBox(height: 8),
@@ -2180,21 +2175,17 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
                 style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600,
                     color: c.textFaint)),
             const SizedBox(height: 4),
-            const _CopyableCode(
-                text: 'https://ΤΟ-DOMAIN-ΣΟΥ/EL/payment-success.html'),
+            const _CopyableCode(text: 'EL/payment-success.html'),
             const SizedBox(height: 4),
-            const _CopyableCode(
-                text: 'https://ΤΟ-DOMAIN-ΣΟΥ/EL/payment-failed.html'),
+            const _CopyableCode(text: 'EL/payment-failed.html'),
             const SizedBox(height: 8),
             Text('Αγγλικό Website/App:',
                 style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600,
                     color: c.textFaint)),
             const SizedBox(height: 4),
-            const _CopyableCode(
-                text: 'https://ΤΟ-DOMAIN-ΣΟΥ/payment-success.html'),
+            const _CopyableCode(text: 'payment-success.html'),
             const SizedBox(height: 4),
-            const _CopyableCode(
-                text: 'https://ΤΟ-DOMAIN-ΣΟΥ/payment-failed.html'),
+            const _CopyableCode(text: 'payment-failed.html'),
             const SizedBox(height: 8),
             Container(
               width: double.infinity,
