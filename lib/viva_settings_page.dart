@@ -1024,9 +1024,8 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
             controller: _sourceCodeCtrl,
             decoration: const InputDecoration(
                 labelText: 'Viva Source Code — Ελληνικά (4ψήφιο)',
-                helperText: 'Στο Viva: Success URL → EL/payment-success.html · '
-                    'Failure URL → EL/payment-failed.html. ΜΗΝ βάζεις τη φόρμα '
-                    'κράτησης (βλ. οδηγίες, βήμα 5).',
+                helperText: 'Ο 4ψήφιος κωδικός του ελληνικού Website/App '
+                    '(βλ. οδηγίες παρακάτω, βήματα 4-5).',
                 border: OutlineInputBorder()),
           ),
           const SizedBox(height: 10),
@@ -1034,10 +1033,9 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
             controller: _sourceCodeEnCtrl,
             decoration: const InputDecoration(
                 labelText: 'Viva Source Code — Αγγλικά (4ψήφιο, προαιρετικό)',
-                helperText: 'ΔΕΥΤΕΡΟ, ξεχωριστό Source με Success URL → '
-                    'payment-success.html · Failure URL → payment-failed.html. '
-                    'Αλλιώς ο πελάτης της αγγλικής φόρμας γυρνάει σε ελληνική '
-                    'σελίδα. Κενό = χρησιμοποιείται το ελληνικό και για τα δύο.',
+                helperText: 'Ο κωδικός ΔΕΥΤΕΡΟΥ, ξεχωριστού Website/App για τα '
+                    'αγγλικά. Αν μείνει κενό, χρησιμοποιείται το ελληνικό και '
+                    'για τις δύο γλώσσες.',
                 border: OutlineInputBorder()),
           ),
           const SizedBox(height: 16),
