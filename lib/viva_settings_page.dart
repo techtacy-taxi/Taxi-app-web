@@ -2161,6 +2161,57 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
               style: TextStyle(fontSize: 12),
             ),
 
+            // ── 5. Success / Failure URL — ΚΡΙΣΙΜΟ βήμα ────────────────────
+            const SizedBox(height: 12),
+            const Align(
+              alignment: Alignment.centerLeft,
+              child: Text('5. Success / Failure URL (σε ΚΑΘΕ Website/App)',
+                  style: TextStyle(fontWeight: FontWeight.w600, fontSize: 12)),
+            ),
+            const SizedBox(height: 4),
+            const Text(
+              'Μέσα στο κάθε Website/App που έφτιαξες, συμπλήρωσε τα πεδία '
+              '«Success URL» και «Failure URL» με τις παρακάτω διευθύνσεις — '
+              'αντικατέστησε το ΤΟ-DOMAIN-ΣΟΥ με το δικό σου domain.',
+              style: TextStyle(fontSize: 12),
+            ),
+            const SizedBox(height: 8),
+            Text('Ελληνικό Website/App:',
+                style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600,
+                    color: c.textFaint)),
+            const SizedBox(height: 4),
+            const _CopyableCode(
+                text: 'https://ΤΟ-DOMAIN-ΣΟΥ/EL/payment-success.html'),
+            const SizedBox(height: 4),
+            const _CopyableCode(
+                text: 'https://ΤΟ-DOMAIN-ΣΟΥ/EL/payment-failed.html'),
+            const SizedBox(height: 8),
+            Text('Αγγλικό Website/App:',
+                style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600,
+                    color: c.textFaint)),
+            const SizedBox(height: 4),
+            const _CopyableCode(
+                text: 'https://ΤΟ-DOMAIN-ΣΟΥ/payment-success.html'),
+            const SizedBox(height: 4),
+            const _CopyableCode(
+                text: 'https://ΤΟ-DOMAIN-ΣΟΥ/payment-failed.html'),
+            const SizedBox(height: 8),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFCE8E6),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Text(
+                '⚠️ ΜΗΝ βάλεις εδώ τη σελίδα της φόρμας κράτησης. Ο πελάτης '
+                'θα την ξαναδεί μετά την πληρωμή, θα τη συμπληρώσει ξανά '
+                'νομίζοντας ότι πρέπει, και θα δημιουργηθεί ΔΕΥΤΕΡΗ κράτηση '
+                'χωρίς πληρωμή.',
+                style: TextStyle(fontSize: 11.5, color: Color(0xFFC5221F)),
+              ),
+            ),
+
             if (_isDefault) ...[
               const SizedBox(height: 10),
               Container(
