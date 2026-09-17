@@ -98,6 +98,10 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
   String _referredBy        = '';
   String _appVersion        = '';
   bool   _isAvailable       = false;
+  /// Διακόπτης «Δέχομαι και δουλειές ταξί» — ΜΟΝΟ για οδηγούς με βαν.
+  /// Ανοιχτός = χτυπάνε και οι ταξί δουλειές (τα 4 άτομα του ταξί χωράνε
+  /// άνετα σε βαν). Κλειστός = μόνο δουλειές βαν, όπως πριν.
+  bool   _acceptsTaxiJobs   = false;
   bool   _isOnline          = true;
   bool   _isApproved        = false;
   bool   _isAdmin           = false;
@@ -195,6 +199,7 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
               _vehicleType = VehicleType.van;
             }
             _hasBus = data['hasBus'] == true;
+            _acceptsTaxiJobs = data['acceptsTaxiJobs'] == true;
           }
         }
       } catch (e) {
@@ -811,6 +816,20 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
   // Καλείται από το bottom sheet «Όχημα» στις Ρυθμίσεις.
   // newVehicleType εδώ είναι ήδη το «πραγματικό» τύπο (van αν επιλέχθηκε
   // Λεωφορείο) — hasBus ξεχωρίζει αν πρέπει να δείχνει σαν Λεωφορείο.
+  /// Διακόπτης «Δέχομαι και δουλειές ταξί» (οδηγοί με βαν).
+  /// Γράφεται στο presence doc ώστε να το βλέπει ΚΑΙ το backend όταν
+  /// αποφασίζει σε ποιους θα στείλει ειδοποίηση για ταξί δουλειά.
+  Future<void> _applyAcceptsTaxiJobs(bool v) async {
+    if (v == _acceptsTaxiJobs) return;
+    _acceptsTaxiJobs = v;
+    if (_uid != null) {
+      await FirebaseFirestore.instance
+          .collection('presence').doc(_uid)
+          .set({'acceptsTaxiJobs': v}, SetOptions(merge: true));
+    }
+    if (mounted) setState(() {});
+  }
+
   Future<void> _applyVehicleChange(VehicleType newVehicleType, bool wantsBus) async {
     if (newVehicleType != _vehicleType || wantsBus != _hasBus) {
       _vehicleType = newVehicleType;
@@ -1399,6 +1418,7 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
       displayName: _displayName,
       lastName:    _lastName,
       vehicleType: _vehicleType.name,
+      acceptsTaxiJobs: _acceptsTaxiJobs,
       groupIds:    myGroupIds,
       isAvailable: _isAvailable,
       isMaster:    _isMaster,
@@ -1659,6 +1679,8 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
                       vehicleType: _vehicleType,
                       hasBus: _hasBus,
                       onVehicleChanged: (v) => _applyVehicleChange(v.type, v.hasBus),
+                      acceptsTaxiJobs: _acceptsTaxiJobs,
+                      onAcceptsTaxiJobsChanged: _applyAcceptsTaxiJobs,
                       onBroadcastUpdate: _isMaster
                           ? () => _handleMenuAction(MenuAction.broadcastUpdate, context)
                           : null,

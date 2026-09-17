@@ -193,8 +193,15 @@ async function getTokensForStage(job, stage) {
         // Ρητά Λεωφορείο: ΜΟΝΟ όσοι έχουν δηλώσει hasBus, με αρκετές θέσεις.
         if (d.hasBus !== true || busMaxSeats < persons) continue;
       } else if (job.vehicleType && job.vehicleType !== "any") {
-        // Ταξί/Van: ίδια λογική με πριν (ακριβές ταίριασμα).
-        if (d.vehicleType !== job.vehicleType) continue;
+        // Ταξί/Van: ακριβές ταίριασμα — ΜΕ ΜΙΑ ΕΞΑΙΡΕΣΗ:
+        // Οδηγός με ΒΑΝ που έχει ανοίξει τον διακόπτη «Δέχομαι και δουλειές
+        // ταξί» παίρνει ΚΑΙ ταξί δουλειές (τα 4 άτομα του ταξί χωράνε άνετα
+        // σε βαν). Το αντίστροφο ΔΕΝ ισχύει ποτέ — ταξί δεν παίρνει βαν.
+        const vanTakesTaxi =
+          d.vehicleType === "van" &&
+          d.acceptsTaxiJobs === true &&
+          job.vehicleType === "taxi";
+        if (d.vehicleType !== job.vehicleType && !vanTakesTaxi) continue;
       }
     }
     // Φίλτρο βάσης
@@ -426,7 +433,15 @@ async function getAllJobAudienceTokens(job) {
     const d = doc.data();
     // Ο master δέχεται ακύρωση ήχου για κάθε δουλειά (όπως και το χτύπημα)
     if (d.master !== true && job.vehicleType && job.vehicleType !== "any") {
-      if (d.vehicleType !== job.vehicleType) continue;
+      // ΙΔΙΑ εξαίρεση με το getTokensForStage: αν ένα βαν ΧΤΥΠΗΣΕ για ταξί
+      // δουλειά (διακόπτης «Δέχομαι και δουλειές ταξί»), πρέπει να μπορεί και
+      // να ΣΤΑΜΑΤΗΣΕΙ ο ήχος του όταν την πάρει άλλος — αλλιώς θα κουδούνιζε
+      // ατέρμονα (FLAG_INSISTENT) για δουλειά που δεν υπάρχει πια.
+      const vanTakesTaxi =
+        d.vehicleType === "van" &&
+        d.acceptsTaxiJobs === true &&
+        job.vehicleType === "taxi";
+      if (d.vehicleType !== job.vehicleType && !vanTakesTaxi) continue;
     }
     if (baseSet && !baseSet.has(doc.id)) continue;
     if (d.fcmToken) tokens.push(d.fcmToken);

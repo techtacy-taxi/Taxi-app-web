@@ -41,6 +41,9 @@ class SettingsPage extends StatefulWidget {
   /// η οθόνη Ρυθμίσεων την τρέχουσα επιλογή και το bottom sheet.
   final VehicleType vehicleType;
   final bool hasBus;
+  /// «Δέχομαι και δουλειές ταξί» — έχει νόημα ΜΟΝΟ για οδηγούς με βαν.
+  final bool acceptsTaxiJobs;
+  final ValueChanged<bool> onAcceptsTaxiJobsChanged;
   /// Καλείται όταν ο χρήστης επιλέξει νέο όχημα από το bottom sheet εδώ.
   final ValueChanged<({VehicleType type, bool hasBus})> onVehicleChanged;
   /// Μόνο master: στέλνει ειδοποίηση αναβάθμισης σε όλους τους οδηγούς.
@@ -58,6 +61,8 @@ class SettingsPage extends StatefulWidget {
     required this.onMuteChanged,
     required this.vehicleType,
     required this.hasBus,
+    required this.acceptsTaxiJobs,
+    required this.onAcceptsTaxiJobsChanged,
     required this.onVehicleChanged,
     this.onBroadcastUpdate,
   });
@@ -75,10 +80,16 @@ class _SettingsPageState extends State<SettingsPage> {
   // μοτίβο: τοπικό state (άμεση οπτική αλλαγή) + ειδοποίηση προς τα πάνω
   // (αποθήκευση).
   late bool _muted = widget.muted;
+  late bool _acceptsTaxiJobs = widget.acceptsTaxiJobs;
 
   void _toggleMuted(bool v) {
     setState(() => _muted = v);
     widget.onMuteChanged(v);
+  }
+
+  void _toggleAcceptsTaxiJobs(bool v) {
+    setState(() => _acceptsTaxiJobs = v);
+    widget.onAcceptsTaxiJobsChanged(v);
   }
 
   String _vehicleLabel(VehicleType type, bool hasBus) {
@@ -208,6 +219,18 @@ class _SettingsPageState extends State<SettingsPage> {
                 label: 'Όχημα',
                 trailingText: _vehicleLabel(widget.vehicleType, widget.hasBus),
                 onTap: () => _openVehiclePicker(context, c)),
+            // Εμφανίζεται ΜΟΝΟ σε οδηγούς με βαν — σε ταξί δεν έχει νόημα
+            // (ταξί δεν χωράει φορτίο βαν), σε λεωφορείο ούτε.
+            if (widget.vehicleType == VehicleType.van && !widget.hasBus) ...[
+              _divider(c),
+              _switchTile(context, c,
+                  icon: Icons.local_taxi_rounded,
+                  label: 'Δέχομαι και δουλειές ταξί',
+                  subtitle: 'Τα 4 άτομα του ταξί χωράνε άνετα στο βαν σου — '
+                      'με τον διακόπτη ανοιχτό θα χτυπάνε και οι δουλειές ταξί.',
+                  value: _acceptsTaxiJobs,
+                  onChanged: _toggleAcceptsTaxiJobs),
+            ],
             _divider(c),
             _switchTile(context, c,
                 icon: Icons.notifications_off_rounded,
@@ -380,6 +403,8 @@ class _SettingsPageState extends State<SettingsPage> {
     required String   label,
     required bool      value,
     required ValueChanged<bool> onChanged,
+    /// Προαιρετική δεύτερη γραμμή επεξήγησης, μικρότερη/ξεθωριασμένη.
+    String? subtitle,
   }) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
@@ -387,7 +412,19 @@ class _SettingsPageState extends State<SettingsPage> {
         Icon(icon, size: 21, color: c.textFaint),
         const SizedBox(width: 10),
         Expanded(
-          child: Text(label, style: TextStyle(fontSize: 15.5, color: c.textMain)),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(label, style: TextStyle(fontSize: 15.5, color: c.textMain)),
+              if (subtitle != null) ...[
+                const SizedBox(height: 2),
+                Text(subtitle,
+                    style: TextStyle(fontSize: 11.5, color: c.textFaint,
+                        height: 1.35)),
+              ],
+            ],
+          ),
         ),
         Switch(
           value: value,

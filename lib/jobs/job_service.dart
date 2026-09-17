@@ -92,6 +92,10 @@ class JobService {
     required String       uid,
     required String       vehicleType,
     required List<String> groupIds,
+    /// Οδηγός με ΒΑΝ που έχει ανοίξει τον διακόπτη «Δέχομαι και δουλειές
+    /// ταξί»: βλέπει ΚΑΙ ταξί δουλειές (τα 4 άτομα του ταξί χωράνε σε βαν).
+    /// Το αντίστροφο ΔΕΝ ισχύει ποτέ — ταξί δεν παίρνει βαν.
+    bool acceptsTaxiJobs = false,
   }) {
     late StreamController<List<Job>> controller;
     StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? sub;
@@ -110,7 +114,10 @@ class JobService {
             j.targetUids.length == 1 &&
             j.targetUids.first == uid;
         // Τύπος οχήματος
-        if (!targetedOnlyAtMe &&
+        final vanTakesTaxi = vehicleType == 'van' &&
+            acceptsTaxiJobs &&
+            j.vehicleType == 'taxi';
+        if (!targetedOnlyAtMe && !vanTakesTaxi &&
             j.vehicleType != 'any' && j.vehicleType != vehicleType) {
           return false;
         }

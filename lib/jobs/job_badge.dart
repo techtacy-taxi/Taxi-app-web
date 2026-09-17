@@ -36,6 +36,8 @@ class JobListener extends StatefulWidget {
   final String       displayName;
   final String       lastName;
   final String       vehicleType;
+  /// Διακόπτης «Δέχομαι και δουλειές ταξί» (μόνο για οδηγούς με βαν).
+  final bool         acceptsTaxiJobs;
   final List<String> groupIds;
   final bool         isAvailable;
   final bool         isMaster;
@@ -48,6 +50,7 @@ class JobListener extends StatefulWidget {
     required this.displayName,
     required this.lastName,
     required this.vehicleType,
+    this.acceptsTaxiJobs = false,
     required this.groupIds,
     required this.isAvailable,
     this.isMaster = false,
@@ -123,6 +126,7 @@ class _JobListenerState extends State<JobListener> with WidgetsBindingObserver {
     _jobsSub = JobService.openJobsFor(
       uid:         widget.uid,
       vehicleType: widget.vehicleType,
+      acceptsTaxiJobs: widget.acceptsTaxiJobs,
       groupIds:    widget.groupIds,
     ).listen(_onJobsUpdate);
 
