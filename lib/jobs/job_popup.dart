@@ -98,7 +98,7 @@ class _JobPopupContent extends StatefulWidget {
 }
 
 class _JobPopupContentState extends State<_JobPopupContent>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
 
   late int            _secondsLeft;
   Timer?              _timer;
@@ -107,6 +107,10 @@ class _JobPopupContentState extends State<_JobPopupContent>
   bool                _closing   = false;
   StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _jobSub;
   late AnimationController _shakeCtrl;
+  /// Παλμός στο σήμα οχήματος — τραβάει το μάτι στο ΤΙ ΟΧΗΜΑ ζητάει η
+  /// δουλειά (ταξί / βαν / λεωφορείο / shuttle), που είναι από τα πρώτα
+  /// που θέλει να δει ο οδηγός. Παίζει για ΚΑΘΕ τύπο, όχι μόνο ταξί.
+  late AnimationController _vehiclePulseCtrl;
   late Animation<double>   _shakeAnim;
 
   final AudioPlayer _popupAudioPlayer = AudioPlayer();
@@ -132,6 +136,11 @@ class _JobPopupContentState extends State<_JobPopupContent>
     _shakeAnim = Tween<double>(begin: 0, end: 12).animate(
       CurvedAnimation(parent: _shakeCtrl, curve: Curves.elasticIn),
     );
+
+    _vehiclePulseCtrl = AnimationController(
+      vsync:    this,
+      duration: const Duration(milliseconds: 1150),
+    )..repeat(reverse: true);
 
     _startTimer();
     _playAlertSound();
@@ -319,6 +328,7 @@ class _JobPopupContentState extends State<_JobPopupContent>
     _stopVibration();
     _timer?.cancel();
     _shakeCtrl.dispose();
+    _vehiclePulseCtrl.dispose();
     _popupAudioPlayer.dispose();
     super.dispose();
   }
@@ -727,21 +737,46 @@ class _JobPopupContentState extends State<_JobPopupContent>
                       color: textColor)),
         ),
         const SizedBox(width: 8),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
-          decoration: BoxDecoration(
-            color:        badgeBg,
-            borderRadius: BorderRadius.circular(12),
+        // Παλλόμενο σήμα οχήματος — για ΚΑΘΕ τύπο (ταξί/βαν/λεωφορείο/
+        // shuttle), ώστε ο οδηγός να δει αμέσως τι όχημα ζητάει η δουλειά.
+        // Απαλός παλμός: μεγέθυνση 7% + φωτοστέφανο στο χρώμα του σήματος.
+        AnimatedBuilder(
+          animation: _vehiclePulseCtrl,
+          builder: (ctx, child) {
+            final t = Curves.easeInOut.transform(_vehiclePulseCtrl.value);
+            return Transform.scale(
+              scale: 1.0 + 0.07 * t,
+              child: Container(
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(12),
+                  boxShadow: [
+                    BoxShadow(
+                      color: badgeFg.withValues(alpha: 0.22 * t),
+                      blurRadius: 0,
+                      spreadRadius: 6 * t,
+                    ),
+                  ],
+                ),
+                child: child,
+              ),
+            );
+          },
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
+            decoration: BoxDecoration(
+              color:        badgeBg,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              Icon(_vehicleIcon, size: 15, color: badgeFg),
+              const SizedBox(width: 5),
+              Text(job.vehicleLabel.toUpperCase(),
+                  style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: badgeFg)),
+            ]),
           ),
-          child: Row(mainAxisSize: MainAxisSize.min, children: [
-            Icon(_vehicleIcon, size: 15, color: badgeFg),
-            const SizedBox(width: 5),
-            Text(job.vehicleLabel.toUpperCase(),
-                style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                    color: badgeFg)),
-          ]),
         ),
       ]),
     );

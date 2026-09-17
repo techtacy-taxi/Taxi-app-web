@@ -81,6 +81,13 @@ class _SettingsPageState extends State<SettingsPage> {
   // (αποθήκευση).
   late bool _muted = widget.muted;
   late bool _acceptsTaxiJobs = widget.acceptsTaxiJobs;
+  // ΚΡΙΣΙΜΟ: χωρίς τοπική κατάσταση εδώ, η γραμμή «Όχημα» έμενε
+  // «κολλημένη» στην παλιά τιμή όσο ήσουν ΜΕΣΑ στις Ρυθμίσεις — έπρεπε
+  // να βγεις και να ξαναμπείς για να δεις την αλλαγή. Ίδιο μοτίβο με
+  // το _muted παραπάνω: το widget.* είναι μόνο η ΑΡΧΙΚΗ τιμή, μετά η
+  // οθόνη κρατάει τη δική της, ζωντανή κατάσταση.
+  late VehicleType _vehicleType = widget.vehicleType;
+  late bool        _hasBus      = widget.hasBus;
 
   void _toggleMuted(bool v) {
     setState(() => _muted = v);
@@ -107,7 +114,7 @@ class _SettingsPageState extends State<SettingsPage> {
   Future<void> _openVehiclePicker(BuildContext context, AppColors c) async {
     // «Λεωφορείο» είναι ξεχωριστή επιλογή στο UI, αλλά τεχνικά αποθηκεύεται
     // ως VehicleType.van + hasBus=true (ίδια χωρητικότητα/συμβατότητα).
-    final current = widget.hasBus ? VehicleType.bus : widget.vehicleType;
+    final current = _hasBus ? VehicleType.bus : _vehicleType;
 
     await showModalBottomSheet<void>(
       context: context,
@@ -143,10 +150,12 @@ class _SettingsPageState extends State<SettingsPage> {
       onTap: () {
         Navigator.of(context).pop();
         final wantsBus = option == VehicleType.bus;
-        widget.onVehicleChanged((
-          type: wantsBus ? VehicleType.van : option,
-          hasBus: wantsBus,
-        ));
+        final newType = wantsBus ? VehicleType.van : option;
+        setState(() {
+          _vehicleType = newType;
+          _hasBus = wantsBus;
+        });
+        widget.onVehicleChanged((type: newType, hasBus: wantsBus));
       },
       child: Container(
         margin: const EdgeInsets.only(bottom: 8),
@@ -217,11 +226,11 @@ class _SettingsPageState extends State<SettingsPage> {
             _tile(context, c,
                 icon: Icons.local_taxi_rounded,
                 label: 'Όχημα',
-                trailingText: _vehicleLabel(widget.vehicleType, widget.hasBus),
+                trailingText: _vehicleLabel(_vehicleType, _hasBus),
                 onTap: () => _openVehiclePicker(context, c)),
             // Εμφανίζεται ΜΟΝΟ σε οδηγούς με βαν — σε ταξί δεν έχει νόημα
             // (ταξί δεν χωράει φορτίο βαν), σε λεωφορείο ούτε.
-            if (widget.vehicleType == VehicleType.van && !widget.hasBus) ...[
+            if (_vehicleType == VehicleType.van && !_hasBus) ...[
               _divider(c),
               _switchTile(context, c,
                   icon: Icons.local_taxi_rounded,
