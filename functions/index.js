@@ -4551,10 +4551,15 @@ exports.createStripeCheckoutSession = onRequest(
       // καταλάβει. Τώρα βλέπει καθαρή σελίδα επιβεβαίωσης, με ρητό κουμπί
       // «Νέα κράτηση» αν όντως θέλει δεύτερη.
       const langPath = lang === "el" ? "el/" : "";
+      // tenantId στο URL: η στατική σελίδα payment-success/failed δεν έχει
+      // δικό της backend context — το διαβάζει με JavaScript ώστε να δείξει
+      // το ΣΩΣΤΟ contactEmail του tenant (μέσω getTenantBusinessInfo), ίδιο
+      // μοτίβο query param με τα webhooks παρακάτω σε αυτό το αρχείο.
+      const tenantQS = "?tenantId=" + encodeURIComponent(tenantId);
       const successUrl = s(b.successUrl) ||
-        "https://taxiathenstransfers.com/" + langPath + "payment-success.html";
+        "https://taxiathenstransfers.com/" + langPath + "payment-success.html" + tenantQS;
       const cancelUrl = s(b.cancelUrl) ||
-        "https://taxiathenstransfers.com/" + langPath + "payment-failed.html";
+        "https://taxiathenstransfers.com/" + langPath + "payment-failed.html" + tenantQS;
 
       const label = (lang === "el"
         ? (payFull ? "Πλήρης πληρωμή · " : "Προκαταβολή · ") + from + " → " + to
@@ -4717,10 +4722,11 @@ exports.createManualBookingPaymentLink = onCall(
           + clientName + " · " + from + " → " + to + " · " + date + " " + time
           + (vehicleBreakdownNote ? " · " + vehicleBreakdownNote
                                   : " · " + (vehicleLabelsEl[vehicleType] || vehicleType));
+        const tenantQS = "?tenantId=" + encodeURIComponent(tenantId);
         const successUrl = "https://taxiathenstransfers.com/"
-          + (lang === "el" ? "el/" : "") + "payment-success.html";
+          + (lang === "el" ? "el/" : "") + "payment-success.html" + tenantQS;
         const failUrl = "https://taxiathenstransfers.com/"
-          + (lang === "el" ? "el/" : "") + "payment-failed.html";
+          + (lang === "el" ? "el/" : "") + "payment-failed.html" + tenantQS;
         const session = await stripe.checkout.sessions.create({
           mode: "payment",
           payment_method_types: ["card"],
@@ -7457,6 +7463,40 @@ exports.updateTenantBusinessInfo = onCall(
       await tenantRef.set(updates, { merge: true });
     }
     return { ok: true };
+  }
+);
+
+// ── getTenantIdByVivaOrder: δημόσιο endpoint — η στατική σελίδα
+// payment-success/failed παίρνει από τη Viva τον κωδικό παραγγελίας (?s=...
+// στο URL, ΑΥΤΟΜΑΤΑ από τη Viva, ΟΧΙ κάτι που ρυθμίζει ο tenant). Εδώ
+// ψάχνουμε ποιο pending_bookings doc έχει αυτό το vivaOrderCode και
+// γυρνάμε το tenantId του — ώστε η σελίδα να ξέρει ΠΟΙΟΥ tenant το email
+// να δείξει, ΧΩΡΙΣ να χρειάζεται κανένας tenant να προσθέσει ΤΙΠΟΤΑ
+// χειροκίνητα στο δικό του Viva dashboard. Καλύτερη λύση από το να
+// περνάμε tenantId μέσα στο (σταθερό) Success/Failure URL της Viva.
+exports.getTenantIdByVivaOrder = onRequest(
+  { region: "us-central1", cors: BOOKING_ALLOWED_ORIGINS, memory: "256MiB" },
+  async (req, res) => {
+    try {
+      const orderCode = s(req.method === "POST" ? (req.body || {}).orderCode : req.query.orderCode);
+      if (!orderCode) {
+        return res.status(200).json({ ok: true, tenantId: "default" });
+      }
+      const snap = await getFirestore().collection("pending_bookings")
+        .where("vivaOrderCode", "==", orderCode)
+        .limit(1)
+        .get();
+      if (snap.empty) {
+        // Μπορεί να έχει ήδη καθαριστεί (μπαγιάτικο pending_booking >48h) ή
+        // να είναι δοκιμαστική/άκυρη παραγγελία — ασφαλής εναλλακτική.
+        return res.status(200).json({ ok: true, tenantId: "default" });
+      }
+      const tenantId = snap.docs[0].data().tenantId || "default";
+      return res.status(200).json({ ok: true, tenantId });
+    } catch (e) {
+      console.error("getTenantIdByVivaOrder error:", e.message || e);
+      return res.status(200).json({ ok: true, tenantId: "default" });
+    }
   }
 );
 

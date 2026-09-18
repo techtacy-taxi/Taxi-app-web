@@ -2168,6 +2168,16 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
               'στο Website/App — εδώ μπαίνει μόνο η κατάληξη:',
               style: TextStyle(fontSize: 12),
             ),
+            const SizedBox(height: 4),
+            const Text(
+              // Η σελίδα αναγνωρίζει ΜΟΝΗ της ποιανού tenant είναι η
+              // παραγγελία — μέσω του κωδικού που στέλνει η ΙΔΙΑ η Viva
+              // αυτόματα στο URL (?s=...). Δεν χρειάζεται να προσθέσεις
+              // τίποτα χειροκίνητα, απλά αντέγραψε ακριβώς τις καταλήξεις:
+              'Δεν χρειάζεται τίποτα άλλο να προσθέσεις — η σελίδα βρίσκει '
+              'μόνη της το σωστό email επικοινωνίας.',
+              style: TextStyle(fontSize: 11.5, color: c.textFaint, height: 1.4),
+            ),
             const SizedBox(height: 8),
             Text('Ελληνικό Website/App:',
                 style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600,
