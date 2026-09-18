@@ -334,6 +334,17 @@ class PublicBookingAlerts {
                           ),
                           onPressed: () {
                             Navigator.of(dctx).pop();
+                            // ΚΡΙΣΙΜΟ BUGFIX: αν είχε μείνει ανοιχτή μια
+                            // φόρμα (π.χ. Νέα Δουλειά, ενώ έφτιαχνε link
+                            // πληρωμής) στη στοίβα οθονών, το πάνω pop
+                            // έκλεινε ΜΟΝΟ το popup — η παλιά φόρμα ξανα-
+                            // φαινόταν από πίσω αντί για τις Αποθηκευμένες.
+                            // Καθαρίζουμε ΠΡΩΤΑ κάθε τέτοια ανοιχτή οθόνη
+                            // μέχρι την αρχική (χάρτης), ΜΕΤΑ ζητάμε την
+                            // εναλλαγή καρτέλας.
+                            final rootNav = NotificationsService
+                                .navigatorKey.currentState;
+                            rootNav?.popUntil((r) => r.isFirst);
                             // Το map_page (Android) / admin_shell (web) το
                             // ακούει και ανοίγει την καρτέλα Αποθηκευμένες.
                             openSavedJobsRequest.value++;

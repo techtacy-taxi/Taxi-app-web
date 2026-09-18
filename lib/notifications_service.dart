@@ -465,6 +465,11 @@ Future<void> _ensureChannels(
         enableVibration:  true,
         vibrationPattern: kStrongVibration,
         showBadge:        true,
+        // ΚΡΙΣΙΜΟ: χωρίς alarm usage, ο ήχος θεωρείται απλή «notification»
+        // και ΣΙΓΑΖΕΤΑΙ όταν το κινητό είναι σε Android Auto, σε κλήση, ή
+        // σε λειτουργία οδήγησης — ακριβώς όπως συνέβαινε ήδη με τα άλλα
+        // κανάλια, πριν διορθωθούν. Αυτό το κανάλι το είχαμε προσπεράσει.
+        audioAttributesUsage: AudioAttributesUsage.alarm,
       ),
     );
   } catch (e) {

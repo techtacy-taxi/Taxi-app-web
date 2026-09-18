@@ -8152,6 +8152,65 @@ exports.autoCompleteStaleJobs = onSchedule(
 );
 
 // ═══════════════════════════════════════════════════════════════════════════
+//  ΑΥΤΟΜΑΤΟ ΚΑΘΑΡΙΣΜΑ ΠΑΛΙΩΝ ΑΠΟΘΗΚΕΥΜΕΝΩΝ ΔΟΥΛΕΙΩΝ (30 ημέρες)
+// ═══════════════════════════════════════════════════════════════════════════
+// Κανόνας: 30 ημέρες μετά το ΡΑΝΤΕΒΟΥ αν έχει scheduledAt, αλλιώς 30 ημέρες
+// μετά τη ΔΗΜΙΟΥΡΓΙΑ (savedAt) αν είναι άμεση/χωρίς ραντεβού. Ξεχωριστό από
+// το purgeOldData (εκείνο αφορά ΟΛΟΚΛΗΡΩΜΕΝΕΣ δουλειές στο "jobs", 3 μήνες
+// διατήρηση για reports/billing — άλλος σκοπός, άλλο retention period).
+exports.purgeOldSavedJobs = onSchedule(
+  { schedule: "every day 04:15", timeZone: "Europe/Athens",
+    memory: "256MiB", timeoutSeconds: 300 },
+  async () => {
+    const db = getFirestore();
+    const { Timestamp } = require("firebase-admin/firestore");
+    const cutoff = Timestamp.fromMillis(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    let deleted = 0;
+
+    // ── Ομάδα 1: ΕΧΟΥΝ ραντεβού, το ραντεβού πέρασε πάνω από 30 μέρες ──────
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      const page = await db.collection("saved_jobs")
+        .where("scheduledAt", "<", cutoff)
+        .limit(300)
+        .get();
+      if (page.empty) break;
+      const batch = db.batch();
+      for (const doc of page.docs) { batch.delete(doc.ref); deleted++; }
+      await batch.commit();
+      if (page.size < 300) break;
+    }
+
+    // ── Ομάδα 2: ΧΩΡΙΣ ραντεβού (άμεσες) — 30 μέρες από τη δημιουργία ──────
+    // ΚΡΙΣΙΜΟ: δεν μπορούμε να κάνουμε ένα ενιαίο Firestore query για
+    // «scheduledAt είναι κενό ΚΑΙ savedAt παλιό» — φιλτράρουμε στη μεριά
+    // μας ώστε να ΜΗΝ πειράξουμε κατά λάθος δουλειές που ΕΧΟΥΝ ραντεβού
+    // στο ΜΕΛΛΟΝ (αυτές τις αγγίζει ΜΟΝΟ η Ομάδα 1, παραπάνω, όταν έρθει η ώρα).
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      const page = await db.collection("saved_jobs")
+        .where("savedAt", "<", cutoff)
+        .limit(300)
+        .get();
+      if (page.empty) break;
+      const batch = db.batch();
+      let batchHasWrites = false;
+      for (const doc of page.docs) {
+        const j = doc.data();
+        if (j.scheduledAt) continue; // έχει ραντεβού → το χειρίζεται η Ομάδα 1
+        batch.delete(doc.ref);
+        batchHasWrites = true;
+        deleted++;
+      }
+      if (batchHasWrites) await batch.commit();
+      if (page.size < 300) break;
+    }
+
+    console.log(`purgeOldSavedJobs: διαγράφηκαν ${deleted} παλιές αποθηκευμένες δουλειές.`);
+  }
+);
+
+// ═══════════════════════════════════════════════════════════════════════════
 //  ΠΤΗΣΕΙΣ — Διαχείριση κλειδιού AeroDataBox από την εφαρμογή (Καθολικές
 //  Ρυθμίσεις / Ρυθμίσεις Tenant), ίδιο μοτίβο με updateTenantVivaCredentials.
 // ═══════════════════════════════════════════════════════════════════════════

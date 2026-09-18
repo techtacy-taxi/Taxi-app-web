@@ -28,6 +28,7 @@ import 'package:timezone/timezone.dart' as tz;
 
 import 'firebase_options.dart';
 import 'notifications_service.dart';
+import 'jobs/new_saved_badge_store.dart';
 
 // FLAG_INSISTENT (0x4): επαναλαμβάνει ήχο/δόνηση μέχρι ο χρήστης να
 // αλληλεπιδράσει — η native εκδοχή του "συνεχόμενου κουδουνιού".
@@ -455,6 +456,12 @@ Future<void> _showPublicBookingBg(
 
   // Σημάδεψε ότι το background ήδη ειδοποίησε γι' αυτή την κράτηση, ώστε ο
   // foreground listener να μην ξαναχτυπήσει μόλις ανοίξει η εφαρμογή.
+  // ΚΡΙΣΙΜΟ BUGFIX: αυτό ΕΛΕΙΠΕ εδώ — υπήρχε ΜΟΝΟ στο foreground listener
+  // (public_booking_alert.dart). Όταν η εφαρμογή είναι στο παρασκήνιο
+  // (π.χ. πλήρωσες μέσω Chrome ενώ η εφαρμογή έμεινε πίσω), η ειδοποίηση
+  // περνάει ΑΠΟ ΕΔΩ — χωρίς αυτή τη γραμμή, η κράτηση ΠΟΤΕ δεν σημαδευόταν
+  // «ΝΕΑ» στις Αποθηκευμένες σε αυτό το σενάριο.
+  await NewSavedBadgeStore.markNew(savedJobId);
   await _rememberBgNotifiedBooking(savedJobId);
 
   // Κοινό notification id με το foreground (notifications_service.dart:
@@ -657,6 +664,12 @@ Future<void> _ensureChannelsBg(FlutterLocalNotificationsPlugin fln) async {
       playSound: true,
       enableVibration: true,
       vibrationPattern: kStrongVibration,
+      // ΚΡΙΣΙΜΟ: πρέπει να είναι ΤΑΥΤΟΣΗΜΟ με τον ορισμό στο
+      // notifications_service.dart — όποιο από τα δύο (foreground/
+      // background) τρέξει ΠΡΩΤΟ «κλειδώνει» τις ρυθμίσεις του καναλιού
+      // μόνιμα στο Android. Χωρίς αυτό εδώ, αν το background προλάβαινε
+      // πρώτο, ο ήχος έμενε λάθος ΓΙΑ ΠΑΝΤΑ σε εκείνη τη συσκευή.
+      audioAttributesUsage: AudioAttributesUsage.alarm,
     ));
   } catch (_) {}
 }
