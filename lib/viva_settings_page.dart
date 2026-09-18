@@ -2169,7 +2169,7 @@ class _VivaSettingsPageState extends State<VivaSettingsPage> {
               style: TextStyle(fontSize: 12),
             ),
             const SizedBox(height: 4),
-            const Text(
+            Text(
               // Η σελίδα αναγνωρίζει ΜΟΝΗ της ποιανού tenant είναι η
               // παραγγελία — μέσω του κωδικού που στέλνει η ΙΔΙΑ η Viva
               // αυτόματα στο URL (?s=...). Δεν χρειάζεται να προσθέσεις
