@@ -33,20 +33,23 @@
 
 const { getFirestore, FieldValue } = require("firebase-admin/firestore");
 
-// ⚠️ ΕΝΔΕΙΚΤΙΚΕΣ τιμές — έλεγξε τους τρέχοντες τιμοκαταλόγους και όρισε τις
-// πραγματικές στο platform/pricing (πεδίο `rates`). Δεν χρειάζεται deploy.
+// Τιμές ΚΑΤΑΛΟΓΟΥ σε USD ανά κλήση — πρώτο επίπεδο τιμής, ΧΩΡΙΣ δωρεάν όρια
+// (κόστος σαν να μην υπήρχε δώρο). Πηγές: Google Maps Platform price list
+// (ενημ. 2026-09-17), Resend pricing, Anthropic. Μετατρέπονται σε EUR με το
+// usdToEur. Αλλάζουν από την εφαρμογή (Τιμές υπηρεσιών → platform/pricing.rates).
 const DEFAULT_RATES = {
-  usdToEur: 0.92,
+  usdToEur: 0.92,                                         // ενδεικτική ισοτιμία — άλλαξέ την
   claude: { inUsdPerMTok: 1.0, outUsdPerMTok: 5.0 },      // Haiku 4.5
-  perUnitEur: {
-    resend: 0.001,
-    places_autocomplete: 0.003,
-    places_details: 0.005,
-    routes: 0.01,
-    geocode: 0.005,
-    aerodatabox: 0.01,
-    sms: 0.05,
-    whatsapp: 0,          // δίνεται το πραγματικό κόστος από το webhook της Meta
+  perUnitUsd: {
+    resend: 0.0004,               // Pro: $20 / 50.000 emails (υπέρβαση $0.90/1000)
+    places_autocomplete: 0,       // ΕΝΤΟΣ session (η εφαρμογή στέλνει sessionToken): δωρεάν.
+                                  // Εγκαταλειμμένο session: $2.83/1000 — δεν το μετράμε.
+    places_details: 0.017,        // Place Details Pro ($17/1000) — ζητάμε displayName
+    routes: 0.01,                 // Compute Routes Pro ($10/1000) — traffic-aware
+    geocode: 0.005,               // Geocoding ($5/1000)
+    aerodatabox: 0.01,            // ⚠️ ΕΞΑΡΤΑΤΑΙ ΑΠΟ ΤΟ ΠΛΑΝΟ ΣΟΥ στο RapidAPI — όρισέ το
+    sms: 0.05,                    // ⚠️ ενδεικτικό
+    whatsapp: 0,                  // δίνεται το πραγματικό κόστος από το webhook της Meta
   },
 };
 
@@ -89,10 +92,16 @@ async function loadRates() {
   return cached("rates", async () => {
     const snap = await getFirestore().collection("platform").doc("pricing").get();
     const r = snap.exists ? (snap.data().rates || {}) : {};
+    const usdToEur = r.usdToEur ?? DEFAULT_RATES.usdToEur;
+    // Προεπιλογές: τιμή καταλόγου USD × ισοτιμία. Ό,τι έχεις ορίσει εσύ (perUnitEur) υπερισχύει.
+    const perUnitEur = {};
+    for (const k of Object.keys(DEFAULT_RATES.perUnitUsd)) {
+      perUnitEur[k] = DEFAULT_RATES.perUnitUsd[k] * usdToEur;
+    }
     return {
-      usdToEur: r.usdToEur ?? DEFAULT_RATES.usdToEur,
+      usdToEur,
       claude: { ...DEFAULT_RATES.claude, ...(r.claude || {}) },
-      perUnitEur: { ...DEFAULT_RATES.perUnitEur, ...(r.perUnitEur || {}) },
+      perUnitEur: { ...perUnitEur, ...(r.perUnitEur || {}) },
     };
   });
 }

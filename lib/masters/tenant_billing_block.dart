@@ -47,16 +47,17 @@ const _serviceLabels = {
   'whatsapp': 'WhatsApp',
 };
 
-// Προεπιλεγμένες τιμές — ίδιες με το usage.js (ενδεικτικές, άλλαξέ τις από
-// το κουμπί «Τιμές υπηρεσιών»).
+// Προεπιλεγμένες τιμές (EUR ανά κλήση) — τιμές καταλόγου Google/Resend σε USD
+// × 0.92, χωρίς δωρεάν όρια. Ίδιες με το usage.js. Άλλαξέ τες από το κουμπί
+// «Τιμές υπηρεσιών» (π.χ. AeroDataBox από το πλάνο σου στο RapidAPI).
 const _defaultUnitRates = {
-  'resend': 0.001,
-  'places_autocomplete': 0.003,
-  'places_details': 0.005,
-  'routes': 0.01,
-  'geocode': 0.005,
-  'aerodatabox': 0.01,
-  'sms': 0.05,
+  'resend': 0.000368,             // Resend Pro: $20 / 50.000 emails
+  'places_autocomplete': 0.0,     // εντός session: δωρεάν
+  'places_details': 0.01564,      // Place Details Pro $17/1000
+  'routes': 0.0092,               // Compute Routes Pro $10/1000
+  'geocode': 0.0046,              // Geocoding $5/1000
+  'aerodatabox': 0.0092,          // ⚠️ από το πλάνο σου
+  'sms': 0.046,                   // ⚠️ ενδεικτικό
   'whatsapp': 0.0,
 };
 
