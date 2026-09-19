@@ -16,6 +16,7 @@ import 'job_details_sheet.dart';
 import 'job_model.dart';
 import 'job_service.dart';
 import 'job_shared_widgets.dart';
+import 'platform_billing_card.dart';
 
 const _purple = Color(0xFF5E35B1);
 // Μπλε = ο διαχειριστής χρωστάει στον οδηγό (αρνητική οφειλή).
@@ -796,22 +797,31 @@ class _BillingSettingsPage extends StatelessWidget {
         title: const Text('Ρυθμίσεις Χρεώσεων',
             style: TextStyle(fontWeight: FontWeight.bold)),
       ),
-      body: _BillingToolsBar(
-        isMaster: isMaster,
-        onBackfill: () => BillingPage._runTenantBackfill(context),
-        onHomeOwners: () =>
-            BillingPage._showHomeOwnersBillingDialog(context),
-        onDriveFolder: () => BillingPage._openReportsFolder(context),
-        onMonthlyReport: () => BillingPage._showReportDialog(context),
-        onPurge: () => BillingPage._showPurgeDialog(context),
-        onSettlements: () => Navigator.of(context).push(
-          MaterialPageRoute(
-            builder: (_) => BillingSettlementPage(
-              uid:      uid,
-              userName: userName,
+      body: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // Χρέωση πλατφόρμας — μόνο για tenantOwner/master (αυτοκρύβεται).
+            const PlatformBillingCard(),
+            _BillingToolsBar(
               isMaster: isMaster,
+              onBackfill: () => BillingPage._runTenantBackfill(context),
+              onHomeOwners: () =>
+                  BillingPage._showHomeOwnersBillingDialog(context),
+              onDriveFolder: () => BillingPage._openReportsFolder(context),
+              onMonthlyReport: () => BillingPage._showReportDialog(context),
+              onPurge: () => BillingPage._showPurgeDialog(context),
+              onSettlements: () => Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => BillingSettlementPage(
+                    uid:      uid,
+                    userName: userName,
+                    isMaster: isMaster,
+                  ),
+                ),
+              ),
             ),
-          ),
+          ],
         ),
       ),
     );
