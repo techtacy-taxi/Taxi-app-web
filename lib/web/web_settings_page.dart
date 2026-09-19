@@ -38,6 +38,7 @@ class _WebSettingsPageState extends State<WebSettingsPage> {
   VehicleType _vehicleType = VehicleType.taxi;
   bool _hasBus = false;
   bool _muted  = false;
+  bool _acceptsTaxiJobs = false;   // διακόπτης «Δέχομαι και δουλειές ταξί» (οδηγοί με βαν)
 
   // Cache στοιχείων προφίλ — μόνο για να ανοίγει το showProfileForm με
   // αρχικές τιμές· η ίδια η φόρμα ξαναφορτώνει φρέσκα από Firestore.
@@ -70,6 +71,7 @@ class _WebSettingsPageState extends State<WebSettingsPage> {
             (v) => v.name == vt, orElse: () => VehicleType.taxi);
         _hasBus       = data['hasBus'] == true;
         _muted        = data['muted']  == true;
+        _acceptsTaxiJobs = data['acceptsTaxiJobs'] == true;
         _displayName  = (data['displayName']  as String?) ?? '';
         _lastName     = (data['lastName']     as String?) ?? '';
         _phone        = (data['phone']        as String?) ?? '';
@@ -88,6 +90,14 @@ class _WebSettingsPageState extends State<WebSettingsPage> {
     await FirebaseFirestore.instance
         .collection('presence').doc(widget.uid)
         .set({'vehicleType': type.name, 'hasBus': hasBus}, SetOptions(merge: true));
+  }
+
+  // Ίδιο με το map_page (κινητό): γράφεται στο presence ώστε να το βλέπει και το backend.
+  Future<void> _toggleAcceptsTaxiJobs(bool v) async {
+    setState(() => _acceptsTaxiJobs = v);
+    await FirebaseFirestore.instance
+        .collection('presence').doc(widget.uid)
+        .set({'acceptsTaxiJobs': v}, SetOptions(merge: true));
   }
 
   Future<void> _toggleMuted(bool v) async {
@@ -154,6 +164,8 @@ class _WebSettingsPageState extends State<WebSettingsPage> {
       isMaster: widget.isMaster,
       muted:    _muted,
       onMuteChanged: _toggleMuted,
+      acceptsTaxiJobs: _acceptsTaxiJobs,
+      onAcceptsTaxiJobsChanged: _toggleAcceptsTaxiJobs,
       vehicleType: _vehicleType,
       hasBus:      _hasBus,
       onVehicleChanged: (v) => _applyVehicleChange(v.type, v.hasBus),

@@ -7887,9 +7887,12 @@ async function incrementAeroDataBoxUsage(db) {
   const monthKey = dayKey.slice(0, 7);                  // YYYY-MM
   const ref = db.collection("platform_stats").doc("aerodatabox_usage");
   try {
+    // ΠΡΟΣΟΧΗ: στο set() τα κλειδιά με τελεία ΔΕΝ είναι διαδρομές πεδίων —
+    // θα δημιουργούσαν πεδία με όνομα "daily.2026-09-19" (και το getAeroDataBoxUsage
+    // διαβάζει daily[dayKey] → έδειχνε πάντα 0). Γι' αυτό γράφουμε φωλιασμένα.
     await ref.set({
-      [`daily.${dayKey}`]: FieldValue.increment(1),
-      [`monthly.${monthKey}`]: FieldValue.increment(1),
+      daily:   { [dayKey]:   FieldValue.increment(1) },
+      monthly: { [monthKey]: FieldValue.increment(1) },
       updatedAt: FieldValue.serverTimestamp(),
     }, { merge: true });
   } catch (e) {
@@ -7912,8 +7915,10 @@ exports.getAeroDataBoxUsage = onCall(async (request) => {
   const monthKey = dayKey.slice(0, 7);
   return {
     ok: true,
-    today: (data.daily && data.daily[dayKey]) || 0,
-    thisMonth: (data.monthly && data.monthly[monthKey]) || 0,
+    // Διαβάζει και τα ΠΑΛΙΑ πεδία (με τελεία στο όνομα, από την προηγούμενη
+    // έκδοση) ώστε να μη χαθούν οι μετρήσεις που έγιναν ήδη.
+    today: ((data.daily && data.daily[dayKey]) || 0) + (Number(data["daily." + dayKey]) || 0),
+    thisMonth: ((data.monthly && data.monthly[monthKey]) || 0) + (Number(data["monthly." + monthKey]) || 0),
   };
 });
 
