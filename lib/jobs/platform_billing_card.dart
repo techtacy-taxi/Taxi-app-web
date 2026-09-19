@@ -77,7 +77,9 @@ class _PlatformBillingCardState extends State<PlatformBillingCard> {
     final services = Map<String, dynamic>.from((d['services'] as Map?) ?? {});
     final keys = services.keys.toList()..sort();
     final balance = _d(d['balanceEur']);
-    final fee = _d(d['monthlyFeeEur']);
+    final fee = _d(d['feeThisMonthEur']);
+    final monthTotal = _d(d['monthTotalEur']);
+    final paid = _d(d['paidEur']);
 
     return Container(
       margin: const EdgeInsets.fromLTRB(14, 14, 14, 4),
@@ -105,7 +107,7 @@ class _PlatformBillingCardState extends State<PlatformBillingCard> {
         ]),
         const SizedBox(height: 10),
         if (fee > 0) _line(c, 'Μηνιαία συνδρομή', _eur(fee)),
-        _line(c, 'Χρήση αυτού του μήνα', _eur(_d(d['monthChargeEur']))),
+        _line(c, 'Χρήση υπηρεσιών αυτού του μήνα', _eur(_d(d['monthChargeEur']))),
         if (keys.isNotEmpty) ...[
           const SizedBox(height: 4),
           ...keys.map((k) => Padding(
@@ -121,10 +123,13 @@ class _PlatformBillingCardState extends State<PlatformBillingCard> {
               )),
         ],
         Divider(color: c.divider, height: 18),
+        _line(c, 'Σύνολο μήνα', _eur(monthTotal)),
+        if (paid > 0) _line(c, 'Έχεις πληρώσει (συνολικά)', _eur(paid)),
+        const SizedBox(height: 6),
         Text(
           balance >= 0
               ? 'Πίστωση που απομένει ${_eur(balance)}'
-              : 'Υπόλοιπο προς πληρωμή ${_eur(balance.abs())}',
+              : 'Οφείλεις τώρα ${_eur(balance.abs())}',
           style: TextStyle(
               fontSize: 15,
               fontWeight: FontWeight.w800,
@@ -132,7 +137,7 @@ class _PlatformBillingCardState extends State<PlatformBillingCard> {
         ),
         const SizedBox(height: 4),
         Text(
-          'Το υπόλοιπο αφορά τη χρήση υπηρεσιών (χωρίς τη μηνιαία συνδρομή).',
+          'Το ποσό που οφείλεις περιλαμβάνει συνδρομή και χρήση από όλους τους μήνες, μείον ό,τι έχεις ήδη πληρώσει.',
           style: TextStyle(fontSize: 11, color: c.textFaint),
         ),
       ]),

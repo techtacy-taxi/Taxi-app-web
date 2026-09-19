@@ -15,9 +15,12 @@
 // Διαβάζει (γράφονται από usage.js):
 //   usage/{id} , usage/{id}/monthly/{YYYY-MM}
 //
-// Υπόλοιπο = creditGrantedEur + paidEur − chargeTotalEur  (δεν μηδενίζεται ποτέ).
+// Υπόλοιπο = creditGrantedEur + paidEur − chargeTotalEur − feeChargedEur
+// (δεν μηδενίζεται ποτέ· αρνητικό = ο tenant ΟΦΕΙΛΕΙ σε σένα).
+// Η μηνιαία συνδρομή προστίθεται αυτόματα από το accrueTenantSubscriptions.
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
 
 import '../app_theme.dart';
@@ -94,11 +97,12 @@ Widget _numField(TextEditingController ctrl, String label, {String? suffix}) {
 }
 
 class _Summary {
-  final double monthCost, monthCharge, chargeTotal, balance;
+  final double monthCost, monthCharge, monthFee, chargeTotal, balance;
   final String mode;
   const _Summary({
     required this.monthCost,
     required this.monthCharge,
+    required this.monthFee,
     required this.chargeTotal,
     required this.balance,
     required this.mode,
@@ -177,11 +181,16 @@ class _TenantBillingBlockState extends State<TenantBillingBlock> {
         final acc = r[2].data() ?? {};
         final st = r[3].data() ?? {};
         final chargeTotal = _d(root['chargeTotalEur']);
+        final fees = (acc['feeByMonth'] as Map?) ?? {};
         out[id] = _Summary(
           monthCost: _d(mon['totalCostEur']),
           monthCharge: _d(mon['totalChargeEur']),
+          monthFee: _d(fees[_mk(_year, _month)]),
           chargeTotal: chargeTotal,
-          balance: _d(acc['creditGrantedEur']) + _d(acc['paidEur']) - chargeTotal,
+          balance: _d(acc['creditGrantedEur']) +
+              _d(acc['paidEur']) -
+              chargeTotal -
+              _d(acc['feeChargedEur']),
           mode: (st['billingMode'] as String?) ?? 'markup',
         );
       }));
@@ -211,13 +220,16 @@ class _TenantBillingBlockState extends State<TenantBillingBlock> {
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
     final list = _list;
-    double totCost = 0, totCharge = 0, totProfit = 0;
+    double totCost = 0, totCharge = 0, totProfit = 0, totOwed = 0;
     for (final t in list) {
       final s = _sum[t['tenantId']];
       if (s == null) continue;
       totCost += s.monthCost;
-      totCharge += s.monthCharge;
-      if (s.mode != 'none') totProfit += s.monthCharge - s.monthCost;
+      totCharge += s.monthCharge + s.monthFee;
+      if (s.mode != 'none') {
+        totProfit += s.monthCharge + s.monthFee - s.monthCost;
+      }
+      if (s.balance < 0) totOwed += -s.balance;
     }
 
     return Container(
@@ -253,13 +265,18 @@ class _TenantBillingBlockState extends State<TenantBillingBlock> {
           Wrap(spacing: 14, runSpacing: 4, children: [
             Text('Κόστος μας ${_eur(totCost)}',
                 style: TextStyle(fontSize: 13, color: c.textMain)),
-            Text('Χρεώσεις ${_eur(totCharge)}',
+            Text('Χρεώσεις μήνα ${_eur(totCharge)}',
                 style: TextStyle(fontSize: 13, color: c.textMain)),
             Text('Κέρδος ${_eur(totProfit)}',
                 style: TextStyle(
                     fontSize: 13,
                     fontWeight: FontWeight.w700,
                     color: totProfit >= 0 ? c.greenDeep : Colors.red.shade700)),
+            Text('Σου χρωστούν ${_eur(totOwed)}',
+                style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: totOwed > 0 ? Colors.red.shade700 : c.textMain)),
           ]),
           const SizedBox(height: 10),
           if (_loading)
@@ -312,8 +329,11 @@ class _TenantBillingBlockState extends State<TenantBillingBlock> {
                 Text(
                   s == null
                       ? '—'
-                      : 'Κόστος ${_eur(s.monthCost)} · Χρέωση ${_eur(s.monthCharge)}'
-                          '${s.mode == 'none' ? ' · χωρίς χρέωση' : ''}',
+                      : s.mode == 'none'
+                          ? 'Κόστος ${_eur(s.monthCost)} · χωρίς χρέωση'
+                          : 'Κόστος ${_eur(s.monthCost)} · Συνδρομή ${_eur(s.monthFee)}'
+                              ' · Χρήση ${_eur(s.monthCharge)}'
+                              ' · Σύνολο ${_eur(s.monthFee + s.monthCharge)}',
                   style: TextStyle(fontSize: 12, color: c.textFaint),
                 ),
               ]),
@@ -367,12 +387,14 @@ class _TenantBillingPageState extends State<_TenantBillingPage> {
   // Ανάλυση μήνα + λογαριασμός
   Map<String, dynamic> _services = {};
   double _monthCost = 0, _monthCharge = 0, _chargeTotal = 0;
+  double _feeTotal = 0, _feeThisMonth = 0;
   double _credit = 0, _paid = 0;
   List<Map<String, dynamic>> _history = [];
 
   // Ρυθμίσεις
   String _mode = 'markup';
   final _fee = TextEditingController();
+  final _start = TextEditingController();
   final _limit = TextEditingController();
   final _warn = TextEditingController();
   bool _hard = false;
@@ -399,6 +421,7 @@ class _TenantBillingPageState extends State<_TenantBillingPage> {
   @override
   void dispose() {
     _fee.dispose();
+    _start.dispose();
     _limit.dispose();
     _warn.dispose();
     for (final c in _markup.values) {
@@ -425,6 +448,7 @@ class _TenantBillingPageState extends State<_TenantBillingPage> {
       setState(() {
         _mode = (st['billingMode'] as String?) ?? 'markup';
         _fee.text = _fmtNum(_d((st['plan'] as Map?)?['monthlyFeeEur']));
+        _start.text = ((st['plan'] as Map?)?['startMonth'] as String?) ?? '';
         final lim = (st['limits'] as Map?) ?? {};
         _limit.text = _fmtNum(_d(lim['monthlyUsageEur']));
         _warn.text = _fmtNum(lim['warnAtPercent'] == null ? 80 : _d(lim['warnAtPercent']));
@@ -439,6 +463,8 @@ class _TenantBillingPageState extends State<_TenantBillingPage> {
         }
         _credit = _d(acc['creditGrantedEur']);
         _paid = _d(acc['paidEur']);
+        _feeTotal = _d(acc['feeChargedEur']);
+        _feeThisMonth = _d(((acc['feeByMonth'] as Map?) ?? {})[_mk(widget.year, widget.month)]);
         _history = ((acc['history'] as List?) ?? [])
             .whereType<Map>()
             .map((e) => Map<String, dynamic>.from(e))
@@ -467,7 +493,7 @@ class _TenantBillingPageState extends State<_TenantBillingPage> {
     try {
       await _settingsRef.set({
         'billingMode': _mode,
-        'plan': {'monthlyFeeEur': _p(_fee.text)},
+        'plan': {'monthlyFeeEur': _p(_fee.text), 'startMonth': _start.text.trim()},
         'markup': {for (final e in _markup.entries) e.key: _p(e.value.text)},
         'ownKeys': Map<String, bool>.from(_own),
         'limits': {
@@ -482,6 +508,21 @@ class _TenantBillingPageState extends State<_TenantBillingPage> {
     } catch (e) {
       if (!mounted) return;
       setState(() => _saving = false);
+      _snack('Σφάλμα: $e');
+    }
+  }
+
+  Future<void> _accrueNow() async {
+    try {
+      final res = await FirebaseFunctions.instance
+          .httpsCallable('accrueTenantSubscriptionsNow')
+          .call();
+      final n = ((res.data as Map)['accrued'] as num?)?.toInt() ?? 0;
+      _snack(n > 0
+          ? 'Προστέθηκε συνδρομή σε $n tenant(s)'
+          : 'Τίποτα νέο — ο μήνας έχει ήδη χρεωθεί ή δεν ισχύει η έναρξη');
+      await _load();
+    } catch (e) {
       _snack('Σφάλμα: $e');
     }
   }
@@ -635,10 +676,12 @@ class _TenantBillingPageState extends State<_TenantBillingPage> {
           Expanded(
               child: Text('Κόστος μας ${_eur(_monthCost)}',
                   style: TextStyle(fontSize: 13, color: c.textMain))),
-          Text('Χρέωση ${_eur(_monthCharge)}',
+          Text('Χρήση ${_eur(_monthCharge)}',
               style: TextStyle(
                   fontSize: 13, fontWeight: FontWeight.w700, color: c.greenDeep)),
         ]),
+        _line(c, 'Μηνιαία συνδρομή', _eur(_feeThisMonth)),
+        _line(c, 'Σύνολο μήνα προς είσπραξη', _eur(_feeThisMonth + _monthCharge)),
         const SizedBox(height: 4),
         Text('Στήλες: υπηρεσία · κλήσεις · κόστος μας · χρέωση tenant',
             style: TextStyle(fontSize: 11, color: c.textFaint)),
@@ -647,16 +690,17 @@ class _TenantBillingPageState extends State<_TenantBillingPage> {
   }
 
   Widget _balanceCard(AppColors c) {
-    final bal = _credit + _paid - _chargeTotal;
+    final bal = _credit + _paid - _chargeTotal - _feeTotal;
     return _box(
       c,
       Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         _line(c, 'Πίστωση / πακέτο (συνολικά)', _eur(_credit)),
         _line(c, 'Πληρωμές (συνολικά)', _eur(_paid)),
+        _line(c, 'Μηνιαίες συνδρομές (συνολικά)', _eur(_feeTotal)),
         _line(c, 'Χρεώσεις χρήσης (συνολικά)', _eur(_chargeTotal)),
         Divider(color: c.divider),
         Text(
-          bal >= 0 ? 'Πίστωση που απομένει ${_eur(bal)}' : 'Οφείλει ${_eur(bal.abs())}',
+          bal >= 0 ? 'Πίστωση που απομένει ${_eur(bal)}' : 'Σου οφείλει ${_eur(bal.abs())}',
           style: TextStyle(
               fontSize: 16,
               fontWeight: FontWeight.w800,
@@ -680,12 +724,15 @@ class _TenantBillingPageState extends State<_TenantBillingPage> {
           Text('Τελευταίες κινήσεις',
               style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: c.textFaint)),
           ..._history.map((h) {
-            final isPay = h['type'] == 'payment';
+            final type = h['type'];
+            final label = type == 'payment'
+                ? 'Πληρωμή'
+                : type == 'subscription' ? 'Συνδρομή' : 'Πίστωση';
             final note = (h['note'] as String?) ?? '';
             return Padding(
               padding: const EdgeInsets.only(top: 3),
               child: Text(
-                '${_fmtDate(h['ts'] as Timestamp?)} · ${isPay ? 'Πληρωμή' : 'Πίστωση'} '
+                '${_fmtDate(h['ts'] as Timestamp?)} · $label '
                 '${_eur(_d(h['amountEur']))}${note.isEmpty ? '' : ' · $note'}',
                 style: TextStyle(fontSize: 12, color: c.textMain),
               ),
@@ -720,6 +767,15 @@ class _TenantBillingPageState extends State<_TenantBillingPage> {
         ),
         const SizedBox(height: 10),
         _numField(_fee, 'Μηνιαία συνδρομή', suffix: '€'),
+        const SizedBox(height: 10),
+        TextField(
+          controller: _start,
+          decoration: const InputDecoration(
+            labelText: 'Έναρξη συνδρομής (ΕΕΕΕ-ΜΜ, κενό = από τώρα)',
+            isDense: true,
+            border: OutlineInputBorder(),
+          ),
+        ),
         const SizedBox(height: 14),
         Text('Markup ανά υπηρεσία (%) · δικά του κλειδιά',
             style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: c.textFaint)),
@@ -779,6 +835,17 @@ class _TenantBillingPageState extends State<_TenantBillingPage> {
                 : const Text('Αποθήκευση ρυθμίσεων'),
           ),
         ),
+        const SizedBox(height: 6),
+        SizedBox(
+          width: double.infinity,
+          child: OutlinedButton(
+            onPressed: _accrueNow,
+            child: const Text('Υπολογισμός συνδρομής τώρα'),
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text('Η συνδρομή προστίθεται αυτόματα κάθε μέρα στις 03:00 (μία φορά τον μήνα).',
+            style: TextStyle(fontSize: 11, color: c.textFaint)),
       ]),
     );
   }

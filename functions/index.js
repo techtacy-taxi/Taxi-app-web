@@ -8351,7 +8351,8 @@ exports.setGlobalFlightApiFeeDefault = onCall(
 //  Επιστρέφει ΜΟΝΟ τα ποσά που χρεώνεται (chargeEur). ΔΕΝ επιστρέφει ποτέ το
 //  πραγματικό μας κόστος ούτε το markup. Tenant-owner/master → ο δικός του
 //  tenant· ο super-admin μπορεί να ζητήσει οποιονδήποτε (data.tenantId).
-//  Υπόλοιπο = creditGrantedEur + paidEur − chargeTotalEur (θετικό = πίστωση).
+//  Υπόλοιπο = creditGrantedEur + paidEur − chargeTotalEur − feeChargedEur
+//  (θετικό = πίστωση, αρνητικό = οφείλει στον master).
 // ════════════════════════════════════════════════════════════════════════════
 exports.getMyBillingSummary = onCall(async (request) => {
   const uid = request.auth && request.auth.uid;
@@ -8386,19 +8387,93 @@ exports.getMyBillingSummary = onCall(async (request) => {
     if (c > 0) services[k] = Math.round(c * 100) / 100;
   });
 
+  const r2 = (n) => Math.round(n * 100) / 100;
   const chargeTotal = Number(root.chargeTotalEur || 0);
+  const feeTotal = Number(acc.feeChargedEur || 0);
   const credit = Number(acc.creditGrantedEur || 0);
   const paid = Number(acc.paidEur || 0);
+  const feeThisMonth = Number((acc.feeByMonth && acc.feeByMonth[monthKey()]) || 0);
+  const monthCharge = Number(mon.totalChargeEur || 0);
+  const balance = credit + paid - chargeTotal - feeTotal;
   return {
     tenantId,
     billingMode: st.billingMode || "markup",
     monthlyFeeEur: Number((st.plan && st.plan.monthlyFeeEur) || 0),
     month: monthKey(),
-    monthChargeEur: Math.round(Number(mon.totalChargeEur || 0) * 100) / 100,
+    feeThisMonthEur: r2(feeThisMonth),
+    monthChargeEur: r2(monthCharge),
+    monthTotalEur: r2(feeThisMonth + monthCharge),
     services,
-    chargeTotalEur: Math.round(chargeTotal * 100) / 100,
+    chargeTotalEur: r2(chargeTotal),
+    feeChargedTotalEur: r2(feeTotal),
     creditGrantedEur: credit,
     paidEur: paid,
-    balanceEur: Math.round((credit + paid - chargeTotal) * 100) / 100,
+    // Υπόλοιπο = πίστωση + πληρωμές − χρήση − συνδρομές (αρνητικό = οφείλει)
+    balanceEur: r2(balance),
+    dueEur: r2(Math.max(0, -balance)),
   };
+});
+
+
+// ════════════════════════════════════════════════════════════════════════════
+//  accrueTenantSubscriptions — προσθέτει τη ΜΗΝΙΑΙΑ ΣΥΝΔΡΟΜΗ στο υπόλοιπο κάθε
+//  tenant που χρεώνεται (billingMode ≠ "none", plan.monthlyFeeEur > 0).
+//  • Τρέχει κάθε μέρα 03:00 (ώρα Ελλάδας) και είναι ΙΔΕΜΠΟΤΕΝΤ: ο ίδιος μήνας
+//    προστίθεται ΜΙΑ φορά (account.feeByMonth["YYYY-MM"]).
+//  • plan.startMonth ("YYYY-MM", προαιρετικό): δεν χρεώνει πριν από αυτόν τον μήνα.
+//  • Γράφει: tenants/{id}/billing/account → feeChargedEur (σύνολο), feeByMonth,
+//    και μια κίνηση "subscription" στο ιστορικό.
+// ════════════════════════════════════════════════════════════════════════════
+async function accrueTenantSubscriptions() {
+  const db = getFirestore();
+  const month = monthKey();
+  const refs = await db.collection("tenants").listDocuments();
+  let accrued = 0;
+  for (const ref of refs) {
+    try {
+      const billing = ref.collection("billing");
+      const stSnap = await billing.doc("settings").get();
+      if (!stSnap.exists) continue;
+      const st = stSnap.data();
+      if ((st.billingMode || "markup") === "none") continue;
+      const plan = st.plan || {};
+      const fee = Number(plan.monthlyFeeEur || 0);
+      if (!(fee > 0)) continue;
+      if (plan.startMonth && String(plan.startMonth) > month) continue;
+
+      const accRef = billing.doc("account");
+      const did = await db.runTransaction(async (tx) => {
+        const snap = await tx.get(accRef);
+        const d = snap.exists ? snap.data() : {};
+        if (d.feeByMonth && d.feeByMonth[month] !== undefined) return false;
+        tx.set(accRef, {
+          feeByMonth: { [month]: fee },
+          feeChargedEur: FieldValue.increment(fee),
+          history: FieldValue.arrayUnion({
+            ts: new Date(), type: "subscription", amountEur: fee, note: month,
+          }),
+        }, { merge: true });
+        return true;
+      });
+      if (did) accrued++;
+    } catch (e) {
+      console.error("accrueTenantSubscriptions:", ref.id, e && e.message ? e.message : e);
+    }
+  }
+  console.log("accrueTenantSubscriptions:", month, "accrued:", accrued);
+  return { month, accrued };
+}
+
+exports.accrueTenantSubscriptions = onSchedule(
+  { schedule: "0 3 * * *", timeZone: "Europe/Athens",
+    memory: "256MiB", timeoutSeconds: 120 },
+  async () => { await accrueTenantSubscriptions(); }
+);
+
+// Χειροκίνητο (μόνο super-admin) — για δοκιμή ή αμέσως μετά από αλλαγή συνδρομής.
+exports.accrueTenantSubscriptionsNow = onCall(async (request) => {
+  if (!request.auth || request.auth.token.email !== "techtacy@gmail.com") {
+    throw new HttpsError("permission-denied", "Μόνο ο super-admin.");
+  }
+  return await accrueTenantSubscriptions();
 });

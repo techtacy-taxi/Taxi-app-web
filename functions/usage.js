@@ -19,7 +19,8 @@
 //    tenants/{tenantId}/billing/account  → χειροκίνητα από εσένα (master):
 //        creditGrantedEur (πακέτο/προπληρωμή που δόθηκε)
 //        paidEur          (ό,τι έχει πληρώσει)
-//        Υπόλοιπο = creditGrantedEur + paidEur − chargeTotalEur
+//        feeChargedEur    (μηνιαίες συνδρομές· τις προσθέτει το accrueTenantSubscriptions)
+//        Υπόλοιπο = creditGrantedEur + paidEur − chargeTotalEur − feeChargedEur
 //        (θετικό = πίστωση που περισσεύει, αρνητικό = οφείλει). ΔΕΝ μηδενίζεται.
 //
 //  Χρήση:
