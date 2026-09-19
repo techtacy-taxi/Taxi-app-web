@@ -359,6 +359,31 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // ── Χρήση & χρέωση ανά tenant (ΜΟΝΟ super-admin) ─────────────────────────
+    // usage/{tenantId} και usage/{tenantId}/monthly/{YYYY-MM}: το γράφει ΜΟΝΟ ο
+    // server (usage.js, Admin SDK). Περιέχουν το ΔΙΚΟ ΣΟΥ κόστος → ο tenant ΔΕΝ
+    // τα διαβάζει· θα βλέπει μόνο το χρεωστέο ποσό μέσω callable (επόμενο βήμα).
+    match /usage/{tenantId} {
+      allow read: if masterEmail();
+      allow write: if false;
+      match /monthly/{month} {
+        allow read: if masterEmail();
+        allow write: if false;
+      }
+    }
+
+    // platform/pricing → τιμές υπηρεσιών (rates) που ορίζεις εσύ.
+    match /platform/{docId} {
+      allow read, write: if masterEmail();
+    }
+
+    // tenants/{tenantId}/billing/{settings|account} → markup, ownKeys, όρια,
+    // πληρωμές/πίστωση. Περιέχουν το markup → ΜΟΝΟ super-admin (ο tenant ΔΕΝ
+    // βλέπει το ποσοστό σου).
+    match /tenants/{tenantId}/billing/{docId} {
+      allow read, write: if masterEmail();
+    }
+
     // ── Default: ΟΛΑ τα υπόλοιπα ΚΛΕΙΣΤΑ ───────────────────────────────────
     match /{document=**} {
       allow read, write: if false;

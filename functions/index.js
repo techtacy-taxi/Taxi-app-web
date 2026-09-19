@@ -4,6 +4,7 @@ const { getFirestore, FieldValue }    = require("firebase-admin/firestore");
 const { getMessaging }    = require("firebase-admin/messaging");
 const { getAuth }         = require("firebase-admin/auth");
 const { SecretManagerServiceClient } = require("@google-cloud/secret-manager");
+const { recordUsage, tenantIdForUid, monthKey } = require("./usage");   // μετρητής χρήσης ανά tenant
 
 initializeApp();
 
@@ -711,7 +712,7 @@ async function getAllApprovedTokens(excludeUid) {
 //
 // Σε οποιαδήποτε αποτυχία επιστρέφει την ΑΡΧΙΚΗ διεύθυνση — το email φεύγει
 // κανονικά, απλώς με τη διεύθυνση όπως ήταν. Ποτέ δεν μπλοκάρει πληρωμή.
-async function addressInEnglish(lat, lng, fallback) {
+async function addressInEnglish(lat, lng, fallback, tenantId) {
   const fb = s(fallback);
   if (lat == null || lng == null || isNaN(lat) || isNaN(lng)) return fb;
   try {
@@ -723,6 +724,7 @@ async function addressInEnglish(lat, lng, fallback) {
       console.error("addressInEnglish: HTTP", resp.status);
       return fb;
     }
+    await recordUsage(tenantId || "default", "geocode");
     const j = await resp.json();
     if (j.status !== "OK" || !Array.isArray(j.results) || !j.results.length) {
       console.error("addressInEnglish: status", j.status, j.error_message || "");
@@ -814,7 +816,7 @@ const RESEND_API_KEY = defineSecret("RESEND_API_KEY");
 
 // Στέλνει email μέσω Resend. Best-effort — ποτέ δεν πετάει exception προς τα
 // έξω (η αποτυχία εδώ δεν πρέπει ΠΟΤΕ να μπλοκάρει την επιβεβαίωση πληρωμής).
-async function sendCustomerEmailViaResend({ to, subject, html, fromName, fromEmail, apiKeyOverride, attachments }) {
+async function sendCustomerEmailViaResend({ to, subject, html, fromName, fromEmail, apiKeyOverride, attachments, tenantId }) {
   try {
     const apiKey = apiKeyOverride || RESEND_API_KEY.value();
     if (!apiKey || !to) return false;
@@ -837,6 +839,8 @@ async function sendCustomerEmailViaResend({ to, subject, html, fromName, fromEma
       console.error("Resend send error:", res.status, await res.text());
       return false;
     }
+    // Χρέωση ΜΟΝΟ αν στάλθηκε με το ΔΙΚΟ ΜΑΣ κλειδί (όχι δικό του του tenant).
+    if (!apiKeyOverride) await recordUsage(tenantId || "default", "resend");
     return true;
   } catch (e) {
     console.error("Resend send exception:", e);
@@ -2794,7 +2798,7 @@ async function findClientRouteMatch(fromLat, fromLng, toLat, toLng, tenantId) {
 }
 
 
-async function routesDistanceDuration(origin, dest, apiKey, departureTime) {
+async function routesDistanceDuration(origin, dest, apiKey, departureTime, tenantId) {
   if (!apiKey) return null;
   try {
     const body = {
@@ -2823,6 +2827,7 @@ async function routesDistanceDuration(origin, dest, apiKey, departureTime) {
     const data = await resp.json();
     const route = data && data.routes && data.routes[0];
     if (!route) return null;
+    await recordUsage(tenantId || "default", "routes");
     return {
       distanceKm: Number(route.distanceMeters || 0) / 1000,
       durationMin: parseInt(route.duration, 10) / 60,
@@ -3106,7 +3111,7 @@ async function computeEstimate({
         routePolyline = cachedRoutePolyline || null;
       } else {
         const rd = await routesDistanceDuration(
-          { lat: fromLat, lng: fromLng }, { lat: toLat, lng: toLng }, apiKey, departureTime);
+          { lat: fromLat, lng: fromLng }, { lat: toLat, lng: toLng }, apiKey, departureTime, tenantId);
         if (rd) { distanceKm = rd.distanceKm; durationMin = rd.durationMin; routePolyline = rd.polyline; }
       }
     }
@@ -3380,7 +3385,7 @@ async function computeEstimate({
       routePolyline = cachedRoutePolyline || null;
     } else {
       const rd = await routesDistanceDuration(
-        { lat: fromLat, lng: fromLng }, { lat: toLat, lng: toLng }, apiKey, departureTime);
+        { lat: fromLat, lng: fromLng }, { lat: toLat, lng: toLng }, apiKey, departureTime, tenantId);
       if (rd) {
         distanceKm = rd.distanceKm;
         durationMin = rd.durationMin;
@@ -3397,7 +3402,7 @@ async function computeEstimate({
         routePolyline = cachedRoutePolyline || null;
       } else {
         const rd = await routesDistanceDuration(
-          { lat: fromLat, lng: fromLng }, { lat: toLat, lng: toLng }, apiKey, departureTime);
+          { lat: fromLat, lng: fromLng }, { lat: toLat, lng: toLng }, apiKey, departureTime, tenantId);
         if (rd) {
           distanceKm = rd.distanceKm;
           durationMin = rd.durationMin;
@@ -3891,9 +3896,9 @@ exports.submitPublicBooking = onRequest(
               "<p>" + waLine + "</p>";
             // Αγγλικές διευθύνσεις ΜΟΝΟ για το αγγλικό email.
             const fromEn2 = isEl ? from
-              : await addressInEnglish(fromLat, fromLng, from);
+              : await addressInEnglish(fromLat, fromLng, from, tenantId);
             const toEn2 = isEl ? to
-              : await addressInEnglish(toLat, toLng, to);
+              : await addressInEnglish(toLat, toLng, to, tenantId);
 
             const bodyEn =
               "<h2 style=\"color:#1a1a2e;\">Your booking has been received!</h2>" +
@@ -3914,7 +3919,7 @@ exports.submitPublicBooking = onRequest(
               "<div style=\"font-family:sans-serif;font-size:15px;color:#222;max-width:520px;margin:0 auto;\">" +
               logoHtml + (isEl ? bodyEl : bodyEn) + footerHtml + "</div>";
             await sendCustomerEmailViaResend({
-              to: email, subject, html, fromName: businessName, fromEmail, apiKeyOverride,
+              to: email, subject, html, fromName: businessName, fromEmail, apiKeyOverride, tenantId,
             });
           }
         } catch (e) {
@@ -3986,6 +3991,7 @@ exports.placesAutocomplete = onCall(
       console.error("placesAutocomplete error:", resp.status, await resp.text());
       throw new HttpsError("internal", "Places autocomplete failed (" + resp.status + ")");
     }
+    await recordUsage(await tenantIdForUid(request.auth.uid), "places_autocomplete");
     return await resp.json();
   }
 );
@@ -4016,6 +4022,7 @@ exports.placesDetails = onCall(
       console.error("placesDetails error:", resp.status, await resp.text());
       throw new HttpsError("internal", "Place details failed (" + resp.status + ")");
     }
+    await recordUsage(await tenantIdForUid(request.auth.uid), "places_details");
     return await resp.json();
   }
 );
@@ -4064,6 +4071,7 @@ exports.placesRoute = onCall(
       console.error("placesRoute error:", resp.status, await resp.text());
       throw new HttpsError("internal", "Route calculation failed (" + resp.status + ")");
     }
+    await recordUsage(await tenantIdForUid(request.auth.uid), "routes");
     return await resp.json();
   }
 );
@@ -4123,6 +4131,7 @@ exports.resolvePlusCode = onCall(
       // → ξαναδοκίμασε μόνο με τον γυμνό κωδικό.
       json = await geocodeAddress(bare);
     }
+    await recordUsage(await tenantIdForUid(request.auth.uid), "geocode");
     return json;
   }
 );
@@ -4147,6 +4156,7 @@ exports.placesReverseGeocode = onCall(
       console.error("placesReverseGeocode error:", resp.status, await resp.text());
       throw new HttpsError("internal", "Reverse geocode failed (" + resp.status + ")");
     }
+    await recordUsage(await tenantIdForUid(request.auth.uid), "geocode");
     return await resp.json();
   }
 );
@@ -5128,9 +5138,9 @@ async function finalizeSuccessfulPayment(db, pendingRef, pd, providerMeta) {
         // Αγγλικές διευθύνσεις ΜΟΝΟ για το αγγλικό email (fallback στις
         // αρχικές αν το Geocoding API δεν απαντήσει).
         const fromEn = isEl ? pd.from
-          : await addressInEnglish(pd.fromLat, pd.fromLng, pd.from);
+          : await addressInEnglish(pd.fromLat, pd.fromLng, pd.from, tid);
         const toEn = isEl ? pd.to
-          : await addressInEnglish(pd.toLat, pd.toLng, pd.to);
+          : await addressInEnglish(pd.toLat, pd.toLng, pd.to, tid);
 
         const bodyEn =
           "<h2 style=\"color:#1a1a2e;\">Your booking is confirmed!</h2>" +
@@ -5181,7 +5191,7 @@ async function finalizeSuccessfulPayment(db, pendingRef, pd, providerMeta) {
         }
 
         await sendCustomerEmailViaResend({
-          to: pd.clientEmail, subject, html, fromName: businessName, fromEmail, apiKeyOverride, attachments,
+          to: pd.clientEmail, subject, html, fromName: businessName, fromEmail, apiKeyOverride, attachments, tenantId: tid,
         });
       }
     } catch (e) {
@@ -8030,6 +8040,7 @@ exports.checkFlightDelays = onSchedule(
         console.log(`checkFlightDelays: ${doc.id} — καλώ AeroDataBox για ${flightNum} στις ${dateLocal} (πηγή κλειδιού: ${access.source})`);
         const status = await fetchFlightStatus(access.apiKey, flightNum, dateLocal);
         await incrementAeroDataBoxUsage(db);
+        if (access.source === "global") await recordUsage(job.tenantId || "default", "aerodatabox");
         console.log(`checkFlightDelays: ${doc.id} — απάντηση AeroDataBox: ${status ? JSON.stringify(status) : "ΔΕΝ ΒΡΕΘΗΚΕ (null)"}`);
 
         const updates = { flightChecked: true, flightCheckedAt: FieldValue.serverTimestamp() };
@@ -8333,3 +8344,61 @@ exports.setGlobalFlightApiFeeDefault = onCall(
     return { ok: true };
   }
 );
+
+
+// ════════════════════════════════════════════════════════════════════════════
+//  getMyBillingSummary — ό,τι βλέπει ο tenant για τη χρέωση της πλατφόρμας.
+//  Επιστρέφει ΜΟΝΟ τα ποσά που χρεώνεται (chargeEur). ΔΕΝ επιστρέφει ποτέ το
+//  πραγματικό μας κόστος ούτε το markup. Tenant-owner/master → ο δικός του
+//  tenant· ο super-admin μπορεί να ζητήσει οποιονδήποτε (data.tenantId).
+//  Υπόλοιπο = creditGrantedEur + paidEur − chargeTotalEur (θετικό = πίστωση).
+// ════════════════════════════════════════════════════════════════════════════
+exports.getMyBillingSummary = onCall(async (request) => {
+  const uid = request.auth && request.auth.uid;
+  if (!uid) throw new HttpsError("unauthenticated", "Απαιτείται σύνδεση.");
+  const db = getFirestore();
+  const isSuper = request.auth.token.email === "techtacy@gmail.com";
+  const pSnap = await db.collection("presence").doc(uid).get();
+  const pd = pSnap.exists ? pSnap.data() : {};
+
+  let tenantId = pd.tenantId || "default";
+  if (isSuper && request.data && request.data.tenantId) {
+    tenantId = String(request.data.tenantId);
+  } else if (!isSuper && pd.tenantOwner !== true && pd.master !== true) {
+    throw new HttpsError("permission-denied", "Δεν έχεις πρόσβαση στη χρέωση.");
+  }
+
+  const [setSnap, accSnap, rootSnap, monSnap] = await Promise.all([
+    db.collection("tenants").doc(tenantId).collection("billing").doc("settings").get(),
+    db.collection("tenants").doc(tenantId).collection("billing").doc("account").get(),
+    db.collection("usage").doc(tenantId).get(),
+    db.collection("usage").doc(tenantId).collection("monthly").doc(monthKey()).get(),
+  ]);
+  const st  = setSnap.exists ? setSnap.data() : {};
+  const acc = accSnap.exists ? accSnap.data() : {};
+  const root = rootSnap.exists ? rootSnap.data() : {};
+  const mon = monSnap.exists ? monSnap.data() : {};
+
+  const services = {};
+  const raw = mon.services || {};
+  Object.keys(raw).forEach((k) => {
+    const c = Number(raw[k].chargeEur || 0);
+    if (c > 0) services[k] = Math.round(c * 100) / 100;
+  });
+
+  const chargeTotal = Number(root.chargeTotalEur || 0);
+  const credit = Number(acc.creditGrantedEur || 0);
+  const paid = Number(acc.paidEur || 0);
+  return {
+    tenantId,
+    billingMode: st.billingMode || "markup",
+    monthlyFeeEur: Number((st.plan && st.plan.monthlyFeeEur) || 0),
+    month: monthKey(),
+    monthChargeEur: Math.round(Number(mon.totalChargeEur || 0) * 100) / 100,
+    services,
+    chargeTotalEur: Math.round(chargeTotal * 100) / 100,
+    creditGrantedEur: credit,
+    paidEur: paid,
+    balanceEur: Math.round((credit + paid - chargeTotal) * 100) / 100,
+  };
+});

@@ -26,6 +26,7 @@ import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 
 import '../app_theme.dart';
 import 'admin_role_editor.dart';
+import 'tenant_billing_block.dart';
 
 class GlobalSettingsPage extends StatefulWidget {
   final String masterUid;
@@ -99,6 +100,11 @@ class _GlobalSettingsPageState extends State<GlobalSettingsPage> {
 
             const SizedBox(height: 12),
             const _AeroDataBoxKeyCard(),
+
+            const SizedBox(height: 18),
+            _sectionLabel(c, 'ΧΡΗΣΗ & ΚΟΣΤΟΣ'),
+            const SizedBox(height: 8),
+            TenantBillingBlock(tenants: _tenants),
 
             const SizedBox(height: 20),
           ],
