@@ -384,6 +384,45 @@ service cloud.firestore {
       allow read, write: if masterEmail();
     }
 
+    // ── Βοηθός WhatsApp (assistant) ───────────────────────────────────────────
+    // assistant_config/{tenantId}: ρυθμίσεις/κανόνες του βοηθού. Τα επεξεργάζεται ο
+    // master/tenantOwner ΤΟΥ tenant (ή ο super-admin). Το πεδίο `whatsapp`
+    // (phoneNumberId κ.λπ.) το γράφει ΜΟΝΟ ο server/super-admin — αλλιώς ένας
+    // tenant θα μπορούσε να «κλέψει» τα μηνύματα άλλου αριθμού.
+    match /assistant_config/{tenantId} {
+      allow read: if masterEmail()
+        || ((isMaster() || isTenantOwner()) && myTenantId() == tenantId);
+      allow create: if masterEmail()
+        || ((isMaster() || isTenantOwner()) && myTenantId() == tenantId
+            && !('whatsapp' in request.resource.data));
+      allow update: if masterEmail()
+        || ((isMaster() || isTenantOwner()) && myTenantId() == tenantId
+            && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['whatsapp']));
+      allow delete: if masterEmail();
+    }
+
+    // wa_conversations/{id} (+ messages): γράφονται ΜΟΝΟ από τον server. Ο master/
+    // tenantOwner του tenant τα διαβάζει και αλλάζει status/unread/handledBy.
+    match /wa_conversations/{convId} {
+      allow read: if (isMaster() || isTenantOwner()) && sameTenantAsResource();
+      allow update: if (isMaster() || isTenantOwner()) && sameTenantAsResource()
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['status', 'unread', 'handledBy']);
+      allow create, delete: if false;
+
+      match /messages/{msgId} {
+        allow read: if (isMaster() || isTenantOwner()) && sameTenantAsResource();
+        allow write: if false;
+      }
+    }
+
+    // wa_stats/{tenantId}/daily/{YYYY-MM-DD}: στατιστικά ανά χώρα (μόνο ανάγνωση).
+    match /wa_stats/{tenantId}/daily/{day} {
+      allow read: if masterEmail()
+        || ((isMaster() || isTenantOwner()) && myTenantId() == tenantId);
+      allow write: if false;
+    }
+
     // ── Default: ΟΛΑ τα υπόλοιπα ΚΛΕΙΣΤΑ ───────────────────────────────────
     match /{document=**} {
       allow read, write: if false;

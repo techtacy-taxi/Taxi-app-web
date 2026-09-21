@@ -91,6 +91,9 @@ const String kBoardChannelMutedId    = 'boarding_alerts_muted_v1';
 const List<int> kReminderOffsets = [30, 10];
 // Key όπου κρατάμε τα notifIds των προγραμματισμένων reminders (για cancel).
 const String kScheduledReminderIds = 'scheduled_reminder_ids_v2';
+// jobId → {ids:[…], until:ms} — ώστε να ακυρώνουμε ξυπνητήρια ΜΟΝΟ δουλειών που
+// βλέπουμε στη λίστα και δεν ισχύουν πια (όχι όσων απλώς έπεσαν εκτός των 150).
+const String kScheduledReminderMap = 'scheduled_reminder_map_v3';
 // Key που γράφεται όταν ο οδηγός πατήσει το reminder → εμφανίζεται η κάρτα.
 const String kPendingReminderCard  = 'pending_reminder_card_v1';
 
@@ -758,10 +761,30 @@ Future<void> showPublicBookingNotification({
   }
 }
 
-// Σβήνει όλες τις ενεργές ειδοποιήσεις «κράτηση από φόρμα» (στο «ΟΚ»).
+// Σβήνει ΜΟΝΟ τις ενεργές ειδοποιήσεις «κράτηση από φόρμα» (στο «ΟΚ»).
+//
+// ⚠️ ΠΡΙΝ: καλούσε _localNotifs.cancelAll(), που σβήνει ΚΑΙ ΟΛΑ τα
+// προγραμματισμένα (pending) ξυπνητήρια υπενθυμίσεων ραντεβού. Κάθε φορά που
+// πατούσες «ΟΚ» σε κράτηση φόρμας χάνονταν ΟΛΕΣ οι υπενθυμίσεις μέχρι το
+// επόμενο άνοιγμα/συγχρονισμό — γι' αυτό «δεν χτυπούσε» τίποτα.
 Future<void> cancelPublicBookingNotifications() async {
   try {
-    await _localNotifs.cancelAll();
+    final android = _localNotifs.resolvePlatformSpecificImplementation<
+        AndroidFlutterLocalNotificationsPlugin>();
+    final active = await android?.getActiveNotifications() ??
+        const <ActiveNotification>[];
+    for (final n in active) {
+      final id = n.id;
+      if (id == null) continue;
+      var isBooking = false;
+      final p = n.payload;
+      if (p != null && p.isNotEmpty) {
+        try {
+          isBooking = (jsonDecode(p) as Map)['type'] == 'public_booking';
+        } catch (_) {}
+      }
+      if (isBooking) await _localNotifs.cancel(id);
+    }
   } catch (e) {
     // ΠΡΙΝ: καταπινόταν σιωπηλά — αν αυτό αποτύχει, ο ήχος/η ειδοποίηση
     // μπορεί να «κολλήσει» ενεργή χωρίς καμία ένδειξη στα logs.
@@ -929,7 +952,7 @@ class NotificationsService {
         final t = resp?.payload != null
             ? (jsonDecode(resp!.payload!) as Map<String, dynamic>)['type']
             : null;
-        if (t == 'public_booking') await _localNotifs.cancelAll();
+        if (t == 'public_booking') await cancelPublicBookingNotifications();
       } catch (_) {}
       if (resp != null && resp.payload != null) {
         try {
@@ -979,7 +1002,7 @@ class NotificationsService {
       if (p != null &&
           (jsonDecode(p) as Map<String, dynamic>)['type'] == 'public_booking') {
         // ignore: unawaited_futures
-        _localNotifs.cancelAll();
+        cancelPublicBookingNotifications();
       }
     } catch (_) {}
 
@@ -1063,10 +1086,14 @@ class NotificationsService {
   ///
   /// Καλείται από τον JobListener κάθε φορά που αλλάζει το snapshot των
   /// δουλειών που έχει αναλάβει ο οδηγός.
-  static Future<void> syncAppointmentReminders(List<ReminderSpec> specs) async {
+  static Future<void> syncAppointmentReminders(
+    List<ReminderSpec> specs, {
+    Set<String>? knownJobIds,
+  }) async {
     final prefs = await SharedPreferences.getInstance();
     final now   = DateTime.now();
     final desired = <int>{};
+    final desiredByJob = <String, List<int>>{};
 
     // Διαγνωστικό: επιβεβαιώνει αν επιτρέπονται τα exact alarms. Αν είναι
     // false, το zonedSchedule με exactAllowWhileIdle αποτυγχάνει σιωπηλά.
@@ -1087,38 +1114,73 @@ class NotificationsService {
         }
         final id = reminderNotifId(s.jobId, off);
         desired.add(id);
+        (desiredByJob[s.jobId] ??= <int>[]).add(id);
         await scheduleOneReminder(id: id, spec: s, offset: off, fireAt: fireAt);
         await dbg('scheduled ${s.jobId} -$off′ → $fireAt (id=$id)');
       }
     }
     await dbg('σύνολο προγραμματισμένων alarms: ${desired.length}');
 
-    // Ακύρωσε ό,τι ήταν προγραμματισμένο και δεν χρειάζεται πλέον.
-    final prev = prefs.getStringList(kScheduledReminderIds) ?? const <String>[];
-    for (final idStr in prev) {
-      final id = int.tryParse(idStr);
-      if (id != null && !desired.contains(id)) {
-        try { await _localNotifs.cancel(id); } catch (_) {}
+    // Ακύρωσε ΜΟΝΟ ό,τι ανήκει σε δουλειά που ΒΛΕΠΟΥΜΕ στη λίστα και δεν
+    // ισχύει πλέον (ολοκληρώθηκε/ακυρώθηκε/άλλαξε ώρα). Δουλειές που απλώς
+    // δεν είναι στη λίστα (π.χ. έπεσαν εκτός των 150 πιο πρόσφατων) ΜΕΝΟΥΝ.
+    final untilByJob = <String, int>{
+      for (final s in specs) s.jobId: s.scheduledAt.millisecondsSinceEpoch,
+    };
+    final nextMap = <String, dynamic>{
+      for (final e in desiredByJob.entries)
+        e.key: {'ids': e.value, 'until': untilByJob[e.key] ?? 0},
+    };
+    final rawMap = prefs.getString(kScheduledReminderMap);
+    if (rawMap == null) {
+      // Πρώτη εκτέλεση μετά την αναβάθμιση: παλιά συμπεριφορά μία φορά.
+      final prev = prefs.getStringList(kScheduledReminderIds) ?? const <String>[];
+      for (final idStr in prev) {
+        final id = int.tryParse(idStr);
+        if (id != null && !desired.contains(id)) {
+          try { await _localNotifs.cancel(id); } catch (_) {}
+        }
+      }
+    } else {
+      try {
+        final prevMap = jsonDecode(rawMap) as Map<String, dynamic>;
+        for (final e in prevMap.entries) {
+          if (desiredByJob.containsKey(e.key)) {
+            // Ίδια δουλειά: ακύρωσε τα offsets που δεν ισχύουν πια.
+            final ids = ((e.value as Map)['ids'] as List).map((x) => (x as num).toInt());
+            for (final id in ids) {
+              if (!desired.contains(id)) {
+                try { await _localNotifs.cancel(id); } catch (_) {}
+              }
+            }
+          } else if (knownJobIds == null || knownJobIds.contains(e.key)) {
+            // Τη βλέπουμε στη λίστα αλλά δεν χρειάζεται πια → ακύρωση.
+            final ids = ((e.value as Map)['ids'] as List).map((x) => (x as num).toInt());
+            for (final id in ids) {
+              try { await _localNotifs.cancel(id); } catch (_) {}
+            }
+          } else {
+            // Δεν είναι στη λίστα → κράτα το ξυπνητήρι (μέχρι 1 μέρα μετά την ώρα).
+            final until = ((e.value as Map)['until'] as num?)?.toInt() ?? 0;
+            if (until > now.millisecondsSinceEpoch - 24 * 3600 * 1000) {
+              nextMap[e.key] = e.value;
+            }
+          }
+        }
+      } catch (e) {
+        await dbg('sync: σφάλμα ανάγνωσης χάρτη υπενθυμίσεων: $e');
       }
     }
+    await prefs.setString(kScheduledReminderMap, jsonEncode(nextMap));
     await prefs.setStringList(
         kScheduledReminderIds, desired.map((e) => e.toString()).toList());
   }
 
-  /// Προγραμματίζει ΜΙΑ υπενθύμιση ραντεβού. ΔΗΜΟΣΙΟ (χωρίς _) ώστε να
-  /// μπορεί να το καλέσει ΚΑΙ το background FCM handler όταν
-  /// αναπρογραμματίζει μετά από αλλαγή ώρας λόγω πτήσης — ίδιο κανάλι/ήχο,
-  /// χωρίς κλειστό κώδικα (private) που να μπλοκάρει την επαναχρησιμοποίηση.
-  static Future<void> scheduleOneReminder({
-    required int         id,
-    required ReminderSpec spec,
-    required int         offset,
-    required DateTime    fireAt,
-  }) async {
-    final whenStr = _fmtReminderDateTime(spec.scheduledAt);
-    final body    = '$whenStr  •  ${spec.from} → ${spec.to}';
-
-    final androidDetails = AndroidNotificationDetails(
+  /// Ρυθμίσεις της ειδοποίησης υπενθύμισης ραντεβού (δυνατό κανάλι «ξυπνητήρι»).
+  /// ΚΟΙΝΕΣ για: το τοπικό alarm (scheduleOneReminder) ΚΑΙ το push του server
+  /// (fcm_service → appointment_reminder), ώστε να είναι ίδιες ακριβώς.
+  static AndroidNotificationDetails reminderAndroidDetails() {
+    return AndroidNotificationDetails(
       kApptChannelId,
       kApptChannelName,
       channelDescription:  kApptChannelDesc,
@@ -1143,6 +1205,22 @@ class NotificationsService {
         ),
       ],
     );
+  }
+
+  /// Προγραμματίζει ΜΙΑ υπενθύμιση ραντεβού. ΔΗΜΟΣΙΟ (χωρίς _) ώστε να
+  /// μπορεί να το καλέσει ΚΑΙ το background FCM handler όταν
+  /// αναπρογραμματίζει μετά από αλλαγή ώρας λόγω πτήσης — ίδιο κανάλι/ήχο,
+  /// χωρίς κλειστό κώδικα (private) που να μπλοκάρει την επαναχρησιμοποίηση.
+  static Future<void> scheduleOneReminder({
+    required int         id,
+    required ReminderSpec spec,
+    required int         offset,
+    required DateTime    fireAt,
+  }) async {
+    final whenStr = _fmtReminderDateTime(spec.scheduledAt);
+    final body    = '$whenStr  •  ${spec.from} → ${spec.to}';
+
+    final androidDetails = reminderAndroidDetails();
 
     try {
       await _localNotifs.zonedSchedule(

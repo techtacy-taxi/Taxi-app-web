@@ -93,6 +93,7 @@ class _JobListenerState extends State<JobListener> with WidgetsBindingObserver {
   // και αναθέτουμε στο NotificationsService να προγραμματίσει exact alarms.
   StreamSubscription<List<Job>>? _scheduledSub;
   List<Job>   _myScheduledJobs    = const [];
+  Set<String> _knownJobIds        = const <String>{};
   bool        _reminderDialogShowing = false;
 
   // ── Αιτήματα έγκρισης (μόνο master) ────────────────────────────────────
@@ -312,6 +313,7 @@ class _JobListenerState extends State<JobListener> with WidgetsBindingObserver {
     // δεν προγραμματιζόταν κανένα alarm — ενώ το countdown bar δούλευε
     // κανονικά. Το φιλτράρισμα γίνεται τώρα client-side.
     _scheduledSub = JobService.allJobs(limit: 150).listen((jobs) {
+      _knownJobIds = jobs.map((j) => j.id).toSet();
       _myScheduledJobs = jobs.where((j) =>
           j.scheduledAt != null &&
           j.takenBy == widget.uid &&
@@ -337,7 +339,8 @@ class _JobListenerState extends State<JobListener> with WidgetsBindingObserver {
               offsets:     j.reminderOffsets,
             ))
         .toList();
-    await NotificationsService.syncAppointmentReminders(specs);
+    await NotificationsService.syncAppointmentReminders(specs,
+        knownJobIds: _knownJobIds);
   }
 
   // ─── Αιτήματα έγκρισης (μόνο master) ────────────────────────────────────
@@ -1068,6 +1071,9 @@ class _JobListenerState extends State<JobListener> with WidgetsBindingObserver {
     // υπενθύμιση ραντεβού ή ειδοποίηση αναβάθμισης να εμφανιστεί
     if (wasBackground && state == AppLifecycleState.resumed) {
       _checkPendingReminderCard();
+      // Αυτοθεραπεία: ξανα-προγραμμάτισε τα ξυπνητήρια κάθε φορά που ανοίγει η εφαρμογή.
+      // ignore: unawaited_futures
+      _syncReminders();
       _checkPendingUpgradeDialog();
       // ignore: unawaited_futures
       _pumpBoardedQueue();

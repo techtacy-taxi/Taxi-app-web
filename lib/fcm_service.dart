@@ -142,6 +142,9 @@ Future<void> _displayFromMessage(
     case 'public_booking':
       await _showPublicBookingBg(fln, data);
       break;
+    case 'appointment_reminder':
+      await _showAppointmentReminderBg(fln, data);
+      break;
     default:
       // Άγνωστος τύπος — εμφάνισε γενικό ώστε να μη χαθεί.
       await _showGenericBg(fln, data, muted);
@@ -573,6 +576,36 @@ Future<void> _showFlightDelayBg(
   } catch (e) {
     debugPrint('flight_delay reminder reschedule error: $e');
   }
+}
+
+/// Υπενθύμιση ραντεβού που έστειλε ο SERVER (sendAppointmentReminders).
+/// Εφεδρεία για όταν η εφαρμογή ήταν εντελώς κλειστή και χάθηκε το τοπικό
+/// alarm. ΙΔΙΟ id με το τοπικό (reminderNotifId) → αν το τοπικό χτύπησε ήδη
+/// και φαίνεται ακόμα, δεν δείχνουμε δεύτερη· αλλιώς τη δείχνουμε με ΤΟ ΙΔΙΟ
+/// δυνατό κανάλι. Βαράει και σε σίγαση, όπως και το τοπικό alarm.
+Future<void> _showAppointmentReminderBg(
+    FlutterLocalNotificationsPlugin fln, Map<String, dynamic> d) async {
+  final jobId = (d['jobId'] ?? '').toString();
+  final off   = int.tryParse((d['minsBefore'] ?? '').toString()) ?? 0;
+  if (jobId.isEmpty) return;
+  final id = NotificationsService.reminderNotifId(jobId, off);
+
+  try {
+    final android = fln.resolvePlatformSpecificImplementation<
+        AndroidFlutterLocalNotificationsPlugin>();
+    final active = await android?.getActiveNotifications() ?? const [];
+    if (active.any((n) => n.id == id)) return;   // το τοπικό alarm φαίνεται ήδη
+  } catch (_) {}
+
+  await fln.show(
+    id,
+    (d['title'] ?? '⏰ Υπενθύμιση ραντεβού').toString(),
+    (d['body'] ?? '').toString(),
+    NotificationDetails(android: NotificationsService.reminderAndroidDetails()),
+    payload: jsonEncode({
+      'jobId': jobId, 'type': 'appointment', 'minsBefore': off,
+    }),
+  );
 }
 
 Future<void> _showGenericBg(

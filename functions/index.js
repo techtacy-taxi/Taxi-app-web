@@ -8482,3 +8482,99 @@ exports.accrueTenantSubscriptionsNow = onCall(async (request) => {
   }
   return await accrueTenantSubscriptions();
 });
+
+
+// ════════════════════════════════════════════════════════════════════════════
+//  sendAppointmentReminders — ΥΠΕΝΘΥΜΙΣΕΙΣ ΡΑΝΤΕΒΟΥ ΑΠΟ ΤΟΝ SERVER (FCM)
+//
+//  ΓΙΑΤΙ: οι υπενθυμίσεις του κινητού (exact alarms) χάνονται όταν η εφαρμογή
+//  κλείσει εντελώς (π.χ. swipe/κλείσιμο σε Xiaomi/Samsung με εξοικονόμηση
+//  μπαταρίας). Εδώ ο server στέλνει ΚΑΙ ο ίδιος push, με τον ίδιο μηχανισμό
+//  (data-only, high priority) που ήδη δουλεύει με κλειστή εφαρμογή για τις
+//  κρατήσεις της φόρμας. Το κινητό τη δείχνει με το ίδιο δυνατό κανάλι.
+//
+//  • Κάθε 1 λεπτό: δουλειές taken/boarded με scheduledAt στο παράθυρο.
+//  • Για κάθε offset του job.reminderOffsets (π.χ. 60/30/10, προεπιλογή 30/10):
+//    στέλνει όταν έφτασε η ώρα, ΜΙΑ φορά (reminder_pushes/{job}_{off}_{ώρα}).
+//    Αν αλλάξει η ώρα (π.χ. καθυστέρηση πτήσης) → νέα ώρα = νέα αποστολή.
+//  • Δεν γράφει τίποτα στο jobs/ (δεν ενεργοποιεί triggers δουλειών).
+//  • Αν η εφαρμογή είναι ανοιχτή/ζωντανή, το κινητό δεν δείχνει διπλή.
+// ════════════════════════════════════════════════════════════════════════════
+const REMINDER_GRACE_MS = 5 * 60 * 1000;      // στέλνει έως 5' αργότερα (αν χαθεί tick)
+const REMINDER_MAX_OFFSET_MIN = 24 * 60;      // μέχρι 24 ώρες πριν
+
+function _fmtAthens(d) {
+  const p = new Intl.DateTimeFormat("el-GR", {
+    timeZone: "Europe/Athens", day: "2-digit", month: "2-digit",
+    hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+  }).formatToParts(d);
+  const g = (t) => (p.find((x) => x.type === t) || {}).value || "";
+  return `${g("day")}/${g("month")} ${g("hour")}:${g("minute")}`;
+}
+
+function _reminderOffsetsOf(job) {
+  const raw = Array.isArray(job.reminderOffsets) ? job.reminderOffsets : [30, 10];
+  const out = [...new Set(raw.map((x) => Math.round(Number(x))))]
+    .filter((x) => Number.isFinite(x) && x >= 0 && x <= REMINDER_MAX_OFFSET_MIN);
+  return out.length ? out : [30, 10];
+}
+
+exports.sendAppointmentReminders = onSchedule(
+  { schedule: "every 1 minutes", timeZone: "Europe/Athens",
+    memory: "256MiB", timeoutSeconds: 60 },
+  async () => {
+    const db = getFirestore();
+    const nowMs = Date.now();
+    const snap = await db.collection("jobs")
+      .where("scheduledAt", ">=", new Date(nowMs - REMINDER_GRACE_MS))
+      .where("scheduledAt", "<=", new Date(nowMs + REMINDER_MAX_OFFSET_MIN * 60 * 1000))
+      .get();
+
+    let sent = 0;
+    for (const doc of snap.docs) {
+      const job = doc.data();
+      if (!["taken", "boarded"].includes(job.status) || !job.takenBy) continue;
+      const schedMs = job.scheduledAt.toMillis();
+
+      for (const off of _reminderOffsetsOf(job)) {
+        const fireAt = schedMs - off * 60 * 1000;
+        if (fireAt > nowMs || nowMs - fireAt > REMINDER_GRACE_MS) continue;
+
+        // Ιδεμποτέντ: create() αποτυγχάνει αν έχει ήδη σταλεί για αυτή την ώρα.
+        const markRef = db.collection("reminder_pushes").doc(`${doc.id}_${off}_${schedMs}`);
+        try {
+          await markRef.create({
+            jobId: doc.id, offset: off, scheduledAt: job.scheduledAt,
+            uid: job.takenBy, sentAt: FieldValue.serverTimestamp(),
+            expireAt: new Date(schedMs + 7 * 24 * 3600 * 1000),   // για TTL πολιτική (προαιρετικό)
+          });
+        } catch (e) {
+          continue;   // ήδη σταλμένη
+        }
+
+        try {
+          const p = (await db.collection("presence").doc(job.takenBy).get()).data() || {};
+          if (!p.fcmToken) continue;
+          const route = [job.from, job.to].filter(Boolean).join(" → ");
+          await sendDataOnly([p.fcmToken], {
+            type: "appointment_reminder",
+            jobId: doc.id,
+            minsBefore: String(off),
+            scheduledAtIso: new Date(schedMs).toISOString(),
+            title: off >= 60 && off % 60 === 0
+              ? `⏰ Υπενθύμιση ραντεβού σε ${off / 60} ώρ${off === 60 ? "α" : "ες"}`
+              : `⏰ Υπενθύμιση ραντεβού σε ${off}′`,
+            body: `${_fmtAthens(new Date(schedMs))}  •  ${route}`,
+            // fromAddr/toAddr — ΟΧΙ from/to (δεσμευμένες λέξεις FCM).
+            fromAddr: String(job.from || ""),
+            toAddr: String(job.to || ""),
+          }, { ttlMs: 10 * 60 * 1000 });
+          sent++;
+        } catch (e) {
+          console.error("sendAppointmentReminders:", doc.id, off, e && e.message ? e.message : e);
+        }
+      }
+    }
+    if (sent) console.log("sendAppointmentReminders: στάλθηκαν", sent);
+  }
+);
