@@ -590,6 +590,30 @@ Future<void> _showAppointmentReminderBg(
   if (jobId.isEmpty) return;
   final id = NotificationsService.reminderNotifId(jobId, off);
 
+  // Ήταν προγραμματισμένο τοπικό ξυπνητήρι για αυτό το (δουλειά, offset);
+  // Αν ΝΑΙ και δεν είναι πια «εκκρεμές» → έχει ήδη χτυπήσει (ακόμα κι αν το
+  // έκλεισες μέσα στο λεπτό που περιμένει ο server) → ΔΕΝ ξαναχτυπάμε.
+  // Αν ΟΧΙ (δεν προγραμματίστηκε ποτέ) ή είναι ακόμα εκκρεμές (δεν χτύπησε
+  // στην ώρα του) → το push το δείχνει.
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.reload();   // το γράφει το κύριο isolate
+    var wasScheduled = false;
+    final raw = prefs.getString(kScheduledReminderMap);
+    if (raw != null) {
+      final entry = (jsonDecode(raw) as Map)[jobId];
+      if (entry is Map) {
+        wasScheduled = (entry['ids'] as List)
+            .map((x) => (x as num).toInt())
+            .contains(id);
+      }
+    }
+    if (wasScheduled) {
+      final pending = await fln.pendingNotificationRequests();
+      if (!pending.any((p) => p.id == id)) return;   // έχει ήδη χτυπήσει
+    }
+  } catch (_) {}
+
   try {
     final android = fln.resolvePlatformSpecificImplementation<
         AndroidFlutterLocalNotificationsPlugin>();
