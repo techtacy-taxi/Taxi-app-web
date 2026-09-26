@@ -261,7 +261,7 @@ class _LocationTaskHandler extends TaskHandler {
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
-  await NotificationsService.init();
+
   // Δήλωση του FCM background handler ΠΡΙΝ το runApp — ξυπνά σε δικό του
   // isolate ακόμη και με τελείως κλειστή εφαρμογή. Τυλιγμένο σε try ώστε
   // ένα σφάλμα FCM να ΜΗΝ μπλοκάρει ποτέ το ξεκίνημα της εφαρμογής.
@@ -270,7 +270,6 @@ Future<void> main() async {
   } catch (e) {
     debugPrint('FCM bg handler register error: $e');
   }
-  await GoogleSignIn.instance.initialize();
 
   FlutterForegroundTask.init(
     androidNotificationOptions: AndroidNotificationOptions(
@@ -296,8 +295,19 @@ Future<void> main() async {
     ),
   );
 
-  // Φόρτωση αποθηκευμένης επιλογής θέματος (Φωτεινό/Σκούρο/Αυτόματο)
-  await ThemeController.load();
+  // ⚡ ΓΡΗΓΟΡΟ ΑΝΟΙΓΜΑ: ειδοποιήσεις, Google Sign-In και θέμα φορτώνουν
+  // ΤΑΥΤΟΧΡΟΝΑ (πριν περίμενε το καθένα με τη σειρά, με λευκή οθόνη).
+  // Το καθένα τυλιγμένο ώστε ένα σφάλμα να μη σταματά το ξεκίνημα.
+  await Future.wait<void>([
+    NotificationsService.init()
+        .catchError((e) => debugPrint('notifications init error: $e')),
+    GoogleSignIn.instance.initialize()
+        .catchError((e) => debugPrint('google sign-in init error: $e')),
+    // Φόρτωση αποθηκευμένης επιλογής θέματος (Φωτεινό/Σκούρο/Αυτόματο)
+    ThemeController.load()
+        .catchError((e) => debugPrint('theme load error: $e')),
+  ]);
+
   runApp(const MyTaxiApp());
 }
 

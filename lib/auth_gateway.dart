@@ -8,6 +8,13 @@
 //
 // Η ΛΟΓΙΚΗ ΣΥΝΔΕΣΗΣ παραμένει ΙΔΙΑ: αναμονή αποκατάστασης session στο cold
 // start, καμία αυτόματη Google lightweight κλήση, serverClientId initialize.
+//
+// ΤΑΧΥΤΕΡΟ ΑΝΟΙΓΜΑ + ANIMATION:
+//  • Αντί για κυκλάκι → SplashAnimation (οχήματα παρκάρουν + σήμα) ΠΑΝΩ από
+//    την οθόνη που φορτώνει από κάτω. Κλείνει όταν SplashController.ready.
+//  • Το «περίμενε session» ΔΕΝ περιμένει πια 8s για μη συνδεδεμένο χρήστη:
+//    κοιτάμε την ΠΡΩΤΗ τιμή του authStateChanges (έρχεται μόλις φορτωθεί το
+//    session από τον δίσκο — είτε χρήστης είτε null).
 
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
@@ -16,6 +23,7 @@ import 'package:google_sign_in/google_sign_in.dart';
 import 'app_theme.dart';
 import 'map/map_page.dart';
 import 'onboarding_screens.dart';
+import 'widgets/splash_animation.dart';
 
 class AuthGateway extends StatefulWidget {
   const AuthGateway({super.key});
@@ -25,26 +33,31 @@ class AuthGateway extends StatefulWidget {
 }
 
 class _AuthGatewayState extends State<AuthGateway> {
-  bool    _loading  = true;
-  bool    _signedIn = false;
+  bool    _checking   = true;  // έλεγχος αποθηκευμένου session (cold start)
+  bool    _signingIn  = false; // πατήθηκε «Σύνδεση με Google»
+  bool    _signedIn   = false;
+  bool    _splashDone = false;
   String? _error;
 
   @override
   void initState() {
     super.initState();
+    SplashController.ready.value = false;
     _checkOrSignIn();
   }
 
   Future<void> _checkOrSignIn() async {
     // Το currentUser μπορεί να είναι προσωρινά null στο cold start ενώ το
-    // Firebase αποκαθιστά το session από τον δίσκο. Περίμενε να αποκατασταθεί.
+    // Firebase αποκαθιστά το session από τον δίσκο. Η ΠΡΩΤΗ τιμή του
+    // authStateChanges έρχεται μόλις τελειώσει η αποκατάσταση (χρήστης ή
+    // null) — άρα δεν χρειάζεται να περιμένουμε 8s όταν δεν υπάρχει χρήστης.
     User? current = FirebaseAuth.instance.currentUser;
     if (current == null) {
       try {
         current = await FirebaseAuth.instance
             .authStateChanges()
-            .firstWhere((u) => u != null)
-            .timeout(const Duration(seconds: 8));
+            .first
+            .timeout(const Duration(seconds: 5));
       } catch (_) {
         current = FirebaseAuth.instance.currentUser;
       }
@@ -53,17 +66,19 @@ class _AuthGatewayState extends State<AuthGateway> {
     // Ήδη συνδεδεμένος με Firebase → κατευθείαν στον χάρτη.
     // ΔΕΝ καλούμε Google lightweight εδώ — προκαλούσε περιττό popup επιλογής
     // λογαριασμού στο startup. Το ημερολόγιο παίρνει τον λογαριασμό μόνο του.
+    // Το splash κλείνει όταν ο χάρτης κάνει SplashController.ready = true.
     if (current != null && !current.isAnonymous) {
-      if (mounted) setState(() { _signedIn = true; _loading = false; });
+      if (mounted) setState(() { _signedIn = true; _checking = false; });
       return;
     }
 
-    // Μη συνδεδεμένος → δείξε την οθόνη σύνδεσης (χωρίς αυτόματο popup).
-    if (mounted) setState(() { _signedIn = false; _loading = false; });
+    // Μη συνδεδεμένος → η οθόνη σύνδεσης είναι έτοιμη αμέσως.
+    if (mounted) setState(() { _signedIn = false; _checking = false; });
+    SplashController.ready.value = true;
   }
 
   Future<void> _signInWithGoogle() async {
-    if (mounted) setState(() { _loading = true; _error = null; });
+    if (mounted) setState(() { _signingIn = true; _error = null; });
     try {
       // Αρχικοποίηση με serverClientId (μία φορά) πριν το authenticate.
       try {
@@ -75,7 +90,7 @@ class _AuthGatewayState extends State<AuthGateway> {
       final account = await GoogleSignIn.instance.authenticate();
       await _firebaseSignIn(account);
     } catch (e) {
-      if (mounted) setState(() { _error = 'Σφάλμα σύνδεσης: $e'; _loading = false; });
+      if (mounted) setState(() { _error = 'Σφάλμα σύνδεσης: $e'; _signingIn = false; });
     }
   }
 
@@ -86,38 +101,41 @@ class _AuthGatewayState extends State<AuthGateway> {
         idToken: auth.idToken,
       );
       await FirebaseAuth.instance.signInWithCredential(credential);
-      if (mounted) setState(() { _signedIn = true; _loading = false; });
+      // Νέα σύνδεση → ξαναπαίζει το splash όσο φορτώνει ο χάρτης.
+      SplashController.ready.value = false;
+      if (mounted) {
+        setState(() { _signedIn = true; _signingIn = false; _splashDone = false; });
+      }
     } catch (e) {
-      if (mounted) setState(() { _error = 'Firebase error: $e'; _loading = false; });
+      if (mounted) setState(() { _error = 'Firebase error: $e'; _signingIn = false; });
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final c = AppColors.of(context);
+    final Widget content = _checking
+        ? const ColoredBox(color: kSplashYellow, child: SizedBox.expand())
+        : (_signedIn ? const HomeMapPage() : _buildSignIn(context));
 
-    if (_loading) {
-      return Scaffold(
-        backgroundColor: c.scaffold,
-        body: const Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              AppLogoBadge(size: 116),
-              SizedBox(height: 28),
-              SizedBox(
-                width: 32, height: 32,
-                child: CircularProgressIndicator(
-                    color: Color(0xFFEF9F27), strokeWidth: 3),
-              ),
-            ],
+    // ⚠️ Πάντα Stack (ίδια δομή) ώστε όταν φύγει το splash να ΜΗΝ
+    // ξαναχτιστεί από την αρχή ο χάρτης (θα έχανε το state του).
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        content,
+        if (!_splashDone)
+          SplashAnimation(
+            ready: SplashController.ready,
+            onFinished: () {
+              if (mounted) setState(() => _splashDone = true);
+            },
           ),
-        ),
-      );
-    }
+      ],
+    );
+  }
 
-    if (_signedIn) return const HomeMapPage();
-
+  Widget _buildSignIn(BuildContext context) {
+    final c = AppColors.of(context);
     return Scaffold(
       backgroundColor: c.scaffold,
       body: SafeArea(
@@ -148,15 +166,21 @@ class _AuthGatewayState extends State<AuthGateway> {
                   SizedBox(
                     width: double.infinity,
                     child: OutlinedButton.icon(
-                      onPressed: _signInWithGoogle,
+                      onPressed: _signingIn ? null : _signInWithGoogle,
                       style: OutlinedButton.styleFrom(
                         backgroundColor: c.card,
                         foregroundColor: c.textMain,
                         side: BorderSide(color: c.cardBorder, width: 0.8),
                       ),
-                      icon: const Icon(Icons.login_rounded,
-                          color: Colors.red, size: 22),
-                      label: const Text('Σύνδεση με Google'),
+                      icon: _signingIn
+                          ? const SizedBox(
+                              width: 20, height: 20,
+                              child: CircularProgressIndicator(
+                                  strokeWidth: 2.4, color: Color(0xFFEF9F27)),
+                            )
+                          : const Icon(Icons.login_rounded,
+                              color: Colors.red, size: 22),
+                      label: Text(_signingIn ? 'Σύνδεση...' : 'Σύνδεση με Google'),
                     ),
                   ),
                   const SizedBox(height: 12),

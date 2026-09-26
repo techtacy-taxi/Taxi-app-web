@@ -22,6 +22,7 @@ import 'package:flutter/material.dart';
 import '../models.dart';
 import '../owner_home_page.dart';
 import '../profile_form.dart';
+import '../widgets/splash_animation.dart';
 import 'admin_shell.dart';
 
 /// Ρόλος + στοιχεία χρήστη που περνούν στο shell.
@@ -72,19 +73,38 @@ class _WebAuthGatewayState extends State<WebAuthGateway> {
   bool    _webAccessDenied = false;
   User?   _pendingUser;
   AdminSession? _session;
+  bool    _splashDone = false;
 
   @override
   void initState() {
     super.initState();
+    SplashController.ready.value = false;
     _bootstrap();
   }
 
   Future<void> _bootstrap() async {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user != null && !user.isAnonymous) {
-      await _resolveRole(user);
-    } else {
-      setState(() => _stage = _Stage.signedOut);
+    try {
+      // Στο web το session αποκαθίσταται ασύγχρονα: η ΠΡΩΤΗ τιμή του
+      // authStateChanges έρχεται μόλις τελειώσει (χρήστης ή null).
+      User? user = FirebaseAuth.instance.currentUser;
+      if (user == null) {
+        try {
+          user = await FirebaseAuth.instance
+              .authStateChanges()
+              .first
+              .timeout(const Duration(seconds: 5));
+        } catch (_) {
+          user = FirebaseAuth.instance.currentUser;
+        }
+      }
+      if (user != null && !user.isAnonymous) {
+        await _resolveRole(user);
+      } else {
+        if (mounted) setState(() => _stage = _Stage.signedOut);
+      }
+    } finally {
+      // Η οθόνη από κάτω είναι έτοιμη → κλείνει το splash animation.
+      SplashController.ready.value = true;
     }
   }
 
@@ -247,6 +267,24 @@ class _WebAuthGatewayState extends State<WebAuthGateway> {
 
   @override
   Widget build(BuildContext context) {
+    // Splash animation ΠΑΝΩ από την οθόνη που φορτώνει (μόνο στο άνοιγμα).
+    // Πάντα Stack (ίδια δομή) ώστε να μην ξαναχτιστεί η οθόνη από κάτω.
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        _buildStage(context),
+        if (!_splashDone)
+          SplashAnimation(
+            ready: SplashController.ready,
+            onFinished: () {
+              if (mounted) setState(() => _splashDone = true);
+            },
+          ),
+      ],
+    );
+  }
+
+  Widget _buildStage(BuildContext context) {
     switch (_stage) {
       case _Stage.loading:
         return const _CenteredCard(child: _Loading());

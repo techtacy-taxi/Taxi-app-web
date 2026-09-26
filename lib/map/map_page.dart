@@ -47,6 +47,7 @@ import '../calendar/calendar_event_parser.dart';
 import '../pricing/pricing_zones_page.dart';
 import '../settings_page.dart';
 import '../viva_settings_page.dart';
+import '../widgets/splash_animation.dart';
 
 class HomeMapPage extends StatefulWidget {
   const HomeMapPage({super.key});
@@ -175,8 +176,24 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
       // ignore: unawaited_futures
       Future(() => FcmService.initForUser(_uid!)).catchError((_) {});
       try {
-        final doc = await FirebaseFirestore.instance
-            .collection('presence').doc(_uid).get();
+        // ⚡ ΓΡΗΓΟΡΟ ΑΝΟΙΓΜΑ: πρώτα από την τοπική cache (στιγμιαίο).
+        // Μόνο αν δεν υπάρχει εκεί (π.χ. πρώτη φορά) → server με timeout.
+        // Φρέσκα δεδομένα ρόλων/έγκρισης έρχονται ούτως ή άλλως από τον
+        // live listener του _checkApproval() λίγο μετά.
+        final ref = FirebaseFirestore.instance.collection('presence').doc(_uid);
+        DocumentSnapshot<Map<String, dynamic>>? doc;
+        try {
+          doc = await ref.get(const GetOptions(source: Source.cache));
+        } catch (_) {
+          doc = null; // δεν υπάρχει στην cache
+        }
+        if (doc == null || !doc.exists) {
+          doc = await ref.get().timeout(const Duration(seconds: 8));
+        } else {
+          // Από την cache → φρεσκάρισμα στοιχείων φόρμας στο παρασκήνιο.
+          // ignore: unawaited_futures
+          _refreshProfileFromServer(ref);
+        }
         if (doc.exists) {
           final data = doc.data();
           if (data != null) {
@@ -214,15 +231,22 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
     try { _checkApproval(); } catch (_) {}
     try { await _loadSavedSettings(); } catch (_) {}
     try { _requestPermissions(); } catch (_) {}
-    try { await _startForegroundService(); } catch (_) {}
+    // ⚡ Τα παρακάτω ΔΕΝ χρειάζεται να τελειώσουν για να φανεί ο χάρτης —
+    // τρέχουν στο παρασκήνιο (πριν περιμέναμε το καθένα με τη σειρά).
+    // ignore: unawaited_futures
+    _startForegroundService().catchError((_) {});
     try { _startGroupsListener(); } catch (_) {}
     try { await _startRealtimePresence(); } catch (_) {}
-    try { await _refreshVehicleIcon(); } catch (_) {}
+    // ignore: unawaited_futures
+    _refreshVehicleIcon().catchError((_) {});
     // Ίδιος κανόνας με το _publishMyLocation: κανένα write στο presence πριν
     // ολοκληρωθεί η φόρμα στοιχείων (το _setOnline δημιουργούσε online/
     // available σε doc «φάντασμα»).
     if (_formComplete || _isAdmin || _isMaster) {
-      try { await _setOnline(true); } catch (_) {}
+      // ⚡ Χωρίς await: ήταν write στο Firestore που περίμενε απάντηση από
+      // τον server — με αδύναμο σήμα κρατούσε το κυκλάκι για δευτερόλεπτα.
+      // ignore: unawaited_futures
+      _setOnline(true).catchError((_) {});
     }
     try { _startLocationUpdates(); } catch (_) {}
     try { _startVoiceListener(); } catch (_) {}
@@ -252,6 +276,8 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
     }
 
     if (mounted) setState(() => _initComplete = true);
+    // Ο χάρτης είναι έτοιμος → κλείνει το splash animation.
+    SplashController.ready.value = true;
 
     _setupIcs(); // άκουσε για αρχεία .ics (κρατήσεις)
 
@@ -266,6 +292,34 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
       // ignore: unawaited_futures
       JobService.migrateBillingRecipients();
     }
+  }
+
+  // Φρεσκάρει από τον server τα στοιχεία φόρμας (όνομα, τηλέφωνο, όχημα...)
+  // όταν το _initPage τα πήρε από την cache. Αθόρυβο σε σφάλμα.
+  Future<void> _refreshProfileFromServer(
+      DocumentReference<Map<String, dynamic>> ref) async {
+    try {
+      final doc = await ref
+          .get(const GetOptions(source: Source.server))
+          .timeout(const Duration(seconds: 15));
+      final data = doc.data();
+      if (!doc.exists || data == null || !mounted) return;
+      setState(() {
+        _displayName  = data['displayName']  ?? _displayName;
+        _lastName     = data['lastName']     ?? _lastName;
+        _phone        = data['phone']        ?? _phone;
+        _vehicleModel = data['vehicleModel'] ?? _vehicleModel;
+        _plateNumber  = data['plateNumber']  ?? _plateNumber;
+        _referredBy   = data['referredBy']   ?? _referredBy;
+        if ((data['vehicleType'] as String?) == VehicleType.van.name) {
+          _vehicleType = VehicleType.van;
+        }
+        _hasBus          = data['hasBus'] == true;
+        _acceptsTaxiJobs = data['acceptsTaxiJobs'] == true;
+      });
+      // ignore: unawaited_futures
+      _refreshVehicleIcon().catchError((_) {});
+    } catch (_) {}
   }
 
   // ─── Άνοιγμα .ics → Νέα Δουλειά ───────────────────────────────────────────
@@ -1314,27 +1368,9 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
   @override
   Widget build(BuildContext context) {
     if (!_initComplete) {
-      return Scaffold(
-        backgroundColor: Colors.white,
-        body: Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              ClipRRect(
-                borderRadius: BorderRadius.circular(24),
-                child: Image.asset('assets/app_icon.png',
-                    width: 120, height: 120),
-              ),
-              const SizedBox(height: 28),
-              const SizedBox(
-                width: 32, height: 32,
-                child: CircularProgressIndicator(
-                    color: Colors.amber, strokeWidth: 3),
-              ),
-            ],
-          ),
-        ),
-      );
+      // Από πάνω παίζει το SplashAnimation (AuthGateway) — εδώ μόνο το ίδιο
+      // κίτρινο φόντο, ώστε να μη φανεί ποτέ «αναβόσβημα» άλλου χρώματος.
+      return const Scaffold(backgroundColor: kSplashYellow);
     }
 
     if (!_formComplete) {

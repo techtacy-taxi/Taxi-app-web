@@ -54,6 +54,9 @@ flutter:
    - assets/app_icon.png
    - assets/Notifaction Bell.mp3
    - assets/icons/all_vehicles.svg
+   - assets/splash/van.png
+   - assets/splash/taxi.png
+   - assets/splash/bus.png
 
 flutter_icons:
   android: "launcher_icon"
