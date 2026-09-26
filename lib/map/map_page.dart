@@ -129,6 +129,13 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
   double    _currentZoom = 16;
   Timer?    _publishTimer;
   Timer?    _approvalTimer;
+  // Αυτόματο κεντράρισμα κάθε 30″ όταν το αυτοκίνητο «φεύγει» από την οθόνη.
+  Timer?    _recenterTimer;
+  DateTime  _lastMapTouch   = DateTime.fromMillisecondsSinceEpoch(0);
+  bool      _appInForeground = true;
+  // Κεντράραμε αρχικά στην «τελευταία γνωστή» θέση (στιγμιαία) — όταν έρθει
+  // το ακριβές GPS fix ελέγχουμε αν χρειάζεται διόρθωση.
+  bool      _centeredOnLastKnown = false;
   Position? _lastPublishedPosition;
 
   final Map<String, Map<String, dynamic>> _presenceCache = {};
@@ -187,7 +194,10 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
         } catch (_) {
           doc = null; // δεν υπάρχει στην cache
         }
-        if (doc == null || !doc.exists) {
+        // Αν η cache δεν έχει ΠΛΗΡΗ στοιχεία φόρμας (π.χ. συμπληρώθηκαν από
+        // άλλη συσκευή) → server, ώστε να ΜΗΝ ανοίξει κατά λάθος η φόρμα
+        // εγγραφής σε οδηγό που την έχει ήδη συμπληρώσει.
+        if (doc == null || !doc.exists || !_profileLooksComplete(doc.data())) {
           doc = await ref.get().timeout(const Duration(seconds: 8));
         } else {
           // Από την cache → φρεσκάρισμα στοιχείων φόρμας στο παρασκήνιο.
@@ -278,6 +288,7 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
     if (mounted) setState(() => _initComplete = true);
     // Ο χάρτης είναι έτοιμος → κλείνει το splash animation.
     SplashController.ready.value = true;
+    _startAutoRecenter();
 
     _setupIcs(); // άκουσε για αρχεία .ics (κρατήσεις)
 
@@ -292,6 +303,14 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
       // ignore: unawaited_futures
       JobService.migrateBillingRecipients();
     }
+  }
+
+  static bool _profileLooksComplete(Map<String, dynamic>? d) {
+    if (d == null) return false;
+    String v(String k) => (d[k] ?? '').toString().trim();
+    return v('displayName').isNotEmpty && v('displayName') != 'Driver' &&
+        v('lastName').isNotEmpty && v('phone').isNotEmpty &&
+        v('vehicleModel').isNotEmpty && v('plateNumber').isNotEmpty;
   }
 
   // Φρεσκάρει από τον server τα στοιχεία φόρμας (όνομα, τηλέφωνο, όχημα...)
@@ -418,6 +437,7 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    _appInForeground = state == AppLifecycleState.resumed;
     if (state == AppLifecycleState.resumed) {
       _setOnline(true);
       Geolocator.getCurrentPosition(
@@ -469,6 +489,7 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
     _groupsSub?.cancel();
     _publishTimer?.cancel();
     _approvalTimer?.cancel();
+    _recenterTimer?.cancel();
     _mapController?.dispose();
     _autoPlayer.dispose();
     _voiceSub?.cancel();
@@ -573,12 +594,80 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
       if (!mounted) return;
       setState(() {});
     });
+    // ⚡ Στιγμιαία «τελευταία γνωστή» θέση → ο χάρτης κεντράρει αμέσως,
+    // χωρίς να περιμένει το ακριβές GPS fix (που θέλει μερικά δευτερόλεπτα).
+    // (Στο web δεν υποστηρίζεται → απλώς αγνοείται.)
+    if (_currentPosition == null) {
+      try {
+        final last = await Geolocator.getLastKnownPosition();
+        if (last != null && _currentPosition == null) {
+          _currentPosition = last;
+          if (_pendingAutoCenter || _mapController == null) {
+            _centeredOnLastKnown = true;
+          }
+          _maybeAutoCenter();
+          if (mounted) setState(() {});
+        }
+      } catch (_) {}
+    }
     final pos = await Geolocator.getCurrentPosition(
         locationSettings: const LocationSettings(accuracy: LocationAccuracy.best));
+    final prev = _currentPosition;
     _currentPosition = pos;
     _maybeAutoCenter();
+    // Αν κεντράραμε στην παλιά θέση και η πραγματική είναι αρκετά μακριά
+    // (π.χ. άνοιξες την εφαρμογή σε άλλη περιοχή) → ξανακεντράρισμα.
+    if (_centeredOnLastKnown && prev != null) {
+      _centeredOnLastKnown = false;
+      final moved = Geolocator.distanceBetween(
+          prev.latitude, prev.longitude, pos.latitude, pos.longitude);
+      if (moved > 200) {
+        try {
+          await _mapController?.animateCamera(CameraUpdate.newLatLngZoom(
+              LatLng(pos.latitude, pos.longitude), 14));
+        } catch (_) {}
+      }
+    }
     if (!mounted) return;
     setState(() {});
+  }
+
+  // ─── Αυτόματο κεντράρισμα κάθε 30″ ────────────────────────────────────────
+  // Όσο βλέπεις τον χάρτη και οδηγείς, το αυτοκίνητό σου μπορεί να βγει από
+  // την οθόνη. Κάθε 30″ ελέγχουμε: αν έχει φύγει από το κεντρικό μισό της
+  // οθόνης → ο χάρτης ακολουθεί (ίδιο ζουμ). ΔΕΝ κάνει τίποτα όταν:
+  //  • η εφαρμογή είναι στο παρασκήνιο ή η οθόνη κλειστή
+  //  • είναι ανοιχτή άλλη σελίδα πάνω από τον χάρτη
+  //  • άγγιξες τον χάρτη τα τελευταία 30″ (π.χ. κοιτάς άλλο σημείο)
+  void _startAutoRecenter() {
+    _recenterTimer?.cancel();
+    _recenterTimer = Timer.periodic(
+        const Duration(seconds: 30), (_) => _autoRecenterTick());
+  }
+
+  Future<void> _autoRecenterTick() async {
+    if (!mounted || !_appInForeground) return;
+    if (!(ModalRoute.of(context)?.isCurrent ?? true)) return;
+    if (DateTime.now().difference(_lastMapTouch) <
+        const Duration(seconds: 30)) {
+      return;
+    }
+    final map = _mapController;
+    final pos = _currentPosition;
+    if (map == null || pos == null) return;
+    try {
+      final b = await map.getVisibleRegion();
+      final latPad = (b.northeast.latitude  - b.southwest.latitude)  * 0.25;
+      final lngPad = (b.northeast.longitude - b.southwest.longitude) * 0.25;
+      final inCenter =
+          pos.latitude  > b.southwest.latitude  + latPad &&
+          pos.latitude  < b.northeast.latitude  - latPad &&
+          pos.longitude > b.southwest.longitude + lngPad &&
+          pos.longitude < b.northeast.longitude - lngPad;
+      if (inCenter) return;
+      await map.animateCamera(
+          CameraUpdate.newLatLng(LatLng(pos.latitude, pos.longitude)));
+    } catch (_) {}
   }
 
   // Αποφασίζει αν ο χάρτης πρέπει να είναι σκούρος ΤΩΡΑ:
@@ -1462,7 +1551,12 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
       child: Scaffold(
         backgroundColor: Colors.white,
         body: Stack(children: [
-        GoogleMap(
+        // Listener: καταγράφει πότε άγγιξες τον χάρτη, ώστε το αυτόματο
+        // κεντράρισμα να μη σε «τραβάει» ενώ κοιτάς κάπου αλλού.
+        Listener(
+          onPointerDown: (_) => _lastMapTouch = DateTime.now(),
+          onPointerUp:   (_) => _lastMapTouch = DateTime.now(),
+          child: GoogleMap(
           initialCameraPosition: kAthens,
           myLocationButtonEnabled: false,
           zoomControlsEnabled:     false,
@@ -1498,6 +1592,7 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
             _currentZoom = z;
             await Future.wait([_refreshVehicleIcon(), _rebuildOtherMarkers()]);
           },
+          ),
         ),
 
         // ─── Top bar (compact redesign) ────────────────────────────────────
