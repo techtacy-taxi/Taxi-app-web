@@ -146,6 +146,8 @@ class PublicBookingAlerts {
       final type = (msg.data['type'] ?? '').toString();
       if (type == 'public_booking') {
         final id = (msg.data['savedJobId'] ?? '').toString();
+        // Σήμα «ΝΕΑ» και από αυτό τον δρόμο (πριν έλειπε).
+        if (id.isNotEmpty) NewSavedBadgeStore.markNew(id);
         if (id.isNotEmpty && _seenIds.contains(id)) return; // ήδη το είδαμε
         if (id.isNotEmpty) _seenIds.add(id);
         _bump();
@@ -215,6 +217,9 @@ class PublicBookingAlerts {
   }
 
   void _bump() {
+    // Συγχρόνισε το «ΝΕΑ» με ό,τι έγραψε το background isolate.
+    // ignore: unawaited_futures
+    NewSavedBadgeStore.ensureLoaded();
     _pendingCount++;
     if (_dialogOpen) {
       _setStateInDialog?.call(() {});   // ανανέωσε τον μετρητή
@@ -333,6 +338,8 @@ class PublicBookingAlerts {
                                 borderRadius: BorderRadius.circular(12)),
                           ),
                           onPressed: () {
+                            final rootNav = NotificationsService
+                                .navigatorKey.currentState;
                             Navigator.of(dctx).pop();
                             // ΚΡΙΣΙΜΟ BUGFIX: αν είχε μείνει ανοιχτή μια
                             // φόρμα (π.χ. Νέα Δουλειά, ενώ έφτιαχνε link
@@ -342,9 +349,9 @@ class PublicBookingAlerts {
                             // Καθαρίζουμε ΠΡΩΤΑ κάθε τέτοια ανοιχτή οθόνη
                             // μέχρι την αρχική (χάρτης), ΜΕΤΑ ζητάμε την
                             // εναλλαγή καρτέλας.
-                            final rootNav = NotificationsService
-                                .navigatorKey.currentState;
-                            rootNav?.popUntil((r) => r.isFirst);
+                            // ΜΟΝΟ μέχρι τη σελίδα «Δουλειές» αν είναι
+                            // ανοιχτή — όχι κι αυτήν (βλ. popToSavedAnchor).
+                            SavedTabNav.popToSavedAnchor(rootNav);
                             // Το map_page (Android) / admin_shell (web) το
                             // ακούει και ανοίγει την καρτέλα Αποθηκευμένες.
                             openSavedJobsRequest.value++;

@@ -147,6 +147,17 @@ class _AdminShellState extends State<AdminShell> {
 
   /// Επιλέγει την ενότητα «Δουλειές» ώστε να φανεί το JobAdminPage, το
   /// οποίο με τη σειρά του μεταπηδά στην καρτέλα «Αποθηκευμένες».
+  Route<dynamic>? _myRoute;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // «Σπίτι» του panel: το «Δες την τώρα» κλείνει ό,τι είναι ανοιχτό από
+    // πάνω (π.χ. φόρμα) και σταματά εδώ.
+    _myRoute = ModalRoute.of(context);
+    SavedTabNav.shellRoute = _myRoute;
+  }
+
   void _onOpenSavedJobsRequest() {
     if (!mounted) return;
     final i = _sections.indexWhere((sec) => sec.label == 'Δουλειές');
@@ -274,6 +285,7 @@ class _AdminShellState extends State<AdminShell> {
   @override
   void dispose() {
     openSavedJobsRequest.removeListener(_onOpenSavedJobsRequest);
+    if (SavedTabNav.shellRoute == _myRoute) SavedTabNav.shellRoute = null;
     _presenceSub?.cancel();
     WebBookingAlerts.instance.dispose();
     super.dispose();

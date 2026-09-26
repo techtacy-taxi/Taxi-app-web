@@ -19,7 +19,7 @@
 // Αυτόματο καθάρισμα μετά από 30 ημέρες ώστε να μη φουσκώνει η αποθήκευση.
 
 import 'dart:convert';
-import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class NewSavedBadgeStore {
@@ -29,28 +29,38 @@ class NewSavedBadgeStore {
   static const Duration _kTtl = Duration(days: 30);
 
   /// savedJobId -> millisecondsSinceEpoch που σημειώθηκε ως νέα.
-  static Map<String, int> _cache = {};
+  static final Map<String, int> _cache = {};
   static bool _loaded = false;
 
   /// Αυξάνεται σε κάθε αλλαγή ώστε το UI να ξαναχτίζεται.
   static final ValueNotifier<int> revision = ValueNotifier<int>(0);
 
   static Future<void> _load() async {
-    if (_loaded) return;
+    // ⚠️ ΚΡΙΣΙΜΟ BUGFIX: ΠΑΝΤΑ ξαναδιαβάζουμε από τον δίσκο (όχι μία φορά).
+    // Όταν η κράτηση έρχεται με την εφαρμογή στο ΠΑΡΑΣΚΗΝΙΟ (π.χ. ο master
+    // είναι στο Chrome και πληρώνει ο πελάτης), το background isolate του FCM
+    // γράφει το «ΝΕΑ» στα SharedPreferences — αλλά η ανοιχτή εφαρμογή είχε
+    // ήδη φορτωμένη στη μνήμη την παλιά λίστα και ΔΕΝ το έβλεπε ποτέ (και στο
+    // επόμενο persist το έσβηνε κιόλας). Τώρα: reload + ένωση δίσκου/μνήμης.
     try {
       final prefs = await SharedPreferences.getInstance();
+      try { await prefs.reload(); } catch (_) {}
       final raw = prefs.getString(_kKey);
       if (raw != null && raw.isNotEmpty) {
         final decoded = jsonDecode(raw);
         if (decoded is Map) {
-          _cache = decoded.map(
-            (k, v) => MapEntry(k.toString(), (v is int) ? v : 0),
-          );
+          var changed = false;
+          decoded.forEach((k, v) {
+            final id = k.toString();
+            if (!_cache.containsKey(id)) {
+              _cache[id] = (v is int) ? v : 0;
+              changed = true;
+            }
+          });
+          if (changed && _loaded) revision.value++;
         }
       }
-    } catch (_) {
-      _cache = {};
-    }
+    } catch (_) {}
     _loaded = true;
     _pruneExpired();
   }
@@ -69,7 +79,8 @@ class NewSavedBadgeStore {
     revision.value++;
   }
 
-  /// Φόρτωση στην εκκίνηση — καλείται από το SavedJobsTab.
+  /// Φόρτωση / συγχρονισμός με τον δίσκο — καλείται από το SavedJobsTab,
+  /// το popup νέας κράτησης και την επιστροφή της εφαρμογής στο προσκήνιο.
   static Future<void> ensureLoaded() => _load();
 
   /// Σημειώνει μια κράτηση ως ΝΕΑ (μη ειδωμένη).
@@ -137,6 +148,31 @@ class SavedTabNav {
   /// true όταν έχει ζητηθεί άνοιγμα Αποθηκευμένων αλλά η σελίδα δεν είχε
   /// προλάβει να δημιουργηθεί. Καταναλώνεται μία φορά από το JobAdminPage.
   static bool pendingOpenSavedTab = false;
+
+  /// Η οθόνη (route) που φιλοξενεί το JobAdminPage.
+  ///  • Android: η σελίδα «Δουλειές» που έχει ανοίξει πάνω από τον χάρτη.
+  ///  • Web: το route του admin_shell (το JobAdminPage ζει μέσα σε αυτό).
+  /// Χρησιμοποιείται από το [popToSavedAnchor].
+  static Route<dynamic>? jobAdminRoute;
+
+  /// Το route του admin_shell (web) — «σπίτι» του panel.
+  static Route<dynamic>? shellRoute;
+
+  /// Κλείνει τις οθόνες που είναι ανοιχτές ΠΑΝΩ από τη σελίδα «Δουλειές»
+  /// (π.χ. φόρμα Νέας Δουλειάς) — αλλά ΟΧΙ την ίδια τη σελίδα «Δουλειές».
+  ///
+  /// ⚠️ ΚΡΙΣΙΜΟ BUGFIX: πριν γινόταν popUntil(isFirst), που έκλεινε ΚΑΙ τη
+  /// σελίδα «Δουλειές». Επειδή το dispose της τρέχει μετά το animation, τη
+  /// στιγμή του αιτήματος το [jobAdminPageOpen] ήταν ακόμη true — ο χάρτης
+  /// νόμιζε ότι είναι ανοιχτή και δεν την ξανάνοιγε → ο χρήστης κατέληγε
+  /// στην κεντρική σελίδα αντί για τις Αποθηκευμένες.
+  static void popToSavedAnchor(NavigatorState? nav) {
+    if (nav == null) return;
+    nav.popUntil((r) =>
+        r.isFirst ||
+        (jobAdminRoute != null && r == jobAdminRoute) ||
+        (shellRoute != null && r == shellRoute));
+  }
 
   /// Διαβάζει ΚΑΙ μηδενίζει το αίτημα (one-shot).
   static bool consumePending() {

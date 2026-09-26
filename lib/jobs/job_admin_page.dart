@@ -100,6 +100,17 @@ class _JobAdminPageState extends State<JobAdminPage>
     openSavedJobsRequest.addListener(_onOpenSavedRequest);
   }
 
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Κράτα το route της σελίδας ώστε το «Δες την τώρα» να κλείνει ΜΟΝΟ ό,τι
+    // είναι ανοιχτό από πάνω (π.χ. φόρμα) και να σταματά εδώ.
+    _myRoute = ModalRoute.of(context);
+    SavedTabNav.jobAdminRoute = _myRoute;
+  }
+
+  Route<dynamic>? _myRoute;
+
   void _onOpenSavedRequest() {
     if (!mounted) return;
     final i = savedTabIndex;
@@ -109,6 +120,9 @@ class _JobAdminPageState extends State<JobAdminPage>
   @override
   void dispose() {
     SavedTabNav.jobAdminPageOpen = false;
+    if (SavedTabNav.jobAdminRoute == _myRoute) {
+      SavedTabNav.jobAdminRoute = null;
+    }
     openSavedJobsRequest.removeListener(_onOpenSavedRequest);
     _tabCtrl.dispose();
     super.dispose();

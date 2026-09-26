@@ -265,7 +265,11 @@ class WebBookingAlerts {
                           ),
                         ),
                         onPressed: () {
-                          Navigator.of(dctx).pop();
+                          final rootNav =
+                              Navigator.of(dctx, rootNavigator: true);
+                          rootNav.pop();
+                          // Κλείσε τυχόν ανοιχτή φόρμα πάνω από το panel.
+                          SavedTabNav.popToSavedAnchor(rootNav);
                           openSavedJobsRequest.value++;
                         },
                         icon: const Icon(Icons.folder_open_rounded, size: 20),
