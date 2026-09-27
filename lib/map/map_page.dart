@@ -120,7 +120,9 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
 
   MarkerAsset?          _myAsset;
   GoogleMapController?  _mapController;
-  bool                   _pendingAutoCenter = false; // κεντράρισε μόλις έρθει η πρώτη θέση
+  // Αρχικό ζουμ στο αυτοκίνητό σου: ολοκληρώθηκε / τρέχει τώρα.
+  bool                   _initialCenterDone = false;
+  bool                   _centeringBusy     = false;
   bool                   _mapIsDark         = false; // τρέχον εφαρμοσμένο στυλ χάρτη
   Position?             _currentPosition;
   StreamSubscription<Position>?                            _positionSub;
@@ -183,26 +185,22 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
       // ignore: unawaited_futures
       Future(() => FcmService.initForUser(_uid!)).catchError((_) {});
       try {
-        // ⚡ ΓΡΗΓΟΡΟ ΑΝΟΙΓΜΑ: πρώτα από την τοπική cache (στιγμιαίο).
-        // Μόνο αν δεν υπάρχει εκεί (π.χ. πρώτη φορά) → server με timeout.
-        // Φρέσκα δεδομένα ρόλων/έγκρισης έρχονται ούτως ή άλλως από τον
-        // live listener του _checkApproval() λίγο μετά.
+        // 🔒 ΕΛΕΓΧΟΙ ΑΣΦΑΛΕΙΑΣ (έγκριση, admin/master, στοιχεία φόρμας):
+        // διαβάζονται ΠΑΝΤΑ από τον server — όχι από την cache — ώστε να μη
+        // μπει ποτέ κάποιος με παλιά «εγκεκριμένη» τιμή. Δεν καθυστερεί το
+        // άνοιγμα: γίνεται ΟΣΟ παίζει το splash animation (~2,8s), που
+        // συνήθως φτάνει και περισσεύει.
+        // Μόνο αν δεν υπάρχει δίκτυο (6s χωρίς απάντηση) → τελευταία γνωστά
+        // από την cache· ο live listener του _checkApproval() τα διορθώνει
+        // αμέσως μόλις έρθει σύνδεση.
         final ref = FirebaseFirestore.instance.collection('presence').doc(_uid);
-        DocumentSnapshot<Map<String, dynamic>>? doc;
+        DocumentSnapshot<Map<String, dynamic>> doc;
         try {
-          doc = await ref.get(const GetOptions(source: Source.cache));
+          doc = await ref
+              .get(const GetOptions(source: Source.server))
+              .timeout(const Duration(seconds: 6));
         } catch (_) {
-          doc = null; // δεν υπάρχει στην cache
-        }
-        // Αν η cache δεν έχει ΠΛΗΡΗ στοιχεία φόρμας (π.χ. συμπληρώθηκαν από
-        // άλλη συσκευή) → server, ώστε να ΜΗΝ ανοίξει κατά λάθος η φόρμα
-        // εγγραφής σε οδηγό που την έχει ήδη συμπληρώσει.
-        if (doc == null || !doc.exists || !_profileLooksComplete(doc.data())) {
-          doc = await ref.get().timeout(const Duration(seconds: 8));
-        } else {
-          // Από την cache → φρεσκάρισμα στοιχείων φόρμας στο παρασκήνιο.
-          // ignore: unawaited_futures
-          _refreshProfileFromServer(ref);
+          doc = await ref.get(const GetOptions(source: Source.cache));
         }
         if (doc.exists) {
           final data = doc.data();
@@ -240,7 +238,12 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
     // PERMISSION_DENIED για νέο χρήστη) να ΜΗΝ μπλοκάρει το loading.
     try { _checkApproval(); } catch (_) {}
     try { await _loadSavedSettings(); } catch (_) {}
-    try { _requestPermissions(); } catch (_) {}
+    // Μετά τον οδηγό αδειών (αν χρειάστηκε) ξεκίνα το GPS — αλλιώς, σε
+    // πρώτη εγκατάσταση, η θέση δεν ερχόταν ποτέ μέχρι το επόμενο άνοιγμα.
+    // ignore: unawaited_futures
+    _requestPermissions().then((_) {
+      if (mounted && _positionSub == null) _startLocationUpdates();
+    }).catchError((_) {});
     // ⚡ Τα παρακάτω ΔΕΝ χρειάζεται να τελειώσουν για να φανεί ο χάρτης —
     // τρέχουν στο παρασκήνιο (πριν περιμέναμε το καθένα με τη σειρά).
     // ignore: unawaited_futures
@@ -303,42 +306,6 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
       // ignore: unawaited_futures
       JobService.migrateBillingRecipients();
     }
-  }
-
-  static bool _profileLooksComplete(Map<String, dynamic>? d) {
-    if (d == null) return false;
-    String v(String k) => (d[k] ?? '').toString().trim();
-    return v('displayName').isNotEmpty && v('displayName') != 'Driver' &&
-        v('lastName').isNotEmpty && v('phone').isNotEmpty &&
-        v('vehicleModel').isNotEmpty && v('plateNumber').isNotEmpty;
-  }
-
-  // Φρεσκάρει από τον server τα στοιχεία φόρμας (όνομα, τηλέφωνο, όχημα...)
-  // όταν το _initPage τα πήρε από την cache. Αθόρυβο σε σφάλμα.
-  Future<void> _refreshProfileFromServer(
-      DocumentReference<Map<String, dynamic>> ref) async {
-    try {
-      final doc = await ref
-          .get(const GetOptions(source: Source.server))
-          .timeout(const Duration(seconds: 15));
-      final data = doc.data();
-      if (!doc.exists || data == null || !mounted) return;
-      setState(() {
-        _displayName  = data['displayName']  ?? _displayName;
-        _lastName     = data['lastName']     ?? _lastName;
-        _phone        = data['phone']        ?? _phone;
-        _vehicleModel = data['vehicleModel'] ?? _vehicleModel;
-        _plateNumber  = data['plateNumber']  ?? _plateNumber;
-        _referredBy   = data['referredBy']   ?? _referredBy;
-        if ((data['vehicleType'] as String?) == VehicleType.van.name) {
-          _vehicleType = VehicleType.van;
-        }
-        _hasBus          = data['hasBus'] == true;
-        _acceptsTaxiJobs = data['acceptsTaxiJobs'] == true;
-      });
-      // ignore: unawaited_futures
-      _refreshVehicleIcon().catchError((_) {});
-    } catch (_) {}
   }
 
   // ─── Άνοιγμα .ics → Νέα Δουλειά ───────────────────────────────────────────
@@ -438,6 +405,11 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     _appInForeground = state == AppLifecycleState.resumed;
+    if (state == AppLifecycleState.resumed && _positionSub == null) {
+      // π.χ. γύρισες από τις Ρυθμίσεις αφού έδωσες άδεια τοποθεσίας
+      // ignore: unawaited_futures
+      _startLocationUpdates().catchError((_) {});
+    }
     if (state == AppLifecycleState.resumed) {
       _setOnline(true);
       Geolocator.getCurrentPosition(
@@ -590,7 +562,8 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
       locationSettings: const LocationSettings(accuracy: LocationAccuracy.best, distanceFilter: 5),
     ).listen((pos) {
       _currentPosition = pos;
-      _maybeAutoCenter();
+      // ignore: unawaited_futures
+      _ensureCenteredOnMe();
       if (!mounted) return;
       setState(() {});
     });
@@ -602,10 +575,9 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
         final last = await Geolocator.getLastKnownPosition();
         if (last != null && _currentPosition == null) {
           _currentPosition = last;
-          if (_pendingAutoCenter || _mapController == null) {
-            _centeredOnLastKnown = true;
-          }
-          _maybeAutoCenter();
+          _centeredOnLastKnown = !_initialCenterDone;
+          // ignore: unawaited_futures
+          _ensureCenteredOnMe();
           if (mounted) setState(() {});
         }
       } catch (_) {}
@@ -614,10 +586,13 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
         locationSettings: const LocationSettings(accuracy: LocationAccuracy.best));
     final prev = _currentPosition;
     _currentPosition = pos;
-    _maybeAutoCenter();
+    // ignore: unawaited_futures
+    _ensureCenteredOnMe();
     // Αν κεντράραμε στην παλιά θέση και η πραγματική είναι αρκετά μακριά
-    // (π.χ. άνοιξες την εφαρμογή σε άλλη περιοχή) → ξανακεντράρισμα.
-    if (_centeredOnLastKnown && prev != null) {
+    // (π.χ. άνοιξες την εφαρμογή σε άλλη περιοχή) → ξανακεντράρισμα,
+    // εκτός αν ο χρήστης έχει ήδη πιάσει τον χάρτη.
+    final touchedSinceOpen = _lastMapTouch.millisecondsSinceEpoch > 0;
+    if (_centeredOnLastKnown && prev != null && !touchedSinceOpen) {
       _centeredOnLastKnown = false;
       final moved = Geolocator.distanceBetween(
           prev.latitude, prev.longitude, pos.latitude, pos.longitude);
@@ -708,17 +683,49 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
     await map.setMapStyle(wantDark ? _darkMapStyle : null);
   }
 
-  // Κεντράρισμα στη θέση σου με ζουμ, ΜΙΑ φορά — μόλις έρθει η πρώτη θέση
-  // μετά το άνοιγμα του χάρτη, αν το onMapCreated είχε τρέξει πριν προλάβει
-  // να έρθει η θέση (π.χ. αργό GPS fix).
-  Future<void> _maybeAutoCenter() async {
-    if (!_pendingAutoCenter) return;
-    final map = _mapController;
-    final pos = _currentPosition;
-    if (map == null || pos == null) return;
-    _pendingAutoCenter = false;
-    await map.animateCamera(CameraUpdate.newLatLngZoom(
-        LatLng(pos.latitude, pos.longitude), 14));
+  // ─── Αρχικό ζουμ στο αυτοκίνητό σου ──────────────────────────────────────
+  // Καλείται από ΟΛΑ τα σημεία που μπορεί να «έρθει πρώτο»: δημιουργία
+  // χάρτη, τελευταία γνωστή θέση, πρώτο GPS fix, stream θέσης.
+  // Γιατί δεν έκανε ΠΑΝΤΑ ζουμ πριν:
+  //  • στο Android, κίνηση κάμερας αμέσως μετά το onMapCreated κάποιες
+  //    φορές αγνοείται (ο χάρτης δεν έχει πάρει ακόμα μέγεθος)
+  //  • αν αποτύγχανε κάτι πριν από το ζουμ στο onMapCreated, δεν γινόταν ποτέ
+  //  • αν η άδεια τοποθεσίας δόθηκε στον οδηγό αδειών, το GPS δεν ξεκινούσε
+  // Τώρα: κινεί την κάμερα, ΕΠΙΒΕΒΑΙΩΝΕΙ ότι το αυτοκίνητο φαίνεται στην
+  // οθόνη και ξαναδοκιμάζει (έως ~15s). Σταματά αν αγγίξεις τον χάρτη.
+  Future<void> _ensureCenteredOnMe() async {
+    if (_initialCenterDone || _centeringBusy) return;
+    _centeringBusy = true;
+    final started = DateTime.now();
+    try {
+      for (var i = 0; i < 20 && mounted && !_initialCenterDone; i++) {
+        if (_lastMapTouch.isAfter(started)) {
+          _initialCenterDone = true; // ο χρήστης πήρε τον έλεγχο
+          break;
+        }
+        final map = _mapController;
+        final pos = _currentPosition;
+        if (map != null && pos != null) {
+          final me = LatLng(pos.latitude, pos.longitude);
+          try {
+            await map.moveCamera(CameraUpdate.newLatLngZoom(me, 14));
+            await Future.delayed(const Duration(milliseconds: 350));
+            final b = await map.getVisibleRegion();
+            final hasSize = b.northeast.latitude != b.southwest.latitude;
+            if (hasSize && b.contains(me)) {
+              _initialCenterDone = true;
+              break;
+            }
+          } catch (_) {}
+        } else if (map != null && pos == null && i >= 2) {
+          // Δεν υπάρχει ακόμη θέση — θα ξανακληθούμε όταν έρθει.
+          break;
+        }
+        await Future.delayed(const Duration(milliseconds: 400));
+      }
+    } finally {
+      _centeringBusy = false;
+    }
   }
 
   void _startPeriodicLocationPublish() {
@@ -1565,23 +1572,19 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
           myLocationEnabled:       false,
           onMapCreated: (c) async {
             _mapController = c;
-            await _applyMapStyle(); // πρώτη εφαρμογή στυλ (dark/light)
-            final z = await c.getZoomLevel();
-            if (!mounted) return;
-            _currentZoom = z;
-            await _refreshVehicleIcon();
-            await _rebuildOtherMarkers();
-            if (_currentPosition != null) {
-              // Κεντράρισμα στη θέση σου αμέσως — σαν να πάτησες το
-              // κουμπί «η θέση μου».
-              await c.animateCamera(CameraUpdate.newLatLngZoom(
-                LatLng(_currentPosition!.latitude, _currentPosition!.longitude), 14));
-            } else {
-              // Η θέση δεν έχει έρθει ακόμη· μόλις φτάσει, κεντράρισε
-              // αυτόματα μία φορά (χωρίς να χρειαστεί ο χρήστης να πατήσει
-              // το κουμπί «η θέση μου»).
-              _pendingAutoCenter = true;
-            }
+            // Ζουμ στο αυτοκίνητό σου ΠΡΩΤΟ (με επιβεβαίωση/επανάληψη) —
+            // ανεξάρτητο από τα παρακάτω, ώστε ένα σφάλμα εκεί να μην το
+            // ακυρώνει. Αν δεν έχει έρθει θέση, γίνεται μόλις έρθει.
+            // ignore: unawaited_futures
+            _ensureCenteredOnMe();
+            try { await _applyMapStyle(); } catch (_) {} // στυλ dark/light
+            try {
+              final z = await c.getZoomLevel();
+              if (!mounted) return;
+              _currentZoom = z;
+            } catch (_) {}
+            try { await _refreshVehicleIcon(); } catch (_) {}
+            try { await _rebuildOtherMarkers(); } catch (_) {}
           },
           onCameraIdle: () async {
             final c = _mapController;
