@@ -412,6 +412,10 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
     }
     if (state == AppLifecycleState.resumed) {
       _setOnline(true);
+      // Άνοιγμα οθόνης / επιστροφή από background: κεντράρισμα ΑΜΕΣΩΣ με
+      // την τελευταία θέση (αν κουνήθηκες), και ξανά με το φρέσκο GPS fix.
+      // ignore: unawaited_futures
+      _recenterIfMoved(ignoreTouch: true);
       Geolocator.getCurrentPosition(
           locationSettings: const LocationSettings(accuracy: LocationAccuracy.best))
           .then((pos) {
@@ -419,6 +423,8 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
         _lastPublishedPosition = null;
         _publishMyLocation(force: true);
         if (mounted) setState(() {});
+        // ignore: unawaited_futures
+        _recenterIfMoved(ignoreTouch: true);
       });
     }
   }
@@ -600,6 +606,7 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
         try {
           await _mapController?.animateCamera(CameraUpdate.newLatLngZoom(
               LatLng(pos.latitude, pos.longitude), 14));
+          _lastCenteredAt = LatLng(pos.latitude, pos.longitude);
         } catch (_) {}
       }
     }
@@ -607,43 +614,51 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
     setState(() {});
   }
 
-  // ─── Αυτόματο κεντράρισμα κάθε 30″ ────────────────────────────────────────
-  // Όσο βλέπεις τον χάρτη και οδηγείς, το αυτοκίνητό σου μπορεί να βγει από
-  // την οθόνη. Κάθε 30″ ελέγχουμε: αν έχει φύγει από το κεντρικό μισό της
-  // οθόνης → ο χάρτης ακολουθεί (ίδιο ζουμ). ΔΕΝ κάνει τίποτα όταν:
+  // ─── Αυτόματο κεντράρισμα κάθε 20″ ────────────────────────────────────────
+  // Κάθε 20″: αν το αυτοκίνητό σου έχει κουνηθεί (πάνω από 25μ) από το σημείο
+  // όπου κεντραρίστηκε τελευταία φορά ο χάρτης → ο οδηγός ξαναμπαίνει στο
+  // κέντρο (ίδιο ζουμ). ΔΕΝ κάνει τίποτα όταν:
   //  • η εφαρμογή είναι στο παρασκήνιο ή η οθόνη κλειστή
   //  • είναι ανοιχτή άλλη σελίδα πάνω από τον χάρτη
-  //  • άγγιξες τον χάρτη τα τελευταία 30″ (π.χ. κοιτάς άλλο σημείο)
+  //  • άγγιξες τον χάρτη τα τελευταία 20″ (π.χ. κοιτάς άλλο σημείο)
+  // Επιπλέον: όταν ανοίγεις την οθόνη ή γυρνάς στην εφαρμογή από το
+  // background, κεντράρει αμέσως αν έχεις κουνηθεί (βλ. lifecycle).
+  static const Duration _recenterEvery    = Duration(seconds: 20);
+  static const double   _recenterMinMoveM = 25;
+  LatLng? _lastCenteredAt; // πού κεντράρισε τελευταία φορά ο χάρτης
+
   void _startAutoRecenter() {
     _recenterTimer?.cancel();
     _recenterTimer = Timer.periodic(
-        const Duration(seconds: 30), (_) => _autoRecenterTick());
+        _recenterEvery, (_) => _recenterIfMoved());
   }
 
-  Future<void> _autoRecenterTick() async {
+  /// Κεντράρει τον χάρτη στον οδηγό ΑΝ έχει κουνηθεί από το τελευταίο
+  /// κεντράρισμα. [ignoreTouch]: true στο άνοιγμα από background (τότε
+  /// θέλουμε πάντα να σε δείξει εκεί που είσαι τώρα).
+  Future<void> _recenterIfMoved({bool ignoreTouch = false}) async {
     if (!mounted || !_appInForeground) return;
     if (!(ModalRoute.of(context)?.isCurrent ?? true)) return;
-    if (DateTime.now().difference(_lastMapTouch) <
-        const Duration(seconds: 30)) {
+    if (!ignoreTouch &&
+        DateTime.now().difference(_lastMapTouch) < _recenterEvery) {
       return;
     }
     final map = _mapController;
     final pos = _currentPosition;
     if (map == null || pos == null) return;
+    final me   = LatLng(pos.latitude, pos.longitude);
+    final last = _lastCenteredAt;
+    if (last != null) {
+      final moved = Geolocator.distanceBetween(
+          last.latitude, last.longitude, me.latitude, me.longitude);
+      if (moved < _recenterMinMoveM) return; // ακίνητος → άσε τον χάρτη
+    }
     try {
-      final b = await map.getVisibleRegion();
-      final latPad = (b.northeast.latitude  - b.southwest.latitude)  * 0.25;
-      final lngPad = (b.northeast.longitude - b.southwest.longitude) * 0.25;
-      final inCenter =
-          pos.latitude  > b.southwest.latitude  + latPad &&
-          pos.latitude  < b.northeast.latitude  - latPad &&
-          pos.longitude > b.southwest.longitude + lngPad &&
-          pos.longitude < b.northeast.longitude - lngPad;
-      if (inCenter) return;
-      await map.animateCamera(
-          CameraUpdate.newLatLng(LatLng(pos.latitude, pos.longitude)));
+      await map.animateCamera(CameraUpdate.newLatLng(me));
+      _lastCenteredAt = me;
     } catch (_) {}
   }
+
 
   // Αποφασίζει αν ο χάρτης πρέπει να είναι σκούρος ΤΩΡΑ:
   //  • Φωτεινό/Σκούρο (χειροκίνητο στου χάρτη) → ό,τι διάλεξες.
@@ -714,6 +729,7 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
             final hasSize = b.northeast.latitude != b.southwest.latitude;
             if (hasSize && b.contains(me)) {
               _initialCenterDone = true;
+              _lastCenteredAt = me;
               break;
             }
           } catch (_) {}
