@@ -108,6 +108,11 @@ class Job {
   final DateTime?  takenAt;
   final DateTime?  doneAt;
   final DateTime?  cancelledAt;
+  /// Στιγμιότυπο της δουλειάς ΑΚΡΙΒΩΣ πριν την ακύρωση (οδηγός, status,
+  /// χρεώσεις κλπ). Υπάρχει μόνο σε δουλειές που ακυρώθηκαν μετά την
+  /// προσθήκη της «Επαναφοράς» — το χρησιμοποιεί ο master για να την
+  /// επαναφέρει όπως ήταν.
+  final Map<String, dynamic>? preCancel;
   final String?      groupId;      // αν απευθύνεται σε συγκεκριμένη ομάδα
   final List<String> targetUids;   // συγκεκριμένοι οδηγοί (1+) — αντί για ομάδα
   final List<String> targetNames;  // ονόματα των συγκεκριμένων οδηγών (παράλληλη λίστα)
@@ -188,6 +193,7 @@ class Job {
     this.takenAt,
     this.doneAt,
     this.cancelledAt,
+    this.preCancel,
     this.groupId,
     this.targetUids   = const [],
     this.targetNames  = const [],
@@ -296,6 +302,9 @@ class Job {
       takenAt:          (d['takenAt']       as Timestamp?)?.toDate(),
       doneAt:           (d['doneAt']        as Timestamp?)?.toDate(),
       cancelledAt:      (d['cancelledAt']   as Timestamp?)?.toDate(),
+      preCancel:        d['preCancel'] is Map
+          ? Map<String, dynamic>.from(d['preCancel'] as Map)
+          : null,
       groupId:          d['groupId'],
       targetUids:       tUids,
       targetNames:      tNames,
@@ -424,7 +433,8 @@ class Job {
     flightDelayMinutes: flightDelayMinutes,
     flightCheckedRaw: flightCheckedRaw,
     createdAt: createdAt, takenAt: takenAt,
-    doneAt: doneAt, cancelledAt: cancelledAt, groupId: groupId,
+    doneAt: doneAt, cancelledAt: cancelledAt, preCancel: preCancel,
+    groupId: groupId,
     targetUids: targetUids, targetNames: targetNames, timeoutMins: timeoutMins,
     clientName: clientName, clientPhone: clientPhone, clientEmail: clientEmail,
     flightOrShip: flightOrShip, isReturn: isReturn, availableOnly: availableOnly,
@@ -453,6 +463,8 @@ class Job {
   bool get isBoarded   => status == JobStatus.boarded;
   bool get isExpired   => status == JobStatus.expired;
   bool get isCancelled => status == JobStatus.cancelled;
+  /// Ακυρωμένη δουλειά που μπορεί να επαναφερθεί (έχει στιγμιότυπο).
+  bool get canRestoreCancel => isCancelled && preCancel != null;
 
   double get driverEarning => price - commission - appCommission;
 

@@ -745,15 +745,27 @@ class JobService {
     });
   }
 
-  // Ακύρωση δουλειάς — αναιρεί και τις χρεώσεις/τζίρο του οδηγού
+  // Ακύρωση δουλειάς — αναιρεί και τις χρεώσεις/τζίρο του οδηγού.
+  // Κρατάει ΣΤΙΓΜΙΟΤΥΠΟ (preCancel) με ό,τι άλλαξε, ώστε ο master να μπορεί
+  // να την επαναφέρει ΑΚΡΙΒΩΣ όπως ήταν (βλ. restoreCancelledJob).
   static Future<void> cancelJob(String jobId) async {
     final jobRef = _fs.collection(_jobs).doc(jobId);
     // Διάβασε τη δουλειά για τζίρο/οδηγό
     Job? job;
+    Map<String, dynamic> raw = const {};
     try {
       final jdoc = await jobRef.get();
-      if (jdoc.exists) job = Job.fromDoc(jdoc);
+      if (jdoc.exists) {
+        job = Job.fromDoc(jdoc);
+        raw = jdoc.data() ?? const {};
+      }
     } catch (_) {}
+
+    // Τι αναιρέθηκε (για την επαναφορά) — γράφεται ΜΟΝΟ αν πέτυχε το batch.
+    final voidedTxIds    = <String>[];
+    final refund         = <String, double>{};
+    String turnoverUid    = '';
+    double turnoverAmount = 0;
 
     // 1. Αναίρεση billing χρεώσεων αυτής της δουλειάς + τζίρου
     try {
@@ -763,7 +775,8 @@ class JobService {
           .get();
       final batch = _fs.batch();
       // Ομαδοποίηση επιστροφών ανά οδηγό
-      final refund = <String, double>{};
+      final ids = <String>[];
+      final ref = <String, double>{};
       for (final d in charges.docs) {
         final data = d.data();
         if (data['voided'] == true) continue;
@@ -771,37 +784,138 @@ class JobService {
         final uid    = data['uid'] as String? ?? '';
         final amount = (data['amount'] as num?)?.toDouble() ?? 0;
         if (data['type'] == 'charge') {
-          refund[uid] = (refund[uid] ?? 0) + amount;
+          ref[uid] = (ref[uid] ?? 0) + amount;
         }
         batch.update(d.reference, {'voided': true});
+        ids.add(d.id);
       }
-      refund.forEach((uid, amount) {
+      ref.forEach((uid, amount) {
         if (uid.isEmpty || amount <= 0) return;
         batch.update(_fs.collection('presence').doc(uid),
             {'appDebt': FieldValue.increment(-amount)});
       });
       // Αφαίρεση τζίρου αν η δουλειά είχε ολοκληρωθεί
+      String tUid = '';
+      double tAmt = 0;
       if (job != null &&
           job.status == JobStatus.done &&
           job.takenBy != null && job.takenBy!.isNotEmpty) {
-        batch.update(_fs.collection('presence').doc(job.takenBy), {
-          'turnover': FieldValue.increment(-job.price),
+        tUid = job.takenBy!;
+        tAmt = job.price;
+        batch.update(_fs.collection('presence').doc(tUid), {
+          'turnover': FieldValue.increment(-tAmt),
         });
       }
       await batch.commit();
+      voidedTxIds.addAll(ids);
+      ref.forEach((uid, amount) {
+        if (uid.isNotEmpty && amount > 0) refund[uid] = amount;
+      });
+      turnoverUid    = tUid;
+      turnoverAmount = tAmt;
     } catch (_) {}
 
-    // 2. Σήμανση δουλειάς ως ακυρωμένης
+    // 2. Σήμανση δουλειάς ως ακυρωμένης + στιγμιότυπο για επαναφορά
+    final canSnapshot = job != null && job.status != JobStatus.cancelled;
     await jobRef.update({
       'status':        JobStatus.cancelled.name,
       'cancelledAt':   FieldValue.serverTimestamp(),
+      'cancelledBy':   FirebaseAuth.instance.currentUser?.uid,
       'takenBy':       null,
       'takenByName':   null,
       'takenAt':       null,
       'doneAt':        null,
       'commission':    0,
       'appCommission': 0,
+      if (canSnapshot)
+        'preCancel': {
+          'status':         raw['status'],
+          'takenBy':        raw['takenBy'],
+          'takenByName':    raw['takenByName'],
+          'takenAt':        raw['takenAt'],
+          'doneAt':         raw['doneAt'],
+          'commission':     raw['commission'] ?? 0,
+          'appCommission':  raw['appCommission'] ?? 0,
+          'voidedTxIds':    voidedTxIds,
+          'refunds':        refund,
+          'turnoverUid':    turnoverUid,
+          'turnoverAmount': turnoverAmount,
+        },
     });
+  }
+
+  /// ΕΠΑΝΑΦΟΡΑ ακυρωμένης δουλειάς — ΜΟΝΟ master.
+  /// Γυρνάει τη δουλειά ΑΚΡΙΒΩΣ όπως ήταν πριν την ακύρωση:
+  ///   • ίδιος οδηγός, ίδιο status (π.χ. ολοκληρωμένη / αναλήφθηκε)
+  ///   • ίδιες προμήθειες (γιαούρτι / App) και ώρες ανάληψης/ολοκλήρωσης
+  ///   • ξαναενεργοποιεί τις χρεώσεις (billing_tx) που είχαν ακυρωθεί και
+  ///     ξαναπροσθέτει χρέος (appDebt) και τζίρο στον οδηγό
+  /// ΔΕΝ ξαναχρεώνεται διπλά: βάζουμε billedAt ώστε ο server trigger
+  /// onJobBilling να μην τρέξει ξανά όταν η δουλειά γίνει πάλι «done».
+  /// Επιστρέφει μήνυμα σφάλματος ή null αν πέτυχε.
+  static Future<String?> restoreCancelledJob(String jobId) async {
+    final jobRef = _fs.collection(_jobs).doc(jobId);
+    try {
+      final jdoc = await jobRef.get(const GetOptions(source: Source.server));
+      final raw  = jdoc.data();
+      if (raw == null) return 'Η δουλειά δεν βρέθηκε.';
+      if (raw['status'] != JobStatus.cancelled.name) {
+        return 'Η δουλειά δεν είναι πια ακυρωμένη.';
+      }
+      final pre = raw['preCancel'];
+      if (pre is! Map) {
+        return 'Δεν υπάρχουν στοιχεία για επαναφορά (παλιά ακύρωση).';
+      }
+
+      final batch = _fs.batch();
+
+      // 1. Ξαναενεργοποίηση χρεώσεων που είχε ακυρώσει η ακύρωση
+      final ids = (pre['voidedTxIds'] as List?)?.cast<String>() ?? const [];
+      for (final id in ids) {
+        batch.update(_fs.collection(_billingTx).doc(id), {'voided': false});
+      }
+      // 2. Επαναφορά χρέους (appDebt) ανά οδηγό
+      final refunds = (pre['refunds'] as Map?) ?? const {};
+      refunds.forEach((uid, amount) {
+        final a = (amount as num?)?.toDouble() ?? 0;
+        if (uid is String && uid.isNotEmpty && a > 0) {
+          batch.update(_fs.collection('presence').doc(uid),
+              {'appDebt': FieldValue.increment(a)});
+        }
+      });
+      // 3. Επαναφορά τζίρου
+      final tUid = (pre['turnoverUid'] as String?) ?? '';
+      final tAmt = (pre['turnoverAmount'] as num?)?.toDouble() ?? 0;
+      if (tUid.isNotEmpty && tAmt > 0) {
+        batch.update(_fs.collection('presence').doc(tUid),
+            {'turnover': FieldValue.increment(tAmt)});
+      }
+      // 4. Η ίδια η δουλειά όπως ήταν
+      final wasDone = pre['status'] == JobStatus.done.name;
+      batch.update(jobRef, {
+        'status':        pre['status'] ?? JobStatus.taken.name,
+        'takenBy':       pre['takenBy'],
+        'takenByName':   pre['takenByName'],
+        'takenAt':       pre['takenAt'],
+        'doneAt':        pre['doneAt'],
+        'commission':    pre['commission'] ?? 0,
+        'appCommission': pre['appCommission'] ?? 0,
+        'cancelledAt':   null,
+        'cancelledBy':   FieldValue.delete(),
+        'preCancel':     FieldValue.delete(),
+        'restoredAt':    FieldValue.serverTimestamp(),
+        'restoredBy':    FirebaseAuth.instance.currentUser?.uid,
+        // Προστασία από διπλή χρέωση από τον server trigger.
+        if (wasDone && raw['billedAt'] == null)
+          'billedAt': FieldValue.serverTimestamp(),
+      });
+
+      await batch.commit();
+      return null;
+    } catch (e) {
+      debugPrint('restoreCancelledJob error: $e');
+      return 'Η επαναφορά απέτυχε. Έλεγξε τη σύνδεση και δοκίμασε ξανά.';
+    }
   }
 
   // Επανέκδοση — reset για νέα διεκδίκηση από την αρχή της κλιμάκωσης

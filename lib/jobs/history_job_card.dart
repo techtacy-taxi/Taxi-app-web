@@ -182,6 +182,19 @@ class HistoryJobCard extends StatelessWidget {
                 },
               ),
             ],
+            // Επαναφορά ακυρωμένης — ΜΟΝΟ master, δίπλα στην αντιγραφή.
+            // Γυρνάει τη δουλειά στον οδηγό που την είχε, ακριβώς όπως ήταν.
+            if (isMaster && job.canRestoreCancel) ...[
+              const SizedBox(width: 4),
+              IconButton(
+                icon:        const Icon(Icons.restore_rounded,
+                    size: 19, color: Color(0xFF1E8E3E)),
+                tooltip:     'Επαναφορά (όπως πριν την ακύρωση)',
+                padding:     EdgeInsets.zero,
+                constraints: const BoxConstraints(),
+                onPressed:   () => _showRestoreDialog(context),
+              ),
+            ],
             // Διόρθωση χρεώσεων — ΜΟΝΟ master, σε ολοκληρωμένη δουλειά
             if (isMaster && job.status == JobStatus.done) ...[
               const SizedBox(width: 4),
@@ -261,7 +274,11 @@ class HistoryJobCard extends StatelessWidget {
           // ── Λοιπά chips (οδηγός, πελάτης, πτήση, δημιουργός) ─────────
           Wrap(spacing: 6, runSpacing: 4, children: [
             jobChip(Icons.person_rounded,
-                job.takenByName ?? 'Άγνωστος', Colors.blue),
+                job.takenByName ??
+                    (_preCancelDriver != null
+                        ? 'Είχε: $_preCancelDriver'
+                        : 'Άγνωστος'),
+                Colors.blue),
             if (!isCancelled &&
                 job.commission > 0 && job.sourceName != null)
               jobChip(Icons.source_rounded, job.sourceName!, Colors.orange),
@@ -535,6 +552,100 @@ class HistoryJobCard extends StatelessWidget {
   }
 
   // ── Dialog ολικής διαγραφής — μόνο για master ──────────────────────────
+  // Ο οδηγός που είχε τη δουλειά πριν ακυρωθεί (αν υπάρχει στιγμιότυπο).
+  String? get _preCancelDriver {
+    final n = job.preCancel?['takenByName'];
+    return (n is String && n.trim().isNotEmpty) ? n : null;
+  }
+
+  static String _statusLabel(dynamic s) {
+    switch (s) {
+      case 'done':    return 'Ολοκληρωμένη';
+      case 'boarded': return 'Επιβιβάστηκε';
+      case 'taken':   return 'Αναλήφθηκε';
+      case 'open':    return 'Ανοιχτή';
+      default:        return s?.toString() ?? '—';
+    }
+  }
+
+  Future<void> _showRestoreDialog(BuildContext context) async {
+    final pre   = job.preCancel ?? const {};
+    final comm  = (pre['commission']    as num?)?.toDouble() ?? 0;
+    final app   = (pre['appCommission'] as num?)?.toDouble() ?? 0;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20)),
+        title: const Row(children: [
+          Icon(Icons.restore_rounded, color: Color(0xFF1E8E3E), size: 24),
+          SizedBox(width: 10),
+          Expanded(child: Text('Επαναφορά δουλειάς',
+              style: TextStyle(fontWeight: FontWeight.bold))),
+        ]),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('${job.from} → ${job.to}',
+                style: const TextStyle(fontWeight: FontWeight.w600)),
+            const SizedBox(height: 10),
+            Text('Θα γυρίσει ακριβώς όπως ήταν πριν την ακύρωση:',
+                style: TextStyle(fontSize: 12.5, color: Colors.grey[700])),
+            const SizedBox(height: 6),
+            // Το Booking ID δεν αλλάζει ποτέ (ούτε στην ακύρωση) — μένει ίδιο.
+            if (job.bookingNumber != null)
+              Text('• Booking #${job.bookingNumber}',
+                  style: const TextStyle(fontSize: 13)),
+            Text('• Οδηγός: ${_preCancelDriver ?? '—'}',
+                style: const TextStyle(fontSize: 13)),
+            Text('• Κατάσταση: ${_statusLabel(pre['status'])}',
+                style: const TextStyle(fontSize: 13)),
+            if (comm > 0)
+              Text('• Γιαούρτι: ${comm.toStringAsFixed(2)}€',
+                  style: const TextStyle(fontSize: 13)),
+            if (app > 0)
+              Text('• Προμήθεια App: ${app.toStringAsFixed(2)}€',
+                  style: const TextStyle(fontSize: 13)),
+            // Πληρωμή μέσω Viva: ΔΕΝ αλλάζει ούτε με την ακύρωση ούτε με
+            // την επαναφορά — μένει στη δουλειά όπως ήταν.
+            if (job.fullyPaid)
+              Text('• Πληρωμένη ολόκληρη μέσω Viva '
+                  '(${job.price.toStringAsFixed(2)}€)',
+                  style: const TextStyle(fontSize: 13))
+            else if (job.depositPaid && job.depositAmount > 0)
+              Text('• Προκαταβολή μέσω Viva: '
+                  '${job.depositAmount.toStringAsFixed(2)}€',
+                  style: const TextStyle(fontSize: 13)),
+            if (comm > 0 || app > 0)
+              Text('• Οι χρεώσεις του οδηγού ενεργοποιούνται ξανά.',
+                  style: TextStyle(fontSize: 12, color: Colors.grey[600])),
+          ],
+        ),
+        actions: [
+          AppButtonTonal(
+            label: 'Πίσω',
+            onPressed: () => Navigator.pop(ctx, false),
+          ),
+          AppButton(
+            label: 'Επαναφορά',
+            icon: Icons.restore_rounded,
+            color: const Color(0xFF1E8E3E),
+            onPressed: () => Navigator.pop(ctx, true),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    final err = await JobService.restoreCancelledJob(job.id);
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(err ?? 'Η δουλειά επανήλθε στον ${_preCancelDriver ?? 'οδηγό'}.'),
+      backgroundColor: err == null ? const Color(0xFF1E8E3E) : Colors.red,
+    ));
+    if (err == null) onChanged?.call();
+  }
+
   Future<void> _showPurgeDialog(BuildContext context) async {
     final ok = await showDialog<bool>(
       context: context,
