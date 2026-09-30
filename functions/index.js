@@ -4194,6 +4194,10 @@ const VIVA_CLIENT_SECRET = defineSecret("VIVA_CLIENT_SECRET");
 const VIVA_MERCHANT_ID   = defineSecret("VIVA_MERCHANT_ID");
 const VIVA_API_KEY       = defineSecret("VIVA_API_KEY");
 const VIVA_DEMO          = defineSecret("VIVA_DEMO"); // "true" | "false"
+// Εναλλακτική διαδρομή μέσω Cloudflare Worker όταν το Akamai WAF της Viva
+// μπλοκάρει τις (κοινόχρηστες) IP της Google με 403. Βλ. vivaFetch().
+const VIVA_PROXY_URL     = defineSecret("VIVA_PROXY_URL");
+const VIVA_PROXY_KEY     = defineSecret("VIVA_PROXY_KEY");
 
 function vivaIsDemo(v) { return s(v).toLowerCase() !== "false"; } // default demo=true (ασφαλές default)
 
@@ -4204,6 +4208,81 @@ function vivaHosts(demo) {
 }
 
 // ── OAuth2 access token (Smart Checkout Client ID/Secret) ───────────────────
+// ── vivaFetch: κλήση προς Viva με επανάληψη + εναλλακτική διαδρομή ─────────
+// Το Akamai WAF της Viva μπλοκάρει κατά καιρούς (403 "Access Denied") IP της
+// Google Cloud λόγω «κακής φήμης» άλλων χρηστών της ίδιας υποδομής.
+//   1η προσπάθεια: απευθείας.
+//   2η: απευθείας ξανά μετά από 1.5s (συχνά βγαίνει από άλλη IP).
+//   3η: μέσω του Cloudflare Worker (άλλο δίκτυο) — ΜΟΝΟ αν έχουν οριστεί
+//       τα secrets VIVA_PROXY_URL / VIVA_PROXY_KEY. Αλλιώς 3η απευθείας.
+// Ξαναδοκιμάζουμε ΜΟΝΟ σε 403 / 5xx / σφάλμα δικτύου. Ένα 403 του Akamai
+// σημαίνει ότι το αίτημα ΔΕΝ έφτασε ποτέ στη Viva → ασφαλής επανάληψη.
+function _vivaProxyConfig() {
+  try {
+    const url = String(VIVA_PROXY_URL.value() || "").trim();
+    const key = String(VIVA_PROXY_KEY.value() || "").trim();
+    if (url.startsWith("https://") && key && key !== "none") return { url, key };
+  } catch (_) { /* secret δεν έχει δηλωθεί στη συνάρτηση */ }
+  return null;
+}
+
+async function vivaFetch(url, init, label) {
+  const proxy = _vivaProxyConfig();
+  const baseHeaders = Object.assign({
+    // Το Akamai WAF απορρίπτει αιτήματα χωρίς αναγνωρίσιμο User-Agent.
+    "User-Agent": "AthensTaxi/1.0 (+https://taxiathenstransfers.com)",
+    "Accept": "application/json",
+  }, (init && init.headers) || {});
+  const plan = [
+    { delay: 0,    viaProxy: false },
+    { delay: 1500, viaProxy: false },
+    { delay: 1500, viaProxy: !!proxy },
+  ];
+  let lastResp = null;
+  let lastErr = null;
+  for (let i = 0; i < plan.length; i++) {
+    const step = plan[i];
+    if (step.delay) await new Promise((r) => setTimeout(r, step.delay));
+    try {
+      let resp;
+      if (step.viaProxy) {
+        resp = await fetch(proxy.url, {
+          method: (init && init.method) || "GET",
+          headers: Object.assign({}, baseHeaders, {
+            "X-Proxy-Key": proxy.key,
+            "X-Target-Url": url,
+          }),
+          body: init && init.body,
+        });
+      } else {
+        resp = await fetch(url, Object.assign({}, init, { headers: baseHeaders }));
+      }
+      if (resp.ok || (resp.status !== 403 && resp.status < 500)) {
+        if (i > 0 && resp.ok) {
+          console.log("vivaFetch[" + label + "]: πέτυχε στην προσπάθεια", i + 1,
+            step.viaProxy ? "(μέσω Cloudflare)" : "(απευθείας)");
+        }
+        return resp;
+      }
+      lastResp = resp;
+      const peek = await resp.clone().text().catch(() => "");
+      console.warn("vivaFetch[" + label + "]: status", resp.status,
+        "| attempt", i + 1, step.viaProxy ? "(Cloudflare)" : "(direct)",
+        "| body:", peek.slice(0, 200));
+    } catch (e) {
+      lastErr = e;
+      console.warn("vivaFetch[" + label + "]: network error | attempt", i + 1,
+        step.viaProxy ? "(Cloudflare)" : "(direct)", "|", e && e.message);
+    }
+  }
+  if (lastResp) return lastResp;
+  throw lastErr || new Error("vivaFetch failed");
+}
+
+// Cache του access token ανά instance (ισχύει ~1 ώρα στη Viva). Λιγότερες
+// κλήσεις στο accounts.vivapayments.com = λιγότερες ευκαιρίες για μπλόκο.
+const _vivaTokenCache = new Map(); // key -> { token, exp }
+
 async function getVivaAccessToken(demo, clientId, clientSecret) {
   const hosts = vivaHosts(demo);
 
@@ -4220,18 +4299,25 @@ async function getVivaAccessToken(demo, clientId, clientSecret) {
     return null;
   }
 
+  const cacheKey = (demo ? "demo:" : "live:") + cid;
+  const cached = _vivaTokenCache.get(cacheKey);
+  if (cached && cached.exp > Date.now()) return cached.token;
+
   const basic = Buffer.from(cid + ":" + csec).toString("base64");
-  const resp = await fetch(hosts.accounts + "/connect/token", {
-    method: "POST",
-    headers: {
-      "Authorization": "Basic " + basic,
-      "Content-Type": "application/x-www-form-urlencoded",
-      // Το Akamai WAF απορρίπτει αιτήματα χωρίς αναγνωρίσιμο User-Agent.
-      "User-Agent": "AthensTaxi/1.0 (+https://taxiathenstransfers.com)",
-      "Accept": "application/json",
-    },
-    body: "grant_type=client_credentials",
-  });
+  let resp;
+  try {
+    resp = await vivaFetch(hosts.accounts + "/connect/token", {
+      method: "POST",
+      headers: {
+        "Authorization": "Basic " + basic,
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: "grant_type=client_credentials",
+    }, "token");
+  } catch (e) {
+    console.error("getVivaAccessToken network error:", e && e.message);
+    return null;
+  }
   if (!resp.ok) {
     const bodyTxt = await resp.text();
     // Διαγνωστικά ΧΩΡΙΣ να εκτεθούν τα ίδια τα κλειδιά: μόνο μήκη και
@@ -4246,7 +4332,13 @@ async function getVivaAccessToken(demo, clientId, clientSecret) {
     return null;
   }
   const data = await resp.json();
-  return data.access_token || null;
+  const token = data.access_token || null;
+  if (token) {
+    const ttlSec = Number(data.expires_in) || 3600;
+    _vivaTokenCache.set(cacheKey,
+      { token, exp: Date.now() + Math.max(60, ttlSec - 120) * 1000 });
+  }
+  return token;
 }
 
 // ── createVivaOrder: επικυρώνει την κράτηση, υπολογίζει το 10% deposit,
@@ -4440,7 +4532,8 @@ async function prepareBookingOrder(req) {
 exports.createVivaOrder = onRequest(
   {
     region: "us-central1", cors: BOOKING_ALLOWED_ORIGINS, memory: "256MiB",
-    secrets: [ROUTES_API_KEY, VIVA_CLIENT_ID, VIVA_CLIENT_SECRET, VIVA_DEMO],
+    secrets: [ROUTES_API_KEY, VIVA_CLIENT_ID, VIVA_CLIENT_SECRET, VIVA_DEMO,
+      VIVA_PROXY_URL, VIVA_PROXY_KEY],
   },
   async (req, res) => {
     if (req.method !== "POST") return res.status(405).json({ ok: false, error: "method_not_allowed" });
@@ -4483,7 +4576,7 @@ exports.createVivaOrder = onRequest(
         return res.status(500).json({ ok: false, error: "viva_auth_error" });
       }
 
-      const orderResp = await fetch(hosts.api + "/checkout/v2/orders", {
+      const orderResp = await vivaFetch(hosts.api + "/checkout/v2/orders", {
         method: "POST",
         headers: { "Authorization": "Bearer " + accessToken, "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -4511,7 +4604,7 @@ exports.createVivaOrder = onRequest(
           // ελληνική σελίδα (ή αντίστροφα) μετά την πληρωμή.
           ...(await vivaSourceCodeParam(tenantId, tenantCfg, lang)),
         }),
-      });
+      }, "order");
       if (!orderResp.ok) {
         console.error("Viva create order error:", orderResp.status, await orderResp.text());
         await pendingRef.delete().catch(() => {});
@@ -4626,7 +4719,8 @@ exports.createManualBookingPaymentLink = onCall(
     region: "us-central1",
     // ROUTES_API_KEY: για αγγλική εκδοχή διευθύνσεων στο email επιβεβαίωσης
     // (addressInEnglish, μέσω finalizeSuccessfulPayment).
-    secrets: [VIVA_CLIENT_ID, VIVA_CLIENT_SECRET, VIVA_DEMO, ROUTES_API_KEY],
+    secrets: [VIVA_CLIENT_ID, VIVA_CLIENT_SECRET, VIVA_DEMO, ROUTES_API_KEY,
+      VIVA_PROXY_URL, VIVA_PROXY_KEY],
   },
   async (request) => {
     if (!request.auth) {
@@ -4775,7 +4869,7 @@ exports.createManualBookingPaymentLink = onCall(
         throw new HttpsError("internal", "Αποτυχία σύνδεσης με Viva.");
       }
 
-      const orderResp = await fetch(hosts.api + "/checkout/v2/orders", {
+      const orderResp = await vivaFetch(hosts.api + "/checkout/v2/orders", {
         method: "POST",
         headers: { "Authorization": "Bearer " + accessToken, "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -4795,7 +4889,7 @@ exports.createManualBookingPaymentLink = onCall(
           merchantTrns: pendingRef.id,
           ...(await vivaSourceCodeParam(tenantId, tenantCfg, lang)),
         }),
-      });
+      }, "order");
       if (!orderResp.ok) {
         console.error("createManualBookingPaymentLink Viva order error:", orderResp.status, await orderResp.text());
         await pendingRef.delete().catch(() => {});
