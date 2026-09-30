@@ -7,6 +7,7 @@
 // αποθηκεύουν συντεταγμένες + χιλιόμετρα διαδρομής στη δουλειά.
 // Ενεργοποιείται από τον διακόπτη "Νέα Φόρμα Δουλειάς" στους Διαχειριστές.
 
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -1494,6 +1495,10 @@ class _JobFormPageState extends State<JobFormPage> {
         '${effectiveDt.minute.toString().padLeft(2, '0')}';
 
     setState(() => _generatingLink = true);
+    // Εμφανές παράθυρο φόρτωσης (και στο web, όπου το μικρό spinner στο
+    // εικονίδιο δεν φαινόταν). Με τις επαναλήψεις προς τη Viva μπορεί να
+    // πάρει μερικά δευτερόλεπτα — μετά τα 3'' αλλάζει το μήνυμα.
+    _openLinkProgress();
     try {
       final tenantId = await JobService.myTenantId();
 
@@ -1553,17 +1558,78 @@ class _JobFormPageState extends State<JobFormPage> {
       final data = Map<String, dynamic>.from(res.data as Map);
       final checkoutUrl = data['checkoutUrl'] as String?;
       if (checkoutUrl == null || checkoutUrl.isEmpty) {
-        _showError('Δεν επιστράφηκε link — δοκίμασε ξανά');
+        _closeLinkProgress();
+        _showLinkError('Δεν επιστράφηκε link.');
         return;
       }
+      _closeLinkProgress();
       if (mounted) _showPaymentLinkDialog(checkoutUrl);
     } on FirebaseFunctionsException catch (e) {
-      _showError(e.message ?? 'Σφάλμα δημιουργίας link');
+      _closeLinkProgress();
+      _showLinkError(e.message ?? 'Σφάλμα δημιουργίας link');
     } catch (e) {
-      _showError('Σφάλμα: $e');
+      _closeLinkProgress();
+      _showLinkError('Σφάλμα: $e');
     } finally {
+      _closeLinkProgress();
       if (mounted) setState(() => _generatingLink = false);
     }
+  }
+
+  // ── Παράθυρο φόρτωσης «Δημιουργία link πληρωμής» ──────────────────────
+  // Κρατάμε το ΔΙΚΟ ΜΑΣ route και αφαιρούμε ΑΚΡΙΒΩΣ αυτό — όχι «pop» στην
+  // κορυφή. Αλλιώς, αν όσο φτιάχνεται το link ανοίξει άλλο popup (π.χ. «νέα
+  // κράτηση από φόρμα»), θα κλείναμε εκείνο αντί για το παράθυρο φόρτωσης.
+  Route<void>? _linkProgressRoute;
+
+  void _openLinkProgress() {
+    if (_linkProgressRoute != null || !mounted) return;
+    final route = DialogRoute<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const _LinkProgressDialog(),
+    );
+    _linkProgressRoute = route;
+    Navigator.of(context, rootNavigator: true).push(route);
+  }
+
+  void _closeLinkProgress() {
+    final route = _linkProgressRoute;
+    _linkProgressRoute = null;
+    if (route == null) return;
+    // Μπορεί να έχει ήδη φύγει (π.χ. καθάρισμα οθονών από ειδοποίηση).
+    if (route.isActive) route.navigator?.removeRoute(route);
+  }
+
+  /// Σφάλμα από τον server με κουμπί «Ξανά» (π.χ. προσωρινό μπλόκο Viva).
+  void _showLinkError(String msg) {
+    if (!mounted) return;
+    showDialog<void>(
+      context: context,
+      useRootNavigator: true,
+      builder: (dctx) => AlertDialog(
+        icon: const Icon(Icons.error_outline_rounded, color: Colors.red, size: 36),
+        title: const Text('Δεν δημιουργήθηκε το link'),
+        content: Text(
+          '$msg\n\nΣυνήθως είναι προσωρινό πρόβλημα σύνδεσης με την τράπεζα — '
+          'δοκίμασε ξανά σε λίγα δευτερόλεπτα.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dctx).pop(),
+            child: const Text('Κλείσιμο'),
+          ),
+          FilledButton.icon(
+            onPressed: () {
+              Navigator.of(dctx).pop();
+              _generatePaymentLink();
+            },
+            icon: const Icon(Icons.refresh_rounded),
+            label: const Text('Ξανά'),
+          ),
+        ],
+      ),
+    );
   }
 
   void _showPaymentLinkDialog(String url) {
@@ -3328,5 +3394,67 @@ class _ExtraBooking {
     flightCtrl.dispose(); priceCtrl.dispose();
     personsCtrl.dispose(); luggageCtrl.dispose();
     childSeatCtrl.dispose(); noteCtrl.dispose();
+  }
+}
+
+// ── Παράθυρο φόρτωσης για τη δημιουργία link πληρωμής ──────────────────────
+class _LinkProgressDialog extends StatefulWidget {
+  const _LinkProgressDialog();
+  @override
+  State<_LinkProgressDialog> createState() => _LinkProgressDialogState();
+}
+
+class _LinkProgressDialogState extends State<_LinkProgressDialog> {
+  bool _slow = false;
+  Timer? _t;
+
+  @override
+  void initState() {
+    super.initState();
+    _t = Timer(const Duration(seconds: 3), () {
+      if (mounted) setState(() => _slow = true);
+    });
+  }
+
+  @override
+  void dispose() {
+    _t?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return PopScope(
+      canPop: false,
+      child: AlertDialog(
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 8),
+            const SizedBox(
+              width: 44, height: 44,
+              child: CircularProgressIndicator(
+                  strokeWidth: 4, color: Color(0xFF00897B)),
+            ),
+            const SizedBox(height: 20),
+            const Text('Δημιουργία link πληρωμής…',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
+            AnimatedSwitcher(
+              duration: const Duration(milliseconds: 250),
+              child: Text(
+                _slow
+                    ? 'Σύνδεση με την τράπεζα, παρακαλώ περίμενε…'
+                    : 'Μια στιγμή',
+                key: ValueKey(_slow),
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 13.5, color: Colors.black54),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
