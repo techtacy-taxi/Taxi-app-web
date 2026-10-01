@@ -1669,9 +1669,6 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
                   ),
                 ),
               ),
-              // Καμπανάκι ειδοποιήσεων με αριθμό αδιάβαστων.
-              const SizedBox(width: 8),
-              const NotifBellButton(size: 44),
             ]),
             if (_isAdmin || _isMaster) ...[
               const SizedBox(height: 8),
@@ -1690,6 +1687,14 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
           child: Builder(builder: (context) {
             final c = AppColors.of(context);
             return Column(mainAxisSize: MainAxisSize.min, children: [
+              // Καμπανάκι ειδοποιήσεων — πάνω από το «+» (ή πάνω από το «η
+              // θέση μου» για οδηγούς). Ίδιο 48×48 στυλ με τα άλλα κουμπιά.
+              // Κάτω, κοντά στον αντίχειρα, και ΔΕΝ κόβει το όνομα στη μπάρα.
+              const Align(
+                alignment: Alignment.centerRight,
+                child: NotifBellButton(size: 48),
+              ),
+              const SizedBox(height: 10),
               // Κουμπί «+» — ΓΡΗΓΟΡΗ προσθήκη δουλειάς με αυτόματη αναγνώριση
               // κειμένου. Ίδιο ΑΚΡΙΒΩΣ μέγεθος/στυλ με το κουμπί «η θέση μου»
               // από κάτω (48×48, στρογγυλό, λευκό, amberDeep εικονίδιο).
