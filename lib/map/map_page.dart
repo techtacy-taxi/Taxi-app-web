@@ -35,6 +35,7 @@ import 'marker_builder.dart';
 import '../ics_intent.dart';
 import '../jobs/job_admin_page.dart';
 import '../jobs/new_saved_badge_store.dart';
+import '../notifications/notif_inbox.dart';
 import '../jobs/job_shared_widgets.dart';
 import '../jobs/job_form.dart';
 import '../jobs/places_service.dart';
@@ -277,6 +278,14 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
       // «Δες την τώρα» στο popup νέας κράτησης → άνοιξε τις Αποθηκευμένες.
       openSavedJobsRequest.addListener(_onOpenSavedJobsRequest);
     }
+    // Καμπανάκι ειδοποιήσεων: καταγραφή στο foreground + «άνοιξε Χρεώσεις»
+    // (π.χ. από «Εκκρεμεί καθαρισμός»). Cold start: αν πατήθηκε ειδοποίηση
+    // πριν στηθεί ο listener, το αίτημα περιμένει στο consumePendingBilling.
+    try { NotifInbox.startForeground(uid: _uid ?? ''); } catch (_) {}
+    NotifInbox.openBillingRequest.addListener(_onOpenBillingRequest);
+    if (NotifInbox.consumePendingBilling()) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _openBillingPage());
+    }
     _lastPublishedPosition = null;
     // ⚠️ ΔΕΝ δημιουργούμε presence doc πριν ο χρήστης πατήσει «Αποθήκευση»
     // στη φόρμα στοιχείων. Πριν, το doc γραφόταν ήδη εδώ (στο login) με
@@ -431,6 +440,26 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
 
   /// Ανοίγει τη σελίδα Δουλειές στην καρτέλα «Αποθηκευμένες».
   /// Καλείται όταν ο χρήστης πατήσει «Δες την τώρα» στο popup νέας κράτησης.
+  void _onOpenBillingRequest() {
+    if (!NotifInbox.consumePendingBilling()) return;
+    _openBillingPage();
+  }
+
+  void _openBillingPage() {
+    if (!mounted) return;
+    // Καθάρισε ό,τι είναι ανοιχτό πάνω από τον χάρτη (φόρμες, λίστα κ.λπ.).
+    Navigator.of(context).popUntil((r) => r.isFirst);
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => BillingPage(
+        uid:             _uid ?? '',
+        userName:        '$_displayName $_lastName'.trim(),
+        isMaster:        _isMaster,
+        isAdmin:         _isAdmin,
+        managedGroupIds: _managedGroupIds,
+      ),
+    ));
+  }
+
   void _onOpenSavedJobsRequest() {
     if (!mounted) return;
     // Αν το JobAdminPage είναι ΗΔΗ ανοιχτό, ο δικός του listener αλλάζει
@@ -458,6 +487,7 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
   @override
   void dispose() {
     openSavedJobsRequest.removeListener(_onOpenSavedJobsRequest);
+    NotifInbox.openBillingRequest.removeListener(_onOpenBillingRequest);
     try { FlightDelayAlerts.instance.dispose(); } catch (_) {}
     WidgetsBinding.instance.removeObserver(this);
     ThemeController.mode.removeListener(_applyMapStyle);
@@ -1639,6 +1669,9 @@ class _HomeMapPageState extends State<HomeMapPage> with WidgetsBindingObserver {
                   ),
                 ),
               ),
+              // Καμπανάκι ειδοποιήσεων με αριθμό αδιάβαστων.
+              const SizedBox(width: 8),
+              const NotifBellButton(size: 44),
             ]),
             if (_isAdmin || _isMaster) ...[
               const SizedBox(height: 8),

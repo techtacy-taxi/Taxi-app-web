@@ -17,6 +17,7 @@ import 'job_model.dart';
 import 'job_service.dart';
 import 'job_shared_widgets.dart';
 import 'platform_billing_card.dart';
+import '../notifications/notif_inbox.dart';
 
 const _purple = Color(0xFF5E35B1);
 // Μπλε = ο διαχειριστής χρωστάει στον οδηγό (αρνητική οφειλή).
@@ -58,6 +59,11 @@ class BillingPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Άνοιξες τις Χρεώσεις → οι σχετικές ειδοποιήσεις (καθαρισμός, μηνιαία
+    // αναφορά) σημειώνονται διαβασμένες και στο καμπανάκι. Δεν αγγίζει τον
+    // δίσκο αν δεν υπάρχει κάτι αδιάβαστο, άρα ασφαλές μέσα στο build.
+    // ignore: unawaited_futures
+    NotifInbox.markTypesSeen(const {'purge_reminder', 'monthly_report'});
     final c = AppColors.of(context);
     final Widget body;
     if (isMaster) {

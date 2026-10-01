@@ -15,6 +15,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:timezone/data/latest_all.dart' as tzdata;
 import 'package:timezone/timezone.dart' as tz;
 
+import 'notifications/notif_inbox.dart';
+
 // ─── Σταθερές ────────────────────────────────────────────────────────────────
 const String kJobChannelId      = 'job_alerts_v3';   // v3 = δυνατή δόνηση
 const String kJobChannelName    = 'Νέες Δουλειές';
@@ -957,6 +959,10 @@ class NotificationsService {
       if (resp != null && resp.payload != null) {
         try {
           final data  = jsonDecode(resp.payload!) as Map<String, dynamic>;
+          // Καμπανάκι: σημείωσε ως διαβασμένη + προορισμός για τύπους που
+          // πριν δεν πήγαιναν πουθενά (π.χ. «Εκκρεμεί καθαρισμός»).
+          // ignore: unawaited_futures
+          NotifInbox.onSystemTap(data);
           final jobId = data['jobId'] as String?;
           if (resp.actionId == kActionReject && jobId != null) {
             await _saveRejectedJobId(resp.payload!);
@@ -1009,6 +1015,10 @@ class NotificationsService {
     if (response.payload == null) return;
     try {
       final data  = jsonDecode(response.payload!) as Map<String, dynamic>;
+      // Καμπανάκι: σημείωσε ως διαβασμένη + προορισμός για τύπους που
+      // πριν δεν πήγαιναν πουθενά (π.χ. «Εκκρεμεί καθαρισμός»).
+      // ignore: unawaited_futures
+      NotifInbox.onSystemTap(data);
       if (data['type'] == 'approval') {
         approvalTapTick.value++;
         return;

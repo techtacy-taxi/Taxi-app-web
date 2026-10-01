@@ -22,6 +22,8 @@ import 'dart:convert';
 import 'package:flutter/widgets.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../notifications/notif_inbox.dart';
+
 class NewSavedBadgeStore {
   NewSavedBadgeStore._();
 
@@ -96,6 +98,9 @@ class NewSavedBadgeStore {
   /// Σβήνει το σήμα — ΜΟΝΟ όταν ο χρήστης ανοίξει την κράτηση.
   static Future<void> markSeen(String savedJobId) async {
     if (savedJobId.isEmpty) return;
+    // Άνοιξες την κράτηση → φεύγει το «αδιάβαστη» και από το καμπανάκι.
+    // ignore: unawaited_futures
+    NotifInbox.markObjectSeen('public_booking', savedJobId);
     await _load();
     if (_cache.remove(savedJobId) == null) return;  // δεν ήταν σημειωμένη
     await _persist();

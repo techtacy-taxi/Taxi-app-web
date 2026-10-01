@@ -27,6 +27,7 @@ import 'package:flutter/material.dart';
 import '../app_theme.dart';
 import '../jobs/job_admin_page.dart';
 import '../jobs/new_saved_badge_store.dart';
+import '../notifications/notif_inbox.dart';
 import '../jobs/billing_page.dart';
 import '../calendar/jobs_calendar_page.dart';
 import '../voice/groups_admin.dart';
@@ -76,6 +77,12 @@ class _AdminShellState extends State<AdminShell> {
       // Το JobAdminPage ακούει ΚΑΙ ΤΟ ΙΔΙΟ το openSavedJobsRequest και
       // μεταπηδά στην καρτέλα «Αποθηκευμένες» μόλις εμφανιστεί.
       openSavedJobsRequest.addListener(_onOpenSavedJobsRequest);
+    }
+    // Καμπανάκι ειδοποιήσεων (ίδιο με το Android) + «άνοιξε Χρεώσεις».
+    try { NotifInbox.startForeground(uid: _session.uid); } catch (_) {}
+    NotifInbox.openBillingRequest.addListener(_onOpenBillingRequest);
+    if (NotifInbox.consumePendingBilling()) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _selectBilling());
     }
     // ── Ζωντανή παρακολούθηση του δικού μας presence — ΑΚΑΡΙΑΙΑ αντίδραση
     // αν ο master αλλάξει δικαιώματα ΕΝΩ είμαστε ήδη μέσα στο web panel: το
@@ -156,6 +163,20 @@ class _AdminShellState extends State<AdminShell> {
     // πάνω (π.χ. φόρμα) και σταματά εδώ.
     _myRoute = ModalRoute.of(context);
     SavedTabNav.shellRoute = _myRoute;
+  }
+
+  void _onOpenBillingRequest() {
+    if (!NotifInbox.consumePendingBilling()) return;
+    _selectBilling();
+  }
+
+  void _selectBilling() {
+    if (!mounted) return;
+    final i = _sections.indexWhere((sec) => sec.label == 'Χρεώσεις');
+    if (i < 0) return;
+    // Κλείσε τυχόν ανοιχτές οθόνες/διαλόγους πάνω από το panel.
+    SavedTabNav.popToSavedAnchor(Navigator.maybeOf(context, rootNavigator: true));
+    setState(() => _index = i);
   }
 
   void _onOpenSavedJobsRequest() {
@@ -285,6 +306,7 @@ class _AdminShellState extends State<AdminShell> {
   @override
   void dispose() {
     openSavedJobsRequest.removeListener(_onOpenSavedJobsRequest);
+    NotifInbox.openBillingRequest.removeListener(_onOpenBillingRequest);
     if (SavedTabNav.shellRoute == _myRoute) SavedTabNav.shellRoute = null;
     _presenceSub?.cancel();
     WebBookingAlerts.instance.dispose();
@@ -527,6 +549,9 @@ class _Header extends StatelessWidget {
                   fontWeight: FontWeight.w600,
                   color: c.amberDeep)),
         ),
+        // Καμπανάκι ειδοποιήσεων με αριθμό αδιάβαστων.
+        const SizedBox(height: 12),
+        const NotifBellButton(size: 40),
       ],
     );
   }

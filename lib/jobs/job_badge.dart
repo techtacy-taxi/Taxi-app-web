@@ -25,6 +25,7 @@ import 'job_popup.dart';
 import 'job_service.dart';
 import 'job_shared_widgets.dart';
 import 'batch_accept_sheet.dart';
+import '../notifications/notif_inbox.dart';
 
 // Prefs key: ποιους εκκρεμείς προς έγκριση έχει ήδη ειδοποιηθεί ο master.
 const String kPrefsNotifiedPending = 'notified_pending_approvals_v1';
@@ -524,6 +525,8 @@ class _JobListenerState extends State<JobListener> with WidgetsBindingObserver {
 
   void _openApprovalsPage() {
     if (!widget.isMaster) return;
+    // ignore: unawaited_futures
+    NotifInbox.markTypesSeen(const {'approval'});
     // ignore: unawaited_futures
     cancelApprovalNotification();
     final nav = NotificationsService.navigatorKey.currentState;

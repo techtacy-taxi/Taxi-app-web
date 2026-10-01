@@ -29,6 +29,7 @@ import 'package:timezone/timezone.dart' as tz;
 import 'firebase_options.dart';
 import 'notifications_service.dart';
 import 'jobs/new_saved_badge_store.dart';
+import 'notifications/notif_inbox.dart';
 
 // FLAG_INSISTENT (0x4): επαναλαμβάνει ήχο/δόνηση μέχρι ο χρήστης να
 // αλληλεπιδράσει — η native εκδοχή του "συνεχόμενου κουδουνιού".
@@ -95,7 +96,15 @@ Future<void> fcmBackgroundHandler(RemoteMessage message) async {
   // — δουλεύει & σε αυτό το background isolate με κλειστή εφαρμογή.
   final muted = await isMutedNow();
 
-  await _displayFromMessage(fln, message.data, muted);
+  // Καμπανάκι ειδοποιήσεων: καταγραφή ως «αδιάβαστη». Το inboxId μπαίνει
+  // στο payload ώστε το πάτημα να σημειώνει ΑΚΡΙΒΩΣ αυτή ως διαβασμένη.
+  final data = Map<String, dynamic>.from(message.data);
+  try {
+    final inboxId = await NotifInbox.record(data);
+    if (inboxId != null) data['inboxId'] = inboxId;
+  } catch (_) {}
+
+  await _displayFromMessage(fln, data, muted);
 }
 
 /// Εμφανίζει την κατάλληλη native ειδοποίηση ανάλογα με το `type` του payload.
